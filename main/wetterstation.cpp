@@ -63,7 +63,7 @@ extern "C"
     bool bmp_init_ok = bmp.init();
     if (!bmp_init_ok)
       ESP_LOGE(TAG, "Fehler bei der Initialisierung vom BMP280!");
-    double BMP_temp, BMP_pres;
+    double BMP_temp, BMP_pres, BMP_pres_raw;
     for(;;)
     {
       ESP_ERROR_CHECK(ReadSHT35(&temp, &hum, &CrcErr));
@@ -73,8 +73,9 @@ extern "C"
       if (bmp_init_ok)
       {
         BMP_temp=bmp.ReadTemperature();
-        BMP_pres=bmp.ReadPressure();
-        printf("BMP280 Temperatur: %.2f°C Luftdruck: %.3f bar\r\n",BMP_temp,BMP_pres/100000);
+        BMP_pres_raw=bmp.ReadPressure();
+        BMP_pres=bmp.seaLevelForAltitude(210, BMP_pres_raw);
+        printf("BMP280 Temperatur: %.2f°C Luftdruck: %.3f bar [raw: %.3f]\r\n",BMP_temp,BMP_pres/100000,BMP_pres_raw/100000);
       }
 
       vTaskDelay(5000 / portTICK_RATE_MS);
