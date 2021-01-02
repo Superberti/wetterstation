@@ -252,7 +252,7 @@ extern "C"
     if (!bmp_init_ok)
       ESP_LOGE(TAG, "Fehler bei der Initialisierung vom BMP280!");
     VEML7700 veml;
-    bool veml_init_ok=veml.init();
+    bool veml_init_ok=veml.init(VEML7700_GAIN_1_8,VEML7700_IT_25MS);
     if (!veml_init_ok)
       ESP_LOGE(TAG, "Fehler bei der Initialisierung vom VEML7700!");
     double BMP_temp, BMP_pres, BMP_pres_raw,VEML_lux;
@@ -280,7 +280,8 @@ extern "C"
       }
       if (veml_init_ok)
       {
-        VEML_lux=veml.readLux();
+        VEML_lux=veml.readLuxNormalized();
+        //veml.readWhite();
         sprintf(LuxStr,"%.2f",VEML_lux);
         printf("VEML7700 Luxsensor: %s lux\r\n",LuxStr);
       }

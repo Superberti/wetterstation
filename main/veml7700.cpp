@@ -46,22 +46,26 @@ bool VEML7700::init(uint8_t aGain, uint8_t aIntegrationTime)
   cr.bits.ALS_INT_ENT=0;
   cr.bits.ALS_PERS=VEML7700_PERS_1;
   cr.bits.ALS_SD=0;
+  ESP_LOGI("VEML7700::init", "Schreibe: %d",cr.val);
   esp_err_t ret=WriteRegister(VEML7700_ALS_CONFIG,cr.val);
+  ret=ReadRegister(VEML7700_ALS_CONFIG,(uint8_t*)&cr.val,sizeof(cr));
+  ESP_LOGI("VEML7700::init", "Lese: %d",cr.val);
+  vTaskDelay(3 / portTICK_RATE_MS);
   return ret==ESP_OK;
 }
 
 
 esp_err_t VEML7700::WriteRegister(uint8_t reg_addr, uint16_t value)
 {
-  uint8_t* pData=(uint8_t*)&value;
+  //uint8_t* pData=(uint8_t*)&value;
   esp_err_t ret;
   i2c_cmd_handle_t cmd = i2c_cmd_link_create();
   i2c_master_start(cmd);
   i2c_master_write_byte(cmd, VEML7700_ADDRESS << 1 | I2C_MASTER_WRITE, ACK_CHECK_EN);
   i2c_master_write_byte(cmd, reg_addr, ACK_CHECK_EN);
-  // ESP32 ist little endian und der VEML will zuerst das LSB
-  i2c_master_write_byte(cmd, pData[1], ACK_CHECK_EN);
-  i2c_master_write_byte(cmd, pData[0], ACK_CHECK_EN);
+  // VEML will zuerst das LSB
+  i2c_master_write_byte(cmd, value & 0xff, ACK_CHECK_EN);
+  i2c_master_write_byte(cmd, value >> 8, ACK_CHECK_EN);
 
   i2c_master_stop(cmd);
   ret = i2c_master_cmd_begin(I2C_NUM_0, cmd, 1000 / portTICK_RATE_MS);
@@ -71,6 +75,20 @@ esp_err_t VEML7700::WriteRegister(uint8_t reg_addr, uint16_t value)
   return ret;
 }
 
+void disp_buf2(uint8_t *buf, int len)
+{
+  int i;
+  for (i = 0; i < len; i++)
+  {
+    printf("%02x ", buf[i]);
+    if ((i + 1) % 16 == 0)
+    {
+      printf("\n");
+    }
+  }
+  printf("\n");
+}
+
 esp_err_t VEML7700::ReadRegister(uint8_t reg_addr, uint8_t *data, uint16_t len)
 {
   esp_err_t ret;
@@ -78,25 +96,23 @@ esp_err_t VEML7700::ReadRegister(uint8_t reg_addr, uint8_t *data, uint16_t len)
   i2c_master_start(cmd);
   i2c_master_write_byte(cmd, VEML7700_ADDRESS << 1 | I2C_MASTER_WRITE, ACK_CHECK_EN);
   i2c_master_write_byte(cmd, reg_addr, ACK_CHECK_EN);
-  i2c_master_stop(cmd);
-  ret = i2c_master_cmd_begin(I2C_NUM_0, cmd, 1000 / portTICK_RATE_MS);
-  i2c_cmd_link_delete(cmd);
-  if (ret != ESP_OK)
-  {
-    ESP_LOGE("VEML7700::ReadRegister", "I2C error no.: %d",ret);
-    return ret;
-  }
-  cmd = i2c_cmd_link_create();
   i2c_master_start(cmd);
   i2c_master_write_byte(cmd, VEML7700_ADDRESS << 1 | I2C_MASTER_READ, ACK_CHECK_EN);
   i2c_master_read(cmd, data, len,  I2C_MASTER_LAST_NACK);
   i2c_master_stop(cmd);
   ret = i2c_master_cmd_begin(I2C_NUM_0, cmd, 1000 / portTICK_RATE_MS);
   i2c_cmd_link_delete(cmd);
-  if (ret!=ESP_OK)
+  if (ret != ESP_OK)
+  {
     ESP_LOGE("VEML7700::ReadRegister", "I2C error no.: %d",ret);
+
+  }
+  //disp_buf2(data,len);
   return ret;
+
 }
+
+
 
 double VEML7700::normalize_resolution(double value)
 {
@@ -143,7 +159,9 @@ double VEML7700::normalize_resolution(double value)
  */
 double VEML7700::readLux()
 {
-  return (normalize_resolution(readALS()) * 0.0576); // see app note lux table on page 5
+  uint16_t als=readALS();
+  //printf("ALS: %d\r\n",als);
+  return (normalize_resolution(als) * 0.0576); // see app note lux table on page 5
 }
 
 /*!
@@ -177,7 +195,7 @@ uint16_t VEML7700::readALS()
   esp_err_t ret=ReadRegister(VEML7700_ALS_DATA,(uint8_t*)&iALS,sizeof(iALS));
   if (ret!=ESP_OK)
     return 0;
-  return swapByteOrder(iALS);
+  return iALS;
 }
 
 /*!
@@ -192,7 +210,7 @@ double VEML7700::readWhite()
   esp_err_t ret=ReadRegister(VEML7700_WHITE_DATA,(uint8_t*)&iALS,sizeof(iALS));
   if (ret!=ESP_OK)
     return 0.0;
-  return normalize_resolution(swapByteOrder(iALS)) * 0.0576; // Unclear if this is the right multiplier
+  return normalize_resolution(iALS) * 0.0576; // Unclear if this is the right multiplier
 }
 
 /*!

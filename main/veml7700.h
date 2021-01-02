@@ -46,18 +46,18 @@
 
 union ConfigRegister
 {
-  uint16_t val;
   struct
   {
-    uint8_t ALS_SD : 1;
-    uint8_t ALS_INT_ENT : 1;
-    uint8_t Res1 : 2;
-    uint8_t ALS_PERS : 2;
-    uint8_t ALS_IT : 4;
-    uint8_t Res2 : 1;
-    uint8_t ALS_GAIN : 2;
-    uint8_t Res3 : 3;
+    uint16_t ALS_SD : 1;
+    uint16_t ALS_INT_ENT : 1;
+    uint16_t Res1 : 2;
+    uint16_t ALS_PERS : 2;
+    uint16_t ALS_IT : 4;
+    uint16_t Res2 : 1;
+    uint16_t ALS_GAIN : 2;
+    uint16_t Res3 : 3;
   } bits;
+  uint16_t val;
 };
 
 class VEML7700
