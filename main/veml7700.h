@@ -1,6 +1,6 @@
 /*!
- * Ansteuerung eines BMP280 Luftdrucksensors. Inspiriert von der Adafruit-Lib.
- * Umgesetzt auf ESP32, nur I2C-Interface
+ * Ansteuerung eines VEML7700 Luftdrucksensors. Inspiriert von der Adafruit-Lib.
+ * Umgesetzt auf ESP32, I2C-Interface
  */
 #ifndef __VEML7700_H__
 #define __VEML7700_H__

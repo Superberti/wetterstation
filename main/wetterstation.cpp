@@ -44,6 +44,7 @@
 #include "wetterstation.h"
 #include "bmp280.h"
 #include "veml7700.h"
+#include "sht35.h"
 
 static const char *TAG = "Wetterstation";
 
@@ -58,21 +59,6 @@ static const char *TAG = "Wetterstation";
 #define I2C_MASTER_RX_BUF_DISABLE 0                           /*!< I2C master doesn't need buffer */
 
 
-#define ACK_CHECK_EN 0x1                        /*!< I2C master will check ack from slave*/
-#define ACK_CHECK_DIS 0x0                       /*!< I2C master will not check ack from slave */
-//#define ACK_VAL 0x0                             /*!< I2C ack value */
-//#define NACK_VAL 0x1                            /*!< I2C nack value */
-#define SHT35_ADDR 0x44   /* I2C-Adresse SHT35 */
-#define BME280_ADDR 0x77  /* I2C-Adresse BME280 (SDO auf Vdd) */
-
-// Kein Clock-Stretching, hohe Genauigkeit. S. Datenblatt Seite 10
-#define SHT35_CMD_START_MSB 0x24
-#define SHT35_CMD_START_LSB 0x00
-
-#define BH1750_SENSOR_ADDR 0x23
-// Hohe Genauigkeit, einmal messen
-#define BH1750_CMD_START 0x23
-
 /* Signal Wi-Fi events on this event-group */
 const int WIFI_CONNECTED_EVENT = BIT0;
 static EventGroupHandle_t wifi_event_group;
@@ -83,19 +69,14 @@ extern "C"
 {
   void app_main(void)
   {
-    ESP_LOGI(TAG, "[APP] Startup..");
-    ESP_LOGI(TAG, "[APP] Free memory: %d bytes", esp_get_free_heap_size());
-    ESP_LOGI(TAG, "[APP] IDF version: %s", esp_get_idf_version());
     ESP_LOGI(TAG, "Starte ESP32-Wetterstation...");
+    ESP_LOGI(TAG, "Startup..");
+    ESP_LOGI(TAG, "Free memory: %d bytes", esp_get_free_heap_size());
+    ESP_LOGI(TAG, "IDF version: %s", esp_get_idf_version());
 
     // TODO (pi#1#): Auf Konopfdruck (z.B. 10s) nvs_flash_erase() aufrufen und rebooten, damit wieder das WiFi konfiguriert werden kann.
 
-
-    //uint8_t TestData[]= {0xBE,0xEF};
-    //uint8_t crc=ComputeChecksum(TestData,sizeof(TestData));
-    //ESP_LOGI(TAG, "CRC: 0x%x",crc);
     ESP_ERROR_CHECK(i2c_master_init());
-    //ESP_LOGI(TAG, "Starte Hauptschleife...");
 
     /* Initialize NVS partition */
     esp_err_t ret = nvs_flash_init();
@@ -127,10 +108,12 @@ extern "C"
     wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
     ESP_ERROR_CHECK(esp_wifi_init(&cfg));
 
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wmissing-field-initializers"
+
     /* Configuration for the provisioning manager */
     wifi_prov_mgr_config_t config =
     {
-
       .scheme = wifi_prov_scheme_ble,
       /* Any default scheme specific event handler that you would
        * like to choose. Since our example application requires
@@ -141,8 +124,9 @@ extern "C"
        * to take care of this automatically. This can be set to
        * WIFI_PROV_EVENT_HANDLER_NONE when using wifi_prov_scheme_softap*/
       .scheme_event_handler = WIFI_PROV_SCHEME_BLE_EVENT_HANDLER_FREE_BTDM,
-
     };
+
+#pragma GCC diagnostic pop
 
     /* Initialize provisioning manager with the
      * configuration parameters set above */
@@ -246,32 +230,45 @@ extern "C"
 
     int c=0;
     double temp=0,hum=0;
-    uint8_t CrcErr=0;
-    BMP280 bmp;
-    bool bmp_init_ok = bmp.init();
-    if (!bmp_init_ok)
-      ESP_LOGE(TAG, "Fehler bei der Initialisierung vom BMP280!");
-    VEML7700 veml;
-    bool veml_init_ok=veml.init(VEML7700_GAIN_1_8,VEML7700_IT_25MS);
-    if (!veml_init_ok)
-      ESP_LOGE(TAG, "Fehler bei der Initialisierung vom VEML7700!");
-    double BMP_temp, BMP_pres, BMP_pres_raw,VEML_lux;
+    bool CrcErr=false;
     char TempStr[16]={0};
     char HumStr[16]={0};
     char PresStr[16]={0};
     char LuxStr[16]={0};
+    double BMP_pres=0, BMP_pres_raw=0,VEML_lux=0;
+
+    BMP280 bmp;
+    VEML7700 veml;
+    SHT35 sht;
+
+    bool bmp_init_ok = bmp.init();
+    if (!bmp_init_ok)
+      ESP_LOGE(TAG, "Fehler bei der Initialisierung vom BMP280!");
+
+    bool veml_init_ok=veml.init(VEML7700_GAIN_1_8,VEML7700_IT_25MS);
+    if (!veml_init_ok)
+      ESP_LOGE(TAG, "Fehler bei der Initialisierung vom VEML7700!");
+
+    bool sht_init_ok=sht.init();
+    if (!sht_init_ok)
+      ESP_LOGE(TAG, "Fehler bei der Initialisierung vom SHT35!");
+
+
     for(;;)
     {
-      ESP_ERROR_CHECK(ReadSHT35(&temp, &hum, &CrcErr));
-      if (CrcErr)
-        printf("WARNUNG: CRC-Datenfehler aufgetreten, Daten könnten falsch sein.\r\n");
+      if (sht_init_ok)
+      {
+        sht.ReadSHT35(temp, hum, CrcErr);
+        if (CrcErr)
+          printf("WARNUNG: CRC-Datenfehler aufgetreten, Daten könnten falsch sein.\r\n");
+        sprintf(TempStr,"%.2f",temp);
+        sprintf(HumStr,"%.2f",hum);
+        printf("SHT35 Temperatur: %s°C Luftfeuchte: %s %%\r\n",TempStr,HumStr);
+      }
 
-      sprintf(TempStr,"%.2f",temp);
-      sprintf(HumStr,"%.2f",hum);
-      printf("SHT35 Temperatur: %s°C Luftfeuchte: %s %%\r\n",TempStr,HumStr);
       if (bmp_init_ok)
       {
-        BMP_temp=bmp.ReadTemperature();
+        //BMP_temp=bmp.ReadTemperature();
         BMP_pres_raw=bmp.ReadPressure();
         BMP_pres=bmp.seaLevelForAltitude(210, BMP_pres_raw);
 
@@ -300,123 +297,10 @@ extern "C"
   }
 }
 
-esp_err_t ReadBH1750(double* aLux)
-{
-  uint8_t data_h, data_l;
-  int ret;
-  i2c_cmd_handle_t cmd = i2c_cmd_link_create();
-  i2c_master_start(cmd);
-  i2c_master_write_byte(cmd, BH1750_SENSOR_ADDR << 1 | I2C_MASTER_WRITE, ACK_CHECK_EN);
-  i2c_master_write_byte(cmd, BH1750_CMD_START, ACK_CHECK_EN);
-  i2c_master_stop(cmd);
-  ret = i2c_master_cmd_begin(I2C_MASTER_NUM, cmd, 1000 / portTICK_RATE_MS);
-  i2c_cmd_link_delete(cmd);
-  if (ret != ESP_OK)
-  {
-    return ret;
-  }
-  vTaskDelay(30 / portTICK_RATE_MS);
-  cmd = i2c_cmd_link_create();
-  i2c_master_start(cmd);
-  i2c_master_write_byte(cmd, BH1750_SENSOR_ADDR << 1 | I2C_MASTER_READ, ACK_CHECK_EN);
-  i2c_master_read_byte(cmd, &data_h, I2C_MASTER_ACK);
-  i2c_master_read_byte(cmd, &data_l, I2C_MASTER_NACK);
-  i2c_master_stop(cmd);
-  ret = i2c_master_cmd_begin(I2C_MASTER_NUM, cmd, 1000 / portTICK_RATE_MS);
-  i2c_cmd_link_delete(cmd);
-  if (aLux!=NULL)
-    *aLux=(data_h << 8 | data_l) / 1.2;
-
-  return ret;
-}
-
-// CRC8-Berechnung
-const uint8_t poly = 0x31; // x8 + x5 + x4 + 1
-
-uint8_t ComputeChecksum(uint8_t* bytes, int len)
-{
-  uint8_t crc = 0xff;// Startwert
-
-  if (bytes != NULL && len > 0)
-  {
-    for (int i=0; i<len; i++)
-    {
-      crc = Crc8b(crc ^ bytes[i]);
-    }
-  }
-  return crc;
-}
-
-uint8_t Crc8b(uint8_t aData)
-{
-  for (int j = 0; j < 8; ++j)
-  {
-    if ((aData & 0x80) != 0)
-    {
-      aData = (aData << 1) ^ poly;
-    }
-    else
-    {
-      aData <<= 1;
-    }
-  }
-  return aData;
-}
-
-// SHT35-Sensor
-esp_err_t ReadSHT35(double * aTemp, double * aHum, uint8_t*rCRC_Err)
-{
-  int ret;
-  i2c_cmd_handle_t cmd = i2c_cmd_link_create();
-  i2c_master_start(cmd);
-  i2c_master_write_byte(cmd, SHT35_ADDR << 1 | I2C_MASTER_WRITE, ACK_CHECK_EN);
-  i2c_master_write_byte(cmd, SHT35_CMD_START_MSB, ACK_CHECK_EN);
-  i2c_master_write_byte(cmd, SHT35_CMD_START_LSB, ACK_CHECK_EN);
-  i2c_master_stop(cmd);
-  ret = i2c_master_cmd_begin(I2C_MASTER_NUM, cmd, 1000 / portTICK_RATE_MS);
-  i2c_cmd_link_delete(cmd);
-  if (ret != ESP_OK)
-  {
-    return ret;
-  }
-  vTaskDelay(100 / portTICK_RATE_MS);
-  // Belegung Datenblock in bytes:
-  // Temperatur_high, Temperatur_low, Temperatur_crc, Luftfeuchte_high, Luftfeuchte_low, Luftfeuchte_crc
-  uint8_t rb[6]= {0};
-  cmd = i2c_cmd_link_create();
-  i2c_master_start(cmd);
-  i2c_master_write_byte(cmd, SHT35_ADDR << 1 | I2C_MASTER_READ, ACK_CHECK_EN);
-
-  i2c_master_read(cmd,rb,sizeof(rb)-1,I2C_MASTER_ACK);
-  i2c_master_read_byte(cmd,rb+5,I2C_MASTER_NACK);  // Beim letzten Byte gibt's ein NACK
 
 
-  i2c_master_stop(cmd);
-  ret = i2c_master_cmd_begin(I2C_MASTER_NUM, cmd, 1000 / portTICK_RATE_MS);
-  i2c_cmd_link_delete(cmd);
 
-  *aTemp=-45+175*(double)(rb[0]*256+rb[1])/65535.0;
-  *aHum=100.0*(double)(rb[3]*256+rb[4])/65535.0;
-  //disp_buf(rb,6);
-  // Checksumme Temperatur
-  uint8_t crc=ComputeChecksum(rb,2);
-  if (crc!=rb[2] && rCRC_Err!=NULL)
-  {
-    printf("Falscher Temperatur-CRC: [0x%x] <> [0x%x]\r\n",crc,rb[2]);
-    *rCRC_Err=1;
-  }
 
-  // Checksumme Luftfeuchte
-  crc=ComputeChecksum(rb+3,2);
-  if (crc!=rb[5] && rCRC_Err!=NULL)
-  {
-    printf("Falscher Luftfeuchte-CRC: [0x%x] <> [0x%x]\r\n",crc,rb[5]);
-    *rCRC_Err=1;
-  }
-  if (rCRC_Err!=NULL && *rCRC_Err)
-    disp_buf(rb,6);
-  return ret;
-}
 
 /**
  * @brief i2c master initialization
@@ -610,10 +494,16 @@ static void mqtt_app_start(void)
 {
   // Raspi Zero-W mit Mosquitto
   const char * mqtt_uri="mqtt://raspiwetter";
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wmissing-field-initializers"
+
   esp_mqtt_client_config_t mqtt_cfg =
   {
     .uri = mqtt_uri,
   };
+
+#pragma GCC diagnostic pop
+
 
   mqtt_client = esp_mqtt_client_init(&mqtt_cfg);
   esp_mqtt_client_register_event(mqtt_client, (esp_mqtt_event_id_t)ESP_EVENT_ANY_ID, mqtt_event_handler, mqtt_client);

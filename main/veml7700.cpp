@@ -46,10 +46,10 @@ bool VEML7700::init(uint8_t aGain, uint8_t aIntegrationTime)
   cr.bits.ALS_INT_ENT=0;
   cr.bits.ALS_PERS=VEML7700_PERS_1;
   cr.bits.ALS_SD=0;
-  ESP_LOGI("VEML7700::init", "Schreibe: %d",cr.val);
+  //ESP_LOGI("VEML7700::init", "Schreibe: %d",cr.val);
   esp_err_t ret=WriteRegister(VEML7700_ALS_CONFIG,cr.val);
   ret=ReadRegister(VEML7700_ALS_CONFIG,(uint8_t*)&cr.val,sizeof(cr));
-  ESP_LOGI("VEML7700::init", "Lese: %d",cr.val);
+  //ESP_LOGI("VEML7700::init", "Lese: %d",cr.val);
   vTaskDelay(3 / portTICK_RATE_MS);
   return ret==ESP_OK;
 }
@@ -75,20 +75,6 @@ esp_err_t VEML7700::WriteRegister(uint8_t reg_addr, uint16_t value)
   return ret;
 }
 
-void disp_buf2(uint8_t *buf, int len)
-{
-  int i;
-  for (i = 0; i < len; i++)
-  {
-    printf("%02x ", buf[i]);
-    if ((i + 1) % 16 == 0)
-    {
-      printf("\n");
-    }
-  }
-  printf("\n");
-}
-
 esp_err_t VEML7700::ReadRegister(uint8_t reg_addr, uint8_t *data, uint16_t len)
 {
   esp_err_t ret;
@@ -105,9 +91,7 @@ esp_err_t VEML7700::ReadRegister(uint8_t reg_addr, uint8_t *data, uint16_t len)
   if (ret != ESP_OK)
   {
     ESP_LOGE("VEML7700::ReadRegister", "I2C error no.: %d",ret);
-
   }
-  //disp_buf2(data,len);
   return ret;
 
 }
