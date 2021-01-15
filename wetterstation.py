@@ -62,7 +62,7 @@ ButtonEvent=threading.Event()
 
 logging.basicConfig(level=logging.INFO)
 
-def mqtt_receiver_thread
+def mqtt_receiver_thread():
     now = datetime.datetime.now()
     print("MQTT->RRD receiver gestartet: " + now.strftime('%Y-%m-%d %H:%M:%S'))
     client = mqtt.Client()
@@ -254,12 +254,17 @@ try:
     
     mqtt_thread = threading.Thread(target=mqtt_receiver_thread, args=())
     mqtt_thread.start()
+    first=True
     while 1==1:
         now = datetime.datetime.now()
         s=now.second
         waittime=0
         if s>0:
             waittime=60-s
+            # Beim ersten Start: 10 s warten und Daten sofort anzeigen
+            if first==True:
+                waittime=10
+                first=False
             print("Warte ",waittime," Sekunden bis zum nächsten Update")
             EventSet=ButtonEvent.wait(timeout=waittime)
             if EventSet==True:
