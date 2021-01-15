@@ -108,18 +108,19 @@ def on_message(client, userdata, msg):
     global brightness
     global mqtt_lock
     
-    if (msg.topic==TopicTemp):
-        temp1=float(msg.payload)
-        TopicCounter=TopicCounter+1
-    elif (msg.topic==TopicPress):
-        press1=float(msg.payload)
-        TopicCounter=TopicCounter+1
-    elif (msg.topic==TopicHum):
-        hum1=float(msg.payload)
-        TopicCounter=TopicCounter+1
-    elif (msg.topic==TopicLight):
-        brightness=float(msg.payload)
-        TopicCounter=TopicCounter+1
+    with mqtt_lock:
+        if (msg.topic==TopicTemp):
+            temp1=float(msg.payload)
+            TopicCounter=TopicCounter+1
+        elif (msg.topic==TopicPress):
+            press1=float(msg.payload)
+            TopicCounter=TopicCounter+1
+        elif (msg.topic==TopicHum):
+            hum1=float(msg.payload)
+            TopicCounter=TopicCounter+1
+        elif (msg.topic==TopicLight):
+            brightness=float(msg.payload)
+            TopicCounter=TopicCounter+1
         
     if (TopicCounter==4):
         # print("Schreibe Zeile in die RRD-Datenbank:")
@@ -150,8 +151,24 @@ def ShowDiagram(DiaFileName, InfoText):
     global HumStr
     global PressStr
     global BrightStr
-    print(InfoText)
+    global temp1
+    global temp2
+    global temp3
+    global temp4
+    global hum1
+    global hum2
+    global hum3
+    global hum4
+    global press1
+    global press2
+    global windspeed
+    global winddir
+    global rain
+    global brightness
     global epd
+    
+    print(InfoText)
+    
     
     now = datetime.datetime.now()
     timetext = now.strftime('%H:%M')
@@ -174,20 +191,24 @@ def ShowDiagram(DiaFileName, InfoText):
     draw = ImageDraw.Draw(newImage)
     textwidth = font24.getsize(timetext)[0]
     draw.text((DisplayWidth-2-textwidth, 0), timetext, font = font24, fill = (0, 0, 0))
-
-    text="24.5"
+    
+    with mqtt_lock:
+        text="{0:.1f}".format(temp1)
     textwidth = font18.getsize(text)[0]
     draw.text((DisplayWidth-2-textwidth, 40), text, font = font18, fill = (0, 0, 0))
 
-    text="1011"
+    with mqtt_lock:
+        text="{0:.0f}".format(press1)
     textwidth = font18.getsize(text)[0]
     draw.text((DisplayWidth-2-textwidth, 65), text, font = font18, fill = (0, 0, 0))
 
-    text="42.5"
+    with mqtt_lock:
+        text="{0:.1f}".format(hum1)
     textwidth = font18.getsize(text)[0]
     draw.text((DisplayWidth-2-textwidth, 90), text, font = font18, fill = (0, 0, 0))
 
-    text="12k"
+    with mqtt_lock:
+        text="{0:.1f}".format(brightness)
     textwidth = font18.getsize(text)[0]
     draw.text((DisplayWidth-2-textwidth, 115), text, font = font18, fill = (0, 0, 0))
     
