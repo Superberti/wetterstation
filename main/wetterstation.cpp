@@ -35,7 +35,8 @@
 #include <nvs_flash.h>
 #include "esp_system.h"
 #include "esp_netif.h"
-//#include "protocol_examples_common.h"
+#include "esp32_digital_led_lib.h"
+#include <driver/gpio.h>
 
 #include <wifi_provisioning/manager.h>
 #include <wifi_provisioning/scheme_ble.h>
@@ -46,7 +47,16 @@
 #include "veml7700.h"
 #include "sht35.h"
 
+#define NUM_LEDS 2
+
 static const char *TAG = "Wetterstation";
+
+// Pinbelegung:
+// pin9=GPIO18=I2C SDA
+// pin10=GPIO19=I2C SCL
+// pin11=Data out für WS2812-LEDs
+// pin12=CPU-Lüfter grün=Tachosignal
+// pin13=CPU-Lüfter blau=PWM Lüftersteuerung
 
 #define _I2C_NUMBER(num) I2C_NUM_##num
 #define I2C_NUMBER(num) _I2C_NUMBER(num)
@@ -55,8 +65,36 @@ static const char *TAG = "Wetterstation";
 #define I2C_MASTER_SDA_IO 18               /*!< gpio number for I2C master data  */
 #define I2C_MASTER_NUM I2C_NUMBER(0)       /*!< I2C port number for master dev */
 #define I2C_MASTER_FREQ_HZ 100000          /*!< I2C master clock frequency */
-#define I2C_MASTER_TX_BUF_DISABLE 0                           /*!< I2C master doesn't need buffer */
-#define I2C_MASTER_RX_BUF_DISABLE 0                           /*!< I2C master doesn't need buffer */
+#define I2C_MASTER_TX_BUF_DISABLE 0        /*!< I2C master doesn't need buffer */
+#define I2C_MASTER_RX_BUF_DISABLE 0        /*!< I2C master doesn't need buffer */
+
+#define HIGH 1
+#define LOW 0
+#define OUTPUT GPIO_MODE_OUTPUT
+#define INPUT GPIO_MODE_INPUT
+
+strand_t STRANDS[] =
+{
+  // Avoid using any of the strapping pins on the ESP32
+  // ESP32 has 6 strapping pins:
+  // MTDI/GPIO12: internal pull-down
+  // GPIO0: internal pull-up
+  // GPIO2: internal pull-down
+  // GPIO4: internal pull-down
+  // MTDO/GPIO15: internal pull-up
+  // GPIO5: internal pull-up
+  {
+    .rmtChannel = 0,
+    .gpioNum = 21,
+    .ledType = LED_WS2813_V2,
+    .brightLimit = 255,
+    .numPixels = NUM_LEDS,
+    .pixels = NULL,
+    ._stateVars = NULL
+  },
+};
+
+const int STRANDCNT = sizeof(STRANDS) / sizeof(STRANDS[0]);
 
 
 /* Signal Wi-Fi events on this event-group */
@@ -73,6 +111,32 @@ extern "C"
     ESP_LOGI(TAG, "Startup..");
     ESP_LOGI(TAG, "Free memory: %d bytes", esp_get_free_heap_size());
     ESP_LOGI(TAG, "IDF version: %s", esp_get_idf_version());
+
+    // rote LED auf dem ESP32
+    gpioSetup(GPIO_NUM_2, OUTPUT, HIGH);
+    digitalLeds_initDriver();
+
+    for (int i = 0; i < STRANDCNT; i++)
+    {
+      gpioSetup(STRANDS[i].gpioNum, OUTPUT, LOW);
+    }
+
+    strand_t *MyStrand[] = {&STRANDS[0]};
+    int rc = digitalLeds_addStrands(MyStrand, STRANDCNT);
+    bool toggle = false;
+    if (rc)
+    {
+      printf("digitalLeds_addStrands error code: %d. Halting\n", rc);
+      while (true)
+      {
+        toggle = !toggle;
+        gpio_set_level(GPIO_NUM_2, (uint32_t)toggle);
+        vTaskDelay(100 / portTICK_RATE_MS);
+      };
+    }
+
+    SetLEDColor(0, 128, 0, 0);
+    SetLEDColor(1, 128, 0, 0);
 
     // TODO (pi#1#): Auf Konopfdruck (z.B. 10s) nvs_flash_erase() aufrufen und rebooten, damit wieder das WiFi konfiguriert werden kann.
 
@@ -225,16 +289,17 @@ extern "C"
 
     /* Wait for Wi-Fi connection */
     xEventGroupWaitBits(wifi_event_group, WIFI_CONNECTED_EVENT, false, true, portMAX_DELAY);
+    SetLEDColor(0, 0, 128, 0);
 
     mqtt_app_start();
 
     int c=0;
     double temp=0,hum=0;
     bool CrcErr=false;
-    char TempStr[16]={0};
-    char HumStr[16]={0};
-    char PresStr[16]={0};
-    char LuxStr[16]={0};
+    char TempStr[16]= {0};
+    char HumStr[16]= {0};
+    char PresStr[16]= {0};
+    char LuxStr[16]= {0};
     double BMP_pres=0, BMP_pres_raw=0,VEML_lux=0;
 
     BMP280 bmp;
@@ -252,6 +317,9 @@ extern "C"
     bool sht_init_ok=sht.init();
     if (!sht_init_ok)
       ESP_LOGE(TAG, "Fehler bei der Initialisierung vom SHT35!");
+
+    if (bmp_init_ok && veml_init_ok && sht_init_ok)
+      SetLEDColor(1, 0, 128, 0);
 
 
     for(;;)
@@ -291,16 +359,23 @@ extern "C"
         esp_mqtt_client_publish(mqtt_client, "/wetterstation/beleuchtungsstaerke", LuxStr, strlen(LuxStr), 1,0);
       }
       vTaskDelay(5000 / portTICK_RATE_MS);
-
+      SetLEDColor(0, 0, 0, c%2 ? 128 : 0);
+      SetLEDColor(1, 0, 0, c%2 ? 0: 128);
       c++;
     }
   }
 }
 
-
-
-
-
+void SetLEDColor(uint8_t aLEDNum, uint8_t r, uint8_t g, uint8_t b)
+{
+  if (aLEDNum>1)
+    return;
+  strand_t *MyStrand[] = {&STRANDS[0]};
+  strand_t *pStrand = &STRANDS[0];
+  pixelColor_t Color = pixelFromRGB(r, g, b);
+  pStrand->pixels[aLEDNum]=Color;
+  digitalLeds_drawPixels(MyStrand, STRANDCNT);
+}
 
 /**
  * @brief i2c master initialization
@@ -503,7 +578,6 @@ static void mqtt_app_start(void)
   };
 
 #pragma GCC diagnostic pop
-
 
   mqtt_client = esp_mqtt_client_init(&mqtt_cfg);
   esp_mqtt_client_register_event(mqtt_client, (esp_mqtt_event_id_t)ESP_EVENT_ANY_ID, mqtt_event_handler, mqtt_client);
