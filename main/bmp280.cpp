@@ -27,8 +27,6 @@ BMP280::~BMP280(void)
 
 }
 
-
-
 /*!
  *  Initialises the sensor.
  *  @param addr
@@ -194,11 +192,11 @@ void BMP280::readCoefficients()
  * Reads the temperature from the device.
  * @return The temperature in degress celcius.
  */
-double BMP280::ReadTemperature()
+esp_err_t BMP280::ReadTemperature(double & aTemp)
 {
   int32_t var1, var2;
-
-  int32_t adc_T = read24(BMP280_REGISTER_TEMPDATA);
+  esp_err_t Status=ESP_OK;
+  int32_t adc_T = read24(BMP280_REGISTER_TEMPDATA, &Status);
   adc_T >>= 4;
 
   var1 = ((((adc_T >> 3) - ((int32_t)_bmp280_calib.dig_T1 << 1))) *
@@ -214,21 +212,26 @@ double BMP280::ReadTemperature()
   t_fine = var1 + var2;
 
   double T = (t_fine * 5 + 128) >> 8;
-  return T / 100;
+  aTemp = T / 100;
+  return Status;
 }
 
 /*!
  * Reads the barometric pressure from the device.
  * @return Barometric pressure in Pa.
  */
-double BMP280::ReadPressure()
+esp_err_t BMP280::ReadPressure(double & aPress)
 {
+  esp_err_t Status=ESP_OK;
   int64_t var1, var2, p;
 
   // Must be done first to get the t_fine variable set up
-  ReadTemperature();
+  double dum;
+  Status=ReadTemperature(dum);
+  if (Status!=ESP_OK)
+    return Status;
 
-  int32_t adc_P = read24(BMP280_REGISTER_PRESSUREDATA);
+  int32_t adc_P = read24(BMP280_REGISTER_PRESSUREDATA, &Status);
   adc_P >>= 4;
 
   var1 = ((int64_t)t_fine) - 128000;
@@ -250,7 +253,8 @@ double BMP280::ReadPressure()
   var2 = (((int64_t)_bmp280_calib.dig_P8) * p) >> 19;
 
   p = ((p + var1 + var2) >> 8) + (((int64_t)_bmp280_calib.dig_P7) << 4);
-  return (double)p / 256;
+  aPress = (double)p / 256;
+  return Status;
 }
 
 /*!
@@ -260,16 +264,15 @@ double BMP280::ReadPressure()
  *        The current hPa at sea level.
  * @return The approximate altitude above sea level in meters.
  */
-double BMP280::readAltitude(double seaLevelhPa)
+esp_err_t BMP280::readAltitude(double & aAlt, double seaLevelhPa)
 {
-  double altitude;
-
-  double pressure = ReadPressure(); // in Si units for Pascal
+  double pressure;
+  esp_err_t Status = ReadPressure(pressure); // in Si units for Pascal
   pressure /= 100;
 
-  altitude = 44330 * (1.0 - pow(pressure / seaLevelhPa, 0.1903));
+  aAlt = 44330 * (1.0 - pow(pressure / seaLevelhPa, 0.1903));
 
-  return altitude;
+  return Status;
 }
 
 /*!

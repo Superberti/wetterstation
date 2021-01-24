@@ -46,6 +46,7 @@
 #include "bmp280.h"
 #include "veml7700.h"
 #include "sht35.h"
+#include "driver/ledc.h"
 
 #define NUM_LEDS 2
 
@@ -135,8 +136,7 @@ extern "C"
       };
     }
 
-    SetLEDColor(0, 128, 0, 0);
-    SetLEDColor(1, 128, 0, 0);
+    SetLEDColors(128,0,0,128,0,0);
 
     // TODO (pi#1#): Auf Konopfdruck (z.B. 10s) nvs_flash_erase() aufrufen und rebooten, damit wieder das WiFi konfiguriert werden kann.
 
@@ -321,12 +321,47 @@ extern "C"
     if (bmp_init_ok && veml_init_ok && sht_init_ok)
       SetLEDColor(1, 0, 128, 0);
 
+    esp_err_t SensorStatus=ESP_OK;
+    bool SensorErr=false;
+
+    // Ansteuerung CPU-Luefter
+    ledc_timer_config_t ledc_timer =
+    {
+      .speed_mode = LEDC_HIGH_SPEED_MODE,   // timer mode
+      .duty_resolution = LEDC_TIMER_10_BIT, // resolution of PWM duty
+      .timer_num = LEDC_TIMER_0,            // timer index
+      .freq_hz = 25000,                     // frequency of PWM signal
+      .clk_cfg = LEDC_AUTO_CLK,             // Auto select the source clock
+    };
+
+    ledc_timer_config(&ledc_timer);
+
+    ledc_channel_config_t ledc_channel =
+    {
+      .gpio_num   = 23,
+      .speed_mode = LEDC_HIGH_SPEED_MODE,
+      .channel    = LEDC_CHANNEL_0,
+      .intr_type  = LEDC_INTR_DISABLE,
+      .timer_sel  = LEDC_TIMER_0,
+      .duty       = 0,
+      .hpoint     = 0,
+    };
+
+    // Set LED Controller with previously prepared configuration
+
+    ledc_channel_config(&ledc_channel);
+    const int MaxDuty=1024;
+    //uint32_t CurrentDuty=1024;
+    ledc_set_duty(ledc_channel.speed_mode, ledc_channel.channel, 512);
+    ledc_update_duty(ledc_channel.speed_mode, ledc_channel.channel);
 
     for(;;)
     {
+      SensorErr=false;
       if (sht_init_ok)
       {
-        sht.ReadSHT35(temp, hum, CrcErr);
+        SensorStatus=sht.ReadSHT35(temp, hum, CrcErr);
+        SensorErr|=SensorStatus!=ESP_OK;
         if (CrcErr)
           printf("WARNUNG: CRC-Datenfehler aufgetreten, Daten könnten falsch sein.\r\n");
         sprintf(TempStr,"%.2f",temp);
@@ -337,7 +372,8 @@ extern "C"
       if (bmp_init_ok)
       {
         //BMP_temp=bmp.ReadTemperature();
-        BMP_pres_raw=bmp.ReadPressure();
+        SensorStatus=bmp.ReadPressure(BMP_pres_raw);
+        SensorErr|=SensorStatus!=ESP_OK;
         BMP_pres=bmp.seaLevelForAltitude(210, BMP_pres_raw);
 
         sprintf(PresStr,"%.1f",BMP_pres/100);
@@ -345,11 +381,24 @@ extern "C"
       }
       if (veml_init_ok)
       {
-        VEML_lux=veml.readLuxNormalized();
+        SensorStatus=veml.readLuxNormalized(VEML_lux);
+        SensorErr|=SensorStatus!=ESP_OK;
         //veml.readWhite();
         sprintf(LuxStr,"%.2f",VEML_lux);
         printf("VEML7700 Luxsensor: %s lux\r\n",LuxStr);
       }
+
+      if (!SensorErr)
+      {
+        for (int i=0; i<3; i++)
+        {
+          SetLEDColor(0,0,0,128);
+          vTaskDelay(100 / portTICK_RATE_MS);
+          SetLEDColor(0,0,0,0);
+          vTaskDelay(100 / portTICK_RATE_MS);
+        }
+      }
+      SetLEDColor(0,SensorErr ? 128 : 0, 0,0);
       // Ablegen auf den MQTT-Server
       if (smMQTTConnected && mqtt_client!=NULL)
       {
@@ -357,23 +406,49 @@ extern "C"
         esp_mqtt_client_publish(mqtt_client, "/wetterstation/luftfeuchtigkeit", HumStr, strlen(HumStr), 1,0);
         esp_mqtt_client_publish(mqtt_client, "/wetterstation/luftdruck", PresStr, strlen(PresStr), 1,0);
         esp_mqtt_client_publish(mqtt_client, "/wetterstation/beleuchtungsstaerke", LuxStr, strlen(LuxStr), 1,0);
+        /*
+        for (int i=0; i<3; i++)
+        {
+          SetLEDColor(1,0,0,0);
+          vTaskDelay(100 / portTICK_RATE_MS);
+          SetLEDColor(1,0,0,128);
+          vTaskDelay(100 / portTICK_RATE_MS);
+        }
+        SetLEDColor(1,0,128,0);*/
       }
       vTaskDelay(5000 / portTICK_RATE_MS);
-      SetLEDColor(0, 0, 0, c%2 ? 128 : 0);
-      SetLEDColor(1, 0, 0, c%2 ? 0: 128);
+      //CurrentDuty+=128;
+      //if (CurrentDuty>MaxDuty)
+        //CurrentDuty=0;
+      //ledc_set_duty(ledc_channel.speed_mode, ledc_channel.channel, CurrentDuty);
+      //ledc_update_duty(ledc_channel.speed_mode, ledc_channel.channel);
+      //SetLEDColors(0, 0, c%2 ? 128 : 0, 0, 0, c%2 ? 0: 128);
       c++;
     }
   }
 }
 
+// Farbei einer LED setzen
 void SetLEDColor(uint8_t aLEDNum, uint8_t r, uint8_t g, uint8_t b)
 {
   if (aLEDNum>1)
     return;
   strand_t *MyStrand[] = {&STRANDS[0]};
   strand_t *pStrand = &STRANDS[0];
-  pixelColor_t Color = pixelFromRGB(r, g, b);
+  // Bei meinen 5mm-LEDs sind die Farben rot-gruen vertauscht...
+  pixelColor_t Color = pixelFromRGB(g, r, b);
   pStrand->pixels[aLEDNum]=Color;
+  digitalLeds_drawPixels(MyStrand, STRANDCNT);
+}
+
+// Farben beider LEDs gleichzeitig setzen
+void SetLEDColors(uint8_t r1, uint8_t g1, uint8_t b1, uint8_t r2, uint8_t g2, uint8_t b2)
+{
+  strand_t *MyStrand[] = {&STRANDS[0]};
+  strand_t *pStrand = &STRANDS[0];
+  // Bei meinen 5mm-LEDs sind die Farben rot-gruen vertauscht...
+  pStrand->pixels[0]=pixelFromRGB(g1, r1, b1);
+  pStrand->pixels[1]=pixelFromRGB(g2, r2, b2);
   digitalLeds_drawPixels(MyStrand, STRANDCNT);
 }
 
@@ -515,6 +590,7 @@ static esp_err_t mqtt_event_handler_cb(esp_mqtt_event_handle_t event)
   {
   case MQTT_EVENT_CONNECTED:
     smMQTTConnected = true;
+    SetLEDColor(1, 0, 128, 0);
     ESP_LOGI(TAG, "MQTT_EVENT_CONNECTED");
     //msg_id = esp_mqtt_client_publish(client, "/topic/qos1", "data_3", 0, 1, 0);
     //ESP_LOGI(TAG, "sent publish successful, msg_id=%d", msg_id);
@@ -530,6 +606,7 @@ static esp_err_t mqtt_event_handler_cb(esp_mqtt_event_handle_t event)
     break;
   case MQTT_EVENT_DISCONNECTED:
     smMQTTConnected = false;
+    SetLEDColor(1, 128, 0, 0);
     ESP_LOGI(TAG, "MQTT_EVENT_DISCONNECTED");
     break;
 
@@ -543,6 +620,10 @@ static esp_err_t mqtt_event_handler_cb(esp_mqtt_event_handle_t event)
     break;
   case MQTT_EVENT_PUBLISHED:
     ESP_LOGI(TAG, "MQTT_EVENT_PUBLISHED, msg_id=%d", event->msg_id);
+    SetLEDColor(1,0,0,128);
+    vTaskDelay(100 / portTICK_RATE_MS);
+    SetLEDColor(1,0,0,0);
+    vTaskDelay(100 / portTICK_RATE_MS);
     break;
   case MQTT_EVENT_DATA:
     ESP_LOGI(TAG, "MQTT_EVENT_DATA");

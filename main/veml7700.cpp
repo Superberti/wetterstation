@@ -141,11 +141,13 @@ double VEML7700::normalize_resolution(double value)
  *    @brief Read the calibrated lux value. See app note lux table on page 5
  *    @returns Floating point Lux data (ALS multiplied by 0.0576)
  */
-double VEML7700::readLux()
+esp_err_t VEML7700::readLux(double & aLux)
 {
-  uint16_t als=readALS();
+  uint16_t als;
+  esp_err_t Status=readALS(als);
   //printf("ALS: %d\r\n",als);
-  return (normalize_resolution(als) * 0.0576); // see app note lux table on page 5
+  aLux = (normalize_resolution(als) * 0.0576); // see app note lux table on page 5
+  return Status;
 }
 
 /*!
@@ -154,9 +156,10 @@ double VEML7700::readLux()
  *    @returns Floating point Lux data (ALS multiplied by 0.0576 and corrected
  * for high-lux settings)
  */
-double VEML7700::readLuxNormalized()
+esp_err_t VEML7700::readLuxNormalized(double & aLux)
 {
-  double lux = readLux();
+  double lux;
+  esp_err_t Status = readLux(lux);
 
   // user-provided correction for non-linearities at high lux/white values:
   // https://forums.adafruit.com/viewtopic.php?f=19&t=152997&p=758582#p759346
@@ -166,35 +169,31 @@ double VEML7700::readLuxNormalized()
           8.1488e-5 * pow(lux, 2) + 1.0023 * lux;
   }
 
-  return lux;
+  aLux = lux;
+  return Status;
 }
 
 /*!
  *    @brief Read the raw ALS data
  *    @returns 16-bit data value from the ALS register
  */
-uint16_t VEML7700::readALS()
+esp_err_t VEML7700::readALS(uint16_t & aALS)
 {
-  uint16_t iALS;
-  esp_err_t ret=ReadRegister(VEML7700_ALS_DATA,(uint8_t*)&iALS,sizeof(iALS));
-  if (ret!=ESP_OK)
-    return 0;
-  return iALS;
+  return ReadRegister(VEML7700_ALS_DATA,(uint8_t*)&aALS,sizeof(aALS));
 }
 
 /*!
  *    @brief Read the white light data
  *    @returns Floating point 'white light' data multiplied by 0.0576
  */
-double VEML7700::readWhite()
+esp_err_t VEML7700::readWhite(double & aWhite)
 {
   // white_corrected= 2E-15*pow(VEML_white,4) + 4E-12*pow(VEML_white,3) +
   // 9E-06*pow(VEML_white,)2 + 1.0179*VEML_white - 11.052;
   uint16_t iALS;
-  esp_err_t ret=ReadRegister(VEML7700_WHITE_DATA,(uint8_t*)&iALS,sizeof(iALS));
-  if (ret!=ESP_OK)
-    return 0.0;
-  return normalize_resolution(iALS) * 0.0576; // Unclear if this is the right multiplier
+  esp_err_t Status=ReadRegister(VEML7700_WHITE_DATA,(uint8_t*)&iALS,sizeof(iALS));
+  aWhite = normalize_resolution(iALS) * 0.0576; // Unclear if this is the right multiplier
+  return Status;
 }
 
 /*!
@@ -203,9 +202,10 @@ double VEML7700::readWhite()
  *    @returns Floating point 'white light' data multiplied by 0.0576 and
  * corrected for high-lux settings
  */
-double VEML7700::readWhiteNormalized()
+esp_err_t VEML7700::readWhiteNormalized(double & aWhite)
 {
-  double white = readWhite();
+  double white;
+  esp_err_t Status = readWhite(white);
 
   // user-provided correction for non-linearities at high lux values:
   // https://forums.adafruit.com/viewtopic.php?f=19&t=152997&p=758582#p759346
@@ -215,7 +215,8 @@ double VEML7700::readWhiteNormalized()
             9E-06 * pow(white, 2) + 1.0179 * white - 11.052;
   }
 
-  return white;
+  aWhite = white;
+  return Status;
 }
 
 

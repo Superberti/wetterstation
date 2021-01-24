@@ -143,10 +143,10 @@ public:
   void reset(void);
   uint8_t getStatus();
 
-  double ReadTemperature();
-  double ReadPressure();
-  double ReadHumidity();
-  double readAltitude(double seaLevelhPa = 1013.25);
+  esp_err_t ReadTemperature(double & aTemp);
+  esp_err_t ReadPressure(double & aPress);
+
+  esp_err_t readAltitude(double & aAlt, double seaLevelhPa = 1013.25);
   double seaLevelForAltitude(double altitude, double atmospheric);
   double waterBoilingPoint(double pressure);
 

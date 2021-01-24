@@ -71,12 +71,12 @@ public:
 
   bool init(uint8_t aGain=VEML7700_GAIN_1, uint8_t aIntegrationTime=VEML7700_IT_100MS);
 
-  double readLux();
-  double readLuxNormalized();
+  esp_err_t readLux(double & aLux);
+  esp_err_t readLuxNormalized(double & aLux);
 
-  uint16_t readALS();
-  double readWhite();
-  double readWhiteNormalized();
+  esp_err_t readALS(uint16_t & aALS);
+  esp_err_t readWhite(double & aWhite);
+  esp_err_t readWhiteNormalized(double & aWhite);
 
 private:
   uint8_t mGain, mIntegrationTime;
