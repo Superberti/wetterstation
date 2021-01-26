@@ -139,7 +139,7 @@ extern "C"
       };
     }
 
-    SetLEDColors(smLEDPower,0,0,smLEDPower,0,0);
+    SetLEDColors(128,0,0,128,0,0);
 
     // TODO (pi#1#): Auf Konopfdruck (z.B. 10s) nvs_flash_erase() aufrufen und rebooten, damit wieder das WiFi konfiguriert werden kann.
 
@@ -360,33 +360,34 @@ extern "C"
 
 
     // PCNT-Einheit zählt die Counterpulse vom CPU-Lüfter
-    /* Prepare configuration for the PCNT unit */
-    pcnt_config_t pcnt_config = {
-        // Set PCNT input signal and control GPIOs
-        .pulse_gpio_num = 22,
-        .ctrl_gpio_num = -1,
-        // What to do when control input is low or high?
-        .lctrl_mode = PCNT_MODE_REVERSE, // Reverse counting direction if low
-        .hctrl_mode = PCNT_MODE_KEEP,    // Keep the primary counter mode if high
+    // Prepare configuration for the PCNT unit
+    pcnt_config_t pcnt_config =
+    {
+      // Set PCNT input signal and control GPIOs
+      .pulse_gpio_num = 22,
+      .ctrl_gpio_num = -1,
+      // What to do when control input is low or high?
+      .lctrl_mode = PCNT_MODE_REVERSE, // Reverse counting direction if low
+      .hctrl_mode = PCNT_MODE_KEEP,    // Keep the primary counter mode if high
 
-        // What to do on the positive / negative edge of pulse input?
-        .pos_mode = PCNT_COUNT_INC,   // Count up on the positive edge
-        .neg_mode = PCNT_COUNT_DIS,   // Keep the counter value on the negative edge
+      // What to do on the positive / negative edge of pulse input?
+      .pos_mode = PCNT_COUNT_INC,   // Count up on the positive edge
+      .neg_mode = PCNT_COUNT_DIS,   // Keep the counter value on the negative edge
 
-        // Set the maximum and minimum limit values to watch
-        .counter_h_lim = 32767,
-        .counter_l_lim = 0,
+      // Set the maximum and minimum limit values to watch
+      .counter_h_lim = 32767,
+      .counter_l_lim = 0,
 
-        .unit = PCNT_UNIT_0,
-        .channel = PCNT_CHANNEL_0,
+      .unit = PCNT_UNIT_0,
+      .channel = PCNT_CHANNEL_0,
     };
-    /* Initialize PCNT unit */
+    // Initialize PCNT unit
     pcnt_unit_config(&pcnt_config);
 
-    /* Configure and enable the input filter */
+    // Configure and enable the input filter
     pcnt_set_filter_value(PCNT_UNIT_0, 100);
     pcnt_filter_enable(PCNT_UNIT_0);
-    /* Initialize PCNT's counter */
+    // Initialize PCNT's counter
     pcnt_counter_pause(PCNT_UNIT_0);
     pcnt_counter_clear(PCNT_UNIT_0);
     pcnt_counter_resume(PCNT_UNIT_0);
@@ -446,6 +447,20 @@ extern "C"
         // LED-Power je nach Helligkeit anpassen
         smLEDPower=10+VEML_lux/1000*2;
       }
+      if (c)
+      {
+        pcnt_get_counter_value(PCNT_UNIT_0, &count);
+        uint16_t CoolerCount=abs(count);
+        pcnt_counter_clear(PCNT_UNIT_0);
+        printf("Counter CPU-Lüfter: %d PWM: %d\n",CoolerCount,CurrentDuty);
+
+        if (CoolerCount<100)
+        {
+          // Lüfter ausgefallen?
+          StatusStr+=strprintf("Empfange keine oder zu wenige Lüfter-Impulse: %d ",CoolerCount);
+          printf("Empfange keine oder zu wenige Lüfter-Impulse: %d ",CoolerCount);
+        }
+      }
 
       if (!SensorErr)
       {
@@ -465,6 +480,9 @@ extern "C"
         esp_mqtt_client_publish(mqtt_client, "/wetterstation/luftfeuchtigkeit", HumStr, strlen(HumStr), 1,0);
         esp_mqtt_client_publish(mqtt_client, "/wetterstation/luftdruck", PresStr, strlen(PresStr), 1,0);
         esp_mqtt_client_publish(mqtt_client, "/wetterstation/beleuchtungsstaerke", LuxStr, strlen(LuxStr), 1,0);
+        if (StatusStr.size()==0)
+          StatusStr="Alles OK";
+        esp_mqtt_client_publish(mqtt_client, "/wetterstation/status", StatusStr.c_str(), StatusStr.size(), 1,0);
 
         /*
         for (int i=0; i<3; i++)
@@ -477,24 +495,7 @@ extern "C"
         SetLEDColor(1,0,smLEDPower,0);*/
       }
       vTaskDelay(5000 / portTICK_RATE_MS);
-      pcnt_get_counter_value(PCNT_UNIT_0, &count);
-      uint16_t CoolerCount=abs(count);
-      pcnt_counter_clear(PCNT_UNIT_0);
-      printf("Counter CPU-Lüfter: %d PWM: %d\n",CoolerCount,CurrentDuty);
 
-      if (CoolerCount<100)
-      {
-        // Lüfter ausgefallen?
-        StatusStr+=strprintf("Empfange keine oder zu wenige Lüfter-Impulse: %d ",CoolerCount);
-        printf("Empfange keine oder zu wenige Lüfter-Impulse: %d ",CoolerCount);
-      }
-      // Status erst am Ende veröffentlichen
-      if (smMQTTConnected && mqtt_client!=NULL)
-      {
-        if (StatusStr.size()==0)
-          StatusStr="Alles OK";
-        esp_mqtt_client_publish(mqtt_client, "/wetterstation/status", StatusStr.c_str(), StatusStr.size(), 1,0);
-      }
       /*
       CurrentDuty+=128;
       if (CurrentDuty>MaxDuty)
