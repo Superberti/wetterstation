@@ -47,6 +47,8 @@
 #include "veml7700.h"
 #include "sht35.h"
 #include "driver/ledc.h"
+#include "driver/pcnt.h"
+#include "tools.h"
 
 #define NUM_LEDS 2
 
@@ -55,9 +57,9 @@ static const char *TAG = "Wetterstation";
 // Pinbelegung:
 // pin9=GPIO18=I2C SDA
 // pin10=GPIO19=I2C SCL
-// pin11=Data out für WS2812-LEDs
-// pin12=CPU-Lüfter grün=Tachosignal
-// pin13=CPU-Lüfter blau=PWM Lüftersteuerung
+// pin11=GPIO21=Data out für WS2812-LEDs
+// pin12=GPIO22=CPU-Lüfter grün=Tachosignal
+// pin13=GPIO23=CPU-Lüfter blau=PWM Lüftersteuerung
 
 #define _I2C_NUMBER(num) I2C_NUM_##num
 #define I2C_NUMBER(num) _I2C_NUMBER(num)
@@ -103,6 +105,7 @@ const int WIFI_CONNECTED_EVENT = BIT0;
 static EventGroupHandle_t wifi_event_group;
 static bool smMQTTConnected = false;
 static esp_mqtt_client_handle_t mqtt_client = NULL;
+static volatile uint8_t smLEDPower=128;
 
 extern "C"
 {
@@ -136,7 +139,7 @@ extern "C"
       };
     }
 
-    SetLEDColors(128,0,0,128,0,0);
+    SetLEDColors(smLEDPower,0,0,smLEDPower,0,0);
 
     // TODO (pi#1#): Auf Konopfdruck (z.B. 10s) nvs_flash_erase() aufrufen und rebooten, damit wieder das WiFi konfiguriert werden kann.
 
@@ -289,7 +292,7 @@ extern "C"
 
     /* Wait for Wi-Fi connection */
     xEventGroupWaitBits(wifi_event_group, WIFI_CONNECTED_EVENT, false, true, portMAX_DELAY);
-    SetLEDColor(0, 0, 128, 0);
+    SetLEDColor(0, 0, smLEDPower, 0);
 
     mqtt_app_start();
 
@@ -319,7 +322,7 @@ extern "C"
       ESP_LOGE(TAG, "Fehler bei der Initialisierung vom SHT35!");
 
     if (bmp_init_ok && veml_init_ok && sht_init_ok)
-      SetLEDColor(1, 0, 128, 0);
+      SetLEDColor(1, 0, smLEDPower, 0);
 
     esp_err_t SensorStatus=ESP_OK;
     bool SensorErr=false;
@@ -351,19 +354,64 @@ extern "C"
 
     ledc_channel_config(&ledc_channel);
     const int MaxDuty=1024;
-    //uint32_t CurrentDuty=1024;
-    ledc_set_duty(ledc_channel.speed_mode, ledc_channel.channel, 512);
+    uint32_t CurrentDuty=640;
+    ledc_set_duty(ledc_channel.speed_mode, ledc_channel.channel, CurrentDuty);
     ledc_update_duty(ledc_channel.speed_mode, ledc_channel.channel);
 
+
+    // PCNT-Einheit zählt die Counterpulse vom CPU-Lüfter
+    /* Prepare configuration for the PCNT unit */
+    pcnt_config_t pcnt_config = {
+        // Set PCNT input signal and control GPIOs
+        .pulse_gpio_num = 22,
+        .ctrl_gpio_num = -1,
+        // What to do when control input is low or high?
+        .lctrl_mode = PCNT_MODE_REVERSE, // Reverse counting direction if low
+        .hctrl_mode = PCNT_MODE_KEEP,    // Keep the primary counter mode if high
+
+        // What to do on the positive / negative edge of pulse input?
+        .pos_mode = PCNT_COUNT_INC,   // Count up on the positive edge
+        .neg_mode = PCNT_COUNT_DIS,   // Keep the counter value on the negative edge
+
+        // Set the maximum and minimum limit values to watch
+        .counter_h_lim = 32767,
+        .counter_l_lim = 0,
+
+        .unit = PCNT_UNIT_0,
+        .channel = PCNT_CHANNEL_0,
+    };
+    /* Initialize PCNT unit */
+    pcnt_unit_config(&pcnt_config);
+
+    /* Configure and enable the input filter */
+    pcnt_set_filter_value(PCNT_UNIT_0, 100);
+    pcnt_filter_enable(PCNT_UNIT_0);
+    /* Initialize PCNT's counter */
+    pcnt_counter_pause(PCNT_UNIT_0);
+    pcnt_counter_clear(PCNT_UNIT_0);
+    pcnt_counter_resume(PCNT_UNIT_0);
+
+    int16_t count = 0;
+    std::string StatusStr="";
     for(;;)
     {
       SensorErr=false;
+      StatusStr="";
       if (sht_init_ok)
       {
         SensorStatus=sht.ReadSHT35(temp, hum, CrcErr);
-        SensorErr|=SensorStatus!=ESP_OK;
         if (CrcErr)
+        {
           printf("WARNUNG: CRC-Datenfehler aufgetreten, Daten könnten falsch sein.\r\n");
+          StatusStr+=strprintf("CRC-Fehler SHT35 ");
+        }
+        if (SensorStatus!=ESP_OK)
+        {
+          SensorErr=true;
+          StatusStr+=strprintf("Fehler SHT35: %d ",SensorStatus);
+          printf("Fehler SHT35: %d ",SensorStatus);
+        }
+
         sprintf(TempStr,"%.2f",temp);
         sprintf(HumStr,"%.2f",hum);
         printf("SHT35 Temperatur: %s°C Luftfeuchte: %s %%\r\n",TempStr,HumStr);
@@ -373,7 +421,12 @@ extern "C"
       {
         //BMP_temp=bmp.ReadTemperature();
         SensorStatus=bmp.ReadPressure(BMP_pres_raw);
-        SensorErr|=SensorStatus!=ESP_OK;
+        if (SensorStatus!=ESP_OK)
+        {
+          SensorErr=true;
+          StatusStr+=strprintf("Fehler BMP280: %d ",SensorStatus);
+        }
+
         BMP_pres=bmp.seaLevelForAltitude(210, BMP_pres_raw);
 
         sprintf(PresStr,"%.1f",BMP_pres/100);
@@ -382,23 +435,29 @@ extern "C"
       if (veml_init_ok)
       {
         SensorStatus=veml.readLuxNormalized(VEML_lux);
-        SensorErr|=SensorStatus!=ESP_OK;
-        //veml.readWhite();
+        if (SensorStatus!=ESP_OK)
+        {
+          SensorErr=true;
+          StatusStr+=strprintf("Fehler VEML7700: %d ",SensorStatus);
+        }
+
         sprintf(LuxStr,"%.2f",VEML_lux);
         printf("VEML7700 Luxsensor: %s lux\r\n",LuxStr);
+        // LED-Power je nach Helligkeit anpassen
+        smLEDPower=10+VEML_lux/1000*2;
       }
 
       if (!SensorErr)
       {
         for (int i=0; i<3; i++)
         {
-          SetLEDColor(0,0,0,128);
+          SetLEDColor(0,0,0,smLEDPower);
           vTaskDelay(100 / portTICK_RATE_MS);
           SetLEDColor(0,0,0,0);
           vTaskDelay(100 / portTICK_RATE_MS);
         }
       }
-      SetLEDColor(0,SensorErr ? 128 : 0, 0,0);
+      SetLEDColor(0,SensorErr ? smLEDPower : 0, 0,0);
       // Ablegen auf den MQTT-Server
       if (smMQTTConnected && mqtt_client!=NULL)
       {
@@ -406,23 +465,43 @@ extern "C"
         esp_mqtt_client_publish(mqtt_client, "/wetterstation/luftfeuchtigkeit", HumStr, strlen(HumStr), 1,0);
         esp_mqtt_client_publish(mqtt_client, "/wetterstation/luftdruck", PresStr, strlen(PresStr), 1,0);
         esp_mqtt_client_publish(mqtt_client, "/wetterstation/beleuchtungsstaerke", LuxStr, strlen(LuxStr), 1,0);
+
         /*
         for (int i=0; i<3; i++)
         {
           SetLEDColor(1,0,0,0);
           vTaskDelay(100 / portTICK_RATE_MS);
-          SetLEDColor(1,0,0,128);
+          SetLEDColor(1,0,0,smLEDPower);
           vTaskDelay(100 / portTICK_RATE_MS);
         }
-        SetLEDColor(1,0,128,0);*/
+        SetLEDColor(1,0,smLEDPower,0);*/
       }
       vTaskDelay(5000 / portTICK_RATE_MS);
-      //CurrentDuty+=128;
-      //if (CurrentDuty>MaxDuty)
-        //CurrentDuty=0;
-      //ledc_set_duty(ledc_channel.speed_mode, ledc_channel.channel, CurrentDuty);
-      //ledc_update_duty(ledc_channel.speed_mode, ledc_channel.channel);
-      //SetLEDColors(0, 0, c%2 ? 128 : 0, 0, 0, c%2 ? 0: 128);
+      pcnt_get_counter_value(PCNT_UNIT_0, &count);
+      uint16_t CoolerCount=abs(count);
+      pcnt_counter_clear(PCNT_UNIT_0);
+      printf("Counter CPU-Lüfter: %d PWM: %d\n",CoolerCount,CurrentDuty);
+
+      if (CoolerCount<100)
+      {
+        // Lüfter ausgefallen?
+        StatusStr+=strprintf("Empfange keine oder zu wenige Lüfter-Impulse: %d ",CoolerCount);
+        printf("Empfange keine oder zu wenige Lüfter-Impulse: %d ",CoolerCount);
+      }
+      // Status erst am Ende veröffentlichen
+      if (smMQTTConnected && mqtt_client!=NULL)
+      {
+        if (StatusStr.size()==0)
+          StatusStr="Alles OK";
+        esp_mqtt_client_publish(mqtt_client, "/wetterstation/status", StatusStr.c_str(), StatusStr.size(), 1,0);
+      }
+      /*
+      CurrentDuty+=128;
+      if (CurrentDuty>MaxDuty)
+        CurrentDuty=0;
+      ledc_set_duty(ledc_channel.speed_mode, ledc_channel.channel, CurrentDuty);
+      ledc_update_duty(ledc_channel.speed_mode, ledc_channel.channel);*/
+      //SetLEDColors(0, 0, c%2 ? smLEDPower : 0, 0, 0, c%2 ? 0: smLEDPower);
       c++;
     }
   }
@@ -590,7 +669,7 @@ static esp_err_t mqtt_event_handler_cb(esp_mqtt_event_handle_t event)
   {
   case MQTT_EVENT_CONNECTED:
     smMQTTConnected = true;
-    SetLEDColor(1, 0, 128, 0);
+    SetLEDColor(1, 0, smLEDPower, 0);
     ESP_LOGI(TAG, "MQTT_EVENT_CONNECTED");
     //msg_id = esp_mqtt_client_publish(client, "/topic/qos1", "data_3", 0, 1, 0);
     //ESP_LOGI(TAG, "sent publish successful, msg_id=%d", msg_id);
@@ -606,7 +685,7 @@ static esp_err_t mqtt_event_handler_cb(esp_mqtt_event_handle_t event)
     break;
   case MQTT_EVENT_DISCONNECTED:
     smMQTTConnected = false;
-    SetLEDColor(1, 128, 0, 0);
+    SetLEDColor(1, smLEDPower, 0, 0);
     ESP_LOGI(TAG, "MQTT_EVENT_DISCONNECTED");
     break;
 
@@ -620,7 +699,7 @@ static esp_err_t mqtt_event_handler_cb(esp_mqtt_event_handle_t event)
     break;
   case MQTT_EVENT_PUBLISHED:
     ESP_LOGI(TAG, "MQTT_EVENT_PUBLISHED, msg_id=%d", event->msg_id);
-    SetLEDColor(1,0,0,128);
+    SetLEDColor(1,0,0,smLEDPower);
     vTaskDelay(100 / portTICK_RATE_MS);
     SetLEDColor(1,0,0,0);
     vTaskDelay(100 / portTICK_RATE_MS);
