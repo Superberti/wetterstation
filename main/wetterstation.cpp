@@ -487,7 +487,7 @@ extern "C"
           StatusStr="Alles OK";
         esp_mqtt_client_publish(mqtt_client, "/wetterstation/status", StatusStr.c_str(), StatusStr.size(), 1,0);
 
-        /*
+        /*-
         for (int i=0; i<3; i++)
         {
           SetLEDColor(1,0,0,0);
