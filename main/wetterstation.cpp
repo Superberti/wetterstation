@@ -467,12 +467,15 @@ extern "C"
         for (int i=0; i<3; i++)
         {
           SetLEDColor(0,0,0,smLEDPower);
+          gpio_set_level(GPIO_NUM_2, 1);
           vTaskDelay(100 / portTICK_RATE_MS);
           SetLEDColor(0,0,0,0);
+          gpio_set_level(GPIO_NUM_2, 0);
           vTaskDelay(100 / portTICK_RATE_MS);
         }
       }
       SetLEDColor(0,SensorErr ? smLEDPower : 0, 0,0);
+      gpio_set_level(GPIO_NUM_2, SensorErr ? 1 : 0);
       // Ablegen auf den MQTT-Server
       if (smMQTTConnected && mqtt_client!=NULL)
       {
@@ -484,7 +487,7 @@ extern "C"
           StatusStr="Alles OK";
         esp_mqtt_client_publish(mqtt_client, "/wetterstation/status", StatusStr.c_str(), StatusStr.size(), 1,0);
 
-        /*
+        /*-
         for (int i=0; i<3; i++)
         {
           SetLEDColor(1,0,0,0);
@@ -701,9 +704,11 @@ static esp_err_t mqtt_event_handler_cb(esp_mqtt_event_handle_t event)
   case MQTT_EVENT_PUBLISHED:
     ESP_LOGI(TAG, "MQTT_EVENT_PUBLISHED, msg_id=%d", event->msg_id);
     SetLEDColor(1,0,0,smLEDPower);
-    vTaskDelay(100 / portTICK_RATE_MS);
+    gpio_set_level(GPIO_NUM_2, 1);
+    vTaskDelay(50 / portTICK_RATE_MS);
     SetLEDColor(1,0,0,0);
-    vTaskDelay(100 / portTICK_RATE_MS);
+    gpio_set_level(GPIO_NUM_2, 0);
+    vTaskDelay(50 / portTICK_RATE_MS);
     break;
   case MQTT_EVENT_DATA:
     ESP_LOGI(TAG, "MQTT_EVENT_DATA");
