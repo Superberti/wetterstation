@@ -118,13 +118,14 @@ extern "C"
 
     // rote LED auf dem ESP32
     gpioSetup(GPIO_NUM_2, OUTPUT, HIGH);
+    ESP_LOGI(TAG, "gpioSetup ready");
     digitalLeds_initDriver();
-
+    ESP_LOGI(TAG, "digitalLeds_initDriver ready");
     for (int i = 0; i < STRANDCNT; i++)
     {
       gpioSetup(STRANDS[i].gpioNum, OUTPUT, LOW);
     }
-
+    ESP_LOGI(TAG, "gpioSetup ready");
     strand_t *MyStrand[] = {&STRANDS[0]};
     int rc = digitalLeds_addStrands(MyStrand, STRANDCNT);
     bool toggle = false;
@@ -139,11 +140,14 @@ extern "C"
       };
     }
 
+    ESP_LOGI(TAG, "Setting digital LEDs...");
     SetLEDColors(128,0,0,128,0,0);
+    ESP_LOGI(TAG, "Digital LEDs ready");
 
     // TODO (pi#1#): Auf Konopfdruck (z.B. 10s) nvs_flash_erase() aufrufen und rebooten, damit wieder das WiFi konfiguriert werden kann.
 
     ESP_ERROR_CHECK(i2c_master_init());
+    ESP_LOGI(TAG, "I2C ready");
 
     /* Initialize NVS partition */
     esp_err_t ret = nvs_flash_init();
@@ -156,9 +160,11 @@ extern "C"
       /* Retry nvs_flash_init */
       ESP_ERROR_CHECK(nvs_flash_init());
     }
+    ESP_LOGI(TAG, "NVS ready");
 
     /* Initialize TCP/IP */
     ESP_ERROR_CHECK(esp_netif_init());
+    ESP_LOGI(TAG, "TCP/IP ready");
 
     /* Initialize the event loop */
     ESP_ERROR_CHECK(esp_event_loop_create_default());
@@ -174,6 +180,7 @@ extern "C"
 
     wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
     ESP_ERROR_CHECK(esp_wifi_init(&cfg));
+    ESP_LOGI(TAG, "Wifi init ready");
 
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wmissing-field-initializers"
@@ -290,11 +297,14 @@ extern "C"
       wifi_init_sta();
     }
 
+    ESP_LOGI(TAG,"Waiting for Wifi...");
     /* Wait for Wi-Fi connection */
     xEventGroupWaitBits(wifi_event_group, WIFI_CONNECTED_EVENT, false, true, portMAX_DELAY);
+    ESP_LOGI(TAG,"got Wifi...");
     SetLEDColor(0, 0, smLEDPower, 0);
 
     mqtt_app_start();
+    ESP_LOGI(TAG, "MQTT ready");
 
     int c=0;
     double temp=0,hum=0;
@@ -479,13 +489,13 @@ extern "C"
       // Ablegen auf den MQTT-Server
       if (smMQTTConnected && mqtt_client!=NULL)
       {
-        esp_mqtt_client_publish(mqtt_client, "/wetterstation/temperatur", TempStr, strlen(TempStr), 1,0);
-        esp_mqtt_client_publish(mqtt_client, "/wetterstation/luftfeuchtigkeit", HumStr, strlen(HumStr), 1,0);
-        esp_mqtt_client_publish(mqtt_client, "/wetterstation/luftdruck", PresStr, strlen(PresStr), 1,0);
-        esp_mqtt_client_publish(mqtt_client, "/wetterstation/beleuchtungsstaerke", LuxStr, strlen(LuxStr), 1,0);
+        esp_mqtt_client_publish(mqtt_client, "/wetterstation/aussen/temperatur", TempStr, strlen(TempStr), 1,0);
+        esp_mqtt_client_publish(mqtt_client, "/wetterstation/aussen/luftfeuchtigkeit", HumStr, strlen(HumStr), 1,0);
+        esp_mqtt_client_publish(mqtt_client, "/wetterstation/aussen/luftdruck", PresStr, strlen(PresStr), 1,0);
+        esp_mqtt_client_publish(mqtt_client, "/wetterstation/aussen/beleuchtungsstaerke", LuxStr, strlen(LuxStr), 1,0);
         if (StatusStr.size()==0)
           StatusStr="Alles OK";
-        esp_mqtt_client_publish(mqtt_client, "/wetterstation/status", StatusStr.c_str(), StatusStr.size(), 1,0);
+        esp_mqtt_client_publish(mqtt_client, "/wetterstation/aussen/status", StatusStr.c_str(), StatusStr.size(), 1,0);
 
         /*-
         for (int i=0; i<3; i++)
@@ -497,7 +507,7 @@ extern "C"
         }
         SetLEDColor(1,0,smLEDPower,0);*/
       }
-      vTaskDelay(5000 / portTICK_RATE_MS);
+      vTaskDelay(10000 / portTICK_RATE_MS);
 
       /*
       CurrentDuty+=128;

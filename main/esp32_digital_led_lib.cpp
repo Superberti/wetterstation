@@ -204,6 +204,7 @@ int digitalLeds_initDriver()
     gRmtSem = xSemaphoreCreateBinary();
     gLEDMutex = xSemaphoreCreateBinary();
     xSemaphoreGive(gRmtSem);
+    xSemaphoreGive(gLEDMutex);
     rc = esp_intr_alloc(ETS_RMT_INTR_SOURCE, 0, rmtInterruptHandler, nullptr, &gRmtIntrHandle);
   }
 
