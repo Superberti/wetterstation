@@ -147,7 +147,6 @@ static void rmtInterruptHandler(void *arg);
 
 static xSemaphoreHandle gRmtSem = nullptr;
 static intr_handle_t gRmtIntrHandle = nullptr;
-static xSemaphoreHandle gLEDMutex = nullptr;
 
 static int gToProcess = 0;
 
@@ -202,9 +201,7 @@ int digitalLeds_initDriver()
   { // Only on first run
     // Sem is created here
     gRmtSem = xSemaphoreCreateBinary();
-    gLEDMutex = xSemaphoreCreateBinary();
     xSemaphoreGive(gRmtSem);
-    xSemaphoreGive(gLEDMutex);
     rc = esp_intr_alloc(ETS_RMT_INTR_SOURCE, 0, rmtInterruptHandler, nullptr, &gRmtIntrHandle);
   }
 
@@ -326,7 +323,6 @@ int IRAM_ATTR digitalLeds_drawPixels(strand_t *strands[], int numStrands)
   gToProcess = numStrands;
 
   xSemaphoreTake(gRmtSem, portMAX_DELAY);
-  xSemaphoreTake(gLEDMutex,portMAX_DELAY);
 
   for (int i = 0; i < numStrands; i++)
   {
@@ -362,7 +358,6 @@ int IRAM_ATTR digitalLeds_drawPixels(strand_t *strands[], int numStrands)
     }
     else
     {
-      xSemaphoreGive(gLEDMutex);
       return -1;
     }
 
@@ -386,7 +381,6 @@ int IRAM_ATTR digitalLeds_drawPixels(strand_t *strands[], int numStrands)
   // Give back semaphore after drawing is done
   xSemaphoreTake(gRmtSem, portMAX_DELAY);
   xSemaphoreGive(gRmtSem);
-  xSemaphoreGive(gLEDMutex);
 
   return 0;
 }

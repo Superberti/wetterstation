@@ -5,6 +5,7 @@ from typing import NamedTuple
 
 import paho.mqtt.client as mqtt
 from influxdb import InfluxDBClient
+import time
 
 INFLUXDB_ADDRESS = 'localhost'
 INFLUXDB_USER = 'mqtt'
@@ -18,10 +19,11 @@ MQTT_TOPIC = '/wetterstation/+'
 MQTT_REGEX = '/wetterstation/([^/]+)/([^/]+)'
 MQTT_CLIENT_ID = 'MQTTInfluxDBBridge'
 
-TopicTemp1="/wetterstation/aussen/temperatur1"
-TopicPress1="/wetterstation/aussen/luftdruck1"
-TopicHum1="/wetterstation/aussen/luftfeuchtigkeit1"
+TopicTemp1="/wetterstation/aussen/temperatur"
+TopicPress1="/wetterstation/aussen/luftdruck"
+TopicHum1="/wetterstation/aussen/luftfeuchtigkeit"
 TopicLight="/wetterstation/aussen/beleuchtungsstaerke"
+TopicStatus="/wetterstation/aussen/status"
 
 TopicCounter=0
 
@@ -72,7 +74,12 @@ def on_message(client, userdata, msg):
     print(msg.topic + ' ' + str(msg.payload))
     sensor_data = _parse_mqtt_message(msg.topic, msg.payload.decode('utf-8'))
     if sensor_data is not None:
-        _send_sensor_data_to_influxdb(sensor_data)
+        if msg.topic is not TopicStatus:
+            _send_sensor_data_to_influxdb(sensor_data)
+        else:
+            status=msg.payload.decode('utf-8')
+            if status is not "Alles OK":
+                _send_sensor_data_to_influxdb(sensor_data)
 
 def _init_influxdb_database():
     databases = influxdb_client.get_list_database()
@@ -81,6 +88,8 @@ def _init_influxdb_database():
     influxdb_client.switch_database(INFLUXDB_DATABASE)
 
 def main():
+    print("Warte 60 s auf den Start der Datenbank...")
+    time.sleep(60)
     _init_influxdb_database()
 
     mqtt_client = mqtt.Client(MQTT_CLIENT_ID)

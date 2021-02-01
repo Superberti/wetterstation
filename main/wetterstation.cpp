@@ -106,6 +106,7 @@ static EventGroupHandle_t wifi_event_group;
 static bool smMQTTConnected = false;
 static esp_mqtt_client_handle_t mqtt_client = NULL;
 static volatile uint8_t smLEDPower=128;
+static xQueueHandle led_cmd_queue = NULL;
 
 extern "C"
 {
@@ -116,32 +117,13 @@ extern "C"
     ESP_LOGI(TAG, "Free memory: %d bytes", esp_get_free_heap_size());
     ESP_LOGI(TAG, "IDF version: %s", esp_get_idf_version());
 
-    // rote LED auf dem ESP32
-    gpioSetup(GPIO_NUM_2, OUTPUT, HIGH);
-    ESP_LOGI(TAG, "gpioSetup ready");
-    digitalLeds_initDriver();
-    ESP_LOGI(TAG, "digitalLeds_initDriver ready");
-    for (int i = 0; i < STRANDCNT; i++)
-    {
-      gpioSetup(STRANDS[i].gpioNum, OUTPUT, LOW);
-    }
-    ESP_LOGI(TAG, "gpioSetup ready");
-    strand_t *MyStrand[] = {&STRANDS[0]};
-    int rc = digitalLeds_addStrands(MyStrand, STRANDCNT);
-    bool toggle = false;
-    if (rc)
-    {
-      printf("digitalLeds_addStrands error code: %d. Halting\n", rc);
-      while (true)
-      {
-        toggle = !toggle;
-        gpio_set_level(GPIO_NUM_2, (uint32_t)toggle);
-        vTaskDelay(100 / portTICK_RATE_MS);
-      };
-    }
 
+
+
+    led_task_init();
     ESP_LOGI(TAG, "Setting digital LEDs...");
-    SetLEDColors(128,0,0,128,0,0);
+    SetLEDColor(0,128,0,0);
+    SetLEDColor(1,128,0,0);
     ESP_LOGI(TAG, "Digital LEDs ready");
 
     // TODO (pi#1#): Auf Konopfdruck (z.B. 10s) nvs_flash_erase() aufrufen und rebooten, damit wieder das WiFi konfiguriert werden kann.
@@ -313,6 +295,7 @@ extern "C"
     char HumStr[16]= {0};
     char PresStr[16]= {0};
     char LuxStr[16]= {0};
+    char CoolerStr[16]= {0};
     double BMP_pres=0, BMP_pres_raw=0,VEML_lux=0;
 
     BMP280 bmp;
@@ -363,7 +346,7 @@ extern "C"
     // Set LED Controller with previously prepared configuration
 
     ledc_channel_config(&ledc_channel);
-    const int MaxDuty=1024;
+    //const int MaxDuty=1024;
     uint32_t CurrentDuty=640;
     ledc_set_duty(ledc_channel.speed_mode, ledc_channel.channel, CurrentDuty);
     ledc_update_duty(ledc_channel.speed_mode, ledc_channel.channel);
@@ -464,6 +447,7 @@ extern "C"
         pcnt_counter_clear(PCNT_UNIT_0);
         printf("Counter CPU-Lüfter: %d PWM: %d\n",CoolerCount,CurrentDuty);
 
+        sprintf(CoolerStr,"%d",CoolerCount);
         if (CoolerCount<100)
         {
           // Lüfter ausgefallen?
@@ -493,19 +477,10 @@ extern "C"
         esp_mqtt_client_publish(mqtt_client, "/wetterstation/aussen/luftfeuchtigkeit", HumStr, strlen(HumStr), 1,0);
         esp_mqtt_client_publish(mqtt_client, "/wetterstation/aussen/luftdruck", PresStr, strlen(PresStr), 1,0);
         esp_mqtt_client_publish(mqtt_client, "/wetterstation/aussen/beleuchtungsstaerke", LuxStr, strlen(LuxStr), 1,0);
+        esp_mqtt_client_publish(mqtt_client, "/wetterstation/aussen/luefterdrehzahl", CoolerStr, strlen(CoolerStr), 1,0);
         if (StatusStr.size()==0)
           StatusStr="Alles OK";
         esp_mqtt_client_publish(mqtt_client, "/wetterstation/aussen/status", StatusStr.c_str(), StatusStr.size(), 1,0);
-
-        /*-
-        for (int i=0; i<3; i++)
-        {
-          SetLEDColor(1,0,0,0);
-          vTaskDelay(100 / portTICK_RATE_MS);
-          SetLEDColor(1,0,0,smLEDPower);
-          vTaskDelay(100 / portTICK_RATE_MS);
-        }
-        SetLEDColor(1,0,smLEDPower,0);*/
       }
       vTaskDelay(10000 / portTICK_RATE_MS);
 
@@ -521,29 +496,71 @@ extern "C"
   }
 }
 
+void led_cmd_task(void * arg)
+{
+  // rote LED auf dem ESP32
+  gpioSetup(GPIO_NUM_2, OUTPUT, HIGH);
+  ESP_LOGI(TAG, "gpioSetup ready");
+  digitalLeds_initDriver();
+  ESP_LOGI(TAG, "digitalLeds_initDriver ready");
+  for (int i = 0; i < STRANDCNT; i++)
+  {
+    gpioSetup(STRANDS[i].gpioNum, OUTPUT, LOW);
+  }
+  ESP_LOGI(TAG, "gpioSetup ready");
+  strand_t *MyStrand[] = {&STRANDS[0]};
+  strand_t *pStrand = &STRANDS[0];
+  int rc = digitalLeds_addStrands(MyStrand, STRANDCNT);
+  bool toggle = false;
+  if (rc)
+  {
+    printf("digitalLeds_addStrands error code: %d. Halting\n", rc);
+    while (true)
+    {
+      toggle = !toggle;
+      gpio_set_level(GPIO_NUM_2, (uint32_t)toggle);
+      vTaskDelay(100 / portTICK_RATE_MS);
+    };
+  }
+
+  LEDData * NewLEDCmd;
+
+  for(;;)
+  {
+    vTaskDelay(10 / portTICK_PERIOD_MS);
+    if(xQueueReceive(led_cmd_queue, &NewLEDCmd, portMAX_DELAY))
+    {
+      // Bei meinen 5mm-LEDs sind die Farben rot-gruen vertauscht...
+      pixelColor_t Color = pixelFromRGB(NewLEDCmd->g, NewLEDCmd->r, NewLEDCmd->b);
+      pStrand->pixels[NewLEDCmd->LEDNum]=Color;
+      digitalLeds_drawPixels(MyStrand, STRANDCNT);
+      free(NewLEDCmd);
+    }
+  }
+  vTaskDelete(NULL);
+}
+
+void led_task_init(void)
+{
+  led_cmd_queue = xQueueCreate(10, sizeof(uint32_t));
+
+  xTaskCreate(led_cmd_task, "led_cmd_task", 2048, NULL, 10, NULL);
+}
+
 // Farbei einer LED setzen
 void SetLEDColor(uint8_t aLEDNum, uint8_t r, uint8_t g, uint8_t b)
 {
   if (aLEDNum>1)
     return;
-  strand_t *MyStrand[] = {&STRANDS[0]};
-  strand_t *pStrand = &STRANDS[0];
-  // Bei meinen 5mm-LEDs sind die Farben rot-gruen vertauscht...
-  pixelColor_t Color = pixelFromRGB(g, r, b);
-  pStrand->pixels[aLEDNum]=Color;
-  digitalLeds_drawPixels(MyStrand, STRANDCNT);
+  LEDData * NewLEDCmd=(LEDData*)malloc(sizeof(LEDData));
+  NewLEDCmd->r=r;
+  NewLEDCmd->g=g;
+  NewLEDCmd->b=b;
+  NewLEDCmd->LEDNum=aLEDNum;
+  if (xQueueSend(led_cmd_queue,NewLEDCmd,10/portTICK_PERIOD_MS)!=pdPASS)
+    free(NewLEDCmd);
 }
 
-// Farben beider LEDs gleichzeitig setzen
-void SetLEDColors(uint8_t r1, uint8_t g1, uint8_t b1, uint8_t r2, uint8_t g2, uint8_t b2)
-{
-  strand_t *MyStrand[] = {&STRANDS[0]};
-  strand_t *pStrand = &STRANDS[0];
-  // Bei meinen 5mm-LEDs sind die Farben rot-gruen vertauscht...
-  pStrand->pixels[0]=pixelFromRGB(g1, r1, b1);
-  pStrand->pixels[1]=pixelFromRGB(g2, r2, b2);
-  digitalLeds_drawPixels(MyStrand, STRANDCNT);
-}
 
 /**
  * @brief i2c master initialization

@@ -20,7 +20,15 @@ static esp_err_t mqtt_event_handler_cb(esp_mqtt_event_handle_t event);
 static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_t event_id, void *event_data);
 
 void SetLEDColor(uint8_t aLEDNum, uint8_t r, uint8_t g, uint8_t b);
-void SetLEDColors(uint8_t r1, uint8_t g1, uint8_t b1, uint8_t r2, uint8_t g2, uint8_t b2);
+void led_task_init(void);
+void led_cmd_task(void * arg);
 
+struct LEDData
+{
+  uint8_t r;
+  uint8_t g;
+  uint8_t b;
+  uint8_t LEDNum;
+};
 
 #endif // WETTERSTATION_H_INCLUDED
