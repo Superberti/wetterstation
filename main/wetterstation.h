@@ -31,4 +31,16 @@ struct LEDData
   uint8_t LEDNum;
 };
 
+// Die Sensoren der Wetterstation. Bis zu 16 Stück, ansonsten muss der
+// Error-Status erweitert werden
+enum SensorType
+{
+  eSHT35,
+  eBMP280,
+  eVEML7700,
+};
+
+void SetSensorErr(uint16_t & aSensorErr, SensorType aSensorType, bool aStatus);
+bool GetSensorErr(const uint16_t aSensorErr, SensorType aSensorType);
+
 #endif // WETTERSTATION_H_INCLUDED

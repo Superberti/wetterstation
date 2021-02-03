@@ -117,9 +117,6 @@ extern "C"
     ESP_LOGI(TAG, "Free memory: %d bytes", esp_get_free_heap_size());
     ESP_LOGI(TAG, "IDF version: %s", esp_get_idf_version());
 
-
-
-
     led_task_init();
     ESP_LOGI(TAG, "Setting digital LEDs...");
     SetLEDColor(0,128,0,0);
@@ -318,7 +315,9 @@ extern "C"
       SetLEDColor(1, 0, smLEDPower, 0);
 
     esp_err_t SensorStatus=ESP_OK;
-    bool SensorErr=false;
+
+    // Bitfeld mit möglichen Sensorfehlern
+    uint16_t SensorErr=0;
 
     // Ansteuerung CPU-Luefter
     ledc_timer_config_t ledc_timer =
@@ -389,26 +388,26 @@ extern "C"
     std::string StatusStr="";
     for(;;)
     {
-      SensorErr=false;
+      SensorErr=0;
       StatusStr="";
       if (sht_init_ok)
       {
         SensorStatus=sht.ReadSHT35(temp, hum, CrcErr);
         if (CrcErr)
         {
-          printf("WARNUNG: CRC-Datenfehler aufgetreten, Daten könnten falsch sein.\r\n");
+          ESP_LOGW(TAG,"WARNUNG: CRC-Datenfehler aufgetreten, Daten könnten falsch sein.\r\n");
           StatusStr+=strprintf("CRC-Fehler SHT35 ");
         }
         if (SensorStatus!=ESP_OK)
         {
-          SensorErr=true;
+          SetSensorErr(SensorErr,eSHT35,true);
           StatusStr+=strprintf("Fehler SHT35: %d ",SensorStatus);
-          printf("Fehler SHT35: %d ",SensorStatus);
+          ESP_LOGE(TAG,"Fehler SHT35: %d ",SensorStatus);
         }
 
         sprintf(TempStr,"%.2f",temp);
         sprintf(HumStr,"%.2f",hum);
-        printf("SHT35 Temperatur: %s°C Luftfeuchte: %s %%\r\n",TempStr,HumStr);
+        ESP_LOGI(TAG,"SHT35 Temperatur: %s°C Luftfeuchte: %s %%\r\n",TempStr,HumStr);
       }
 
       if (bmp_init_ok)
@@ -417,28 +416,34 @@ extern "C"
         SensorStatus=bmp.ReadPressure(BMP_pres_raw);
         if (SensorStatus!=ESP_OK)
         {
-          SensorErr=true;
+          SetSensorErr(SensorErr,eBMP280,true);
           StatusStr+=strprintf("Fehler BMP280: %d ",SensorStatus);
+          ESP_LOGE(TAG,"Fehler BMP280: %d ",SensorStatus);
         }
 
         BMP_pres=bmp.seaLevelForAltitude(210, BMP_pres_raw);
 
         sprintf(PresStr,"%.1f",BMP_pres/100);
-        printf("BMP280 Luftdruck: %s hPa [raw: %.1f]\r\n",PresStr,BMP_pres_raw/100);
+        ESP_LOGI(TAG,"BMP280 Luftdruck: %s hPa [raw: %.1f]\r\n",PresStr,BMP_pres_raw/100);
       }
       if (veml_init_ok)
       {
         SensorStatus=veml.readLuxNormalized(VEML_lux);
         if (SensorStatus!=ESP_OK)
         {
-          SensorErr=true;
+          SetSensorErr(SensorErr,eVEML7700,true);
           StatusStr+=strprintf("Fehler VEML7700: %d ",SensorStatus);
+          ESP_LOGE(TAG,"Fehler VEML7700: %d ",SensorStatus);
+        }
+        else
+        {
+          // LED-Power je nach Helligkeit anpassen
+          smLEDPower=10+VEML_lux/1000*2;
         }
 
         sprintf(LuxStr,"%.2f",VEML_lux);
-        printf("VEML7700 Luxsensor: %s lux\r\n",LuxStr);
-        // LED-Power je nach Helligkeit anpassen
-        smLEDPower=10+VEML_lux/1000*2;
+        ESP_LOGI(TAG,"VEML7700 Luxsensor: %s lux\r\n",LuxStr);
+
       }
       if (c)
       {
@@ -452,11 +457,11 @@ extern "C"
         {
           // Lüfter ausgefallen?
           StatusStr+=strprintf("Empfange keine oder zu wenige Lüfter-Impulse: %d ",CoolerCount);
-          printf("Empfange keine oder zu wenige Lüfter-Impulse: %d ",CoolerCount);
+          ESP_LOGE(TAG,"Empfange keine oder zu wenige Lüfter-Impulse: %d ",CoolerCount);
         }
       }
 
-      if (!SensorErr)
+      if (SensorErr==0)
       {
         for (int i=0; i<3; i++)
         {
@@ -468,19 +473,30 @@ extern "C"
           vTaskDelay(100 / portTICK_RATE_MS);
         }
       }
-      SetLEDColor(0,SensorErr ? smLEDPower : 0, 0,0);
+      SetLEDColor(0,SensorErr==0 ? smLEDPower : 0, 0,0);
       gpio_set_level(GPIO_NUM_2, SensorErr ? 1 : 0);
       // Ablegen auf den MQTT-Server
       if (smMQTTConnected && mqtt_client!=NULL)
       {
-        esp_mqtt_client_publish(mqtt_client, "/wetterstation/aussen/temperatur", TempStr, strlen(TempStr), 1,0);
-        esp_mqtt_client_publish(mqtt_client, "/wetterstation/aussen/luftfeuchtigkeit", HumStr, strlen(HumStr), 1,0);
-        esp_mqtt_client_publish(mqtt_client, "/wetterstation/aussen/luftdruck", PresStr, strlen(PresStr), 1,0);
-        esp_mqtt_client_publish(mqtt_client, "/wetterstation/aussen/beleuchtungsstaerke", LuxStr, strlen(LuxStr), 1,0);
+        if (GetSensorErr(SensorErr,eSHT35)==false)
+        {
+          esp_mqtt_client_publish(mqtt_client, "/wetterstation/aussen/temperatur", TempStr, strlen(TempStr), 1,0);
+          esp_mqtt_client_publish(mqtt_client, "/wetterstation/aussen/luftfeuchtigkeit", HumStr, strlen(HumStr), 1,0);
+        }
+        if (GetSensorErr(SensorErr,eBMP280)==false)
+          esp_mqtt_client_publish(mqtt_client, "/wetterstation/aussen/luftdruck", PresStr, strlen(PresStr), 1,0);
+        if (GetSensorErr(SensorErr,eVEML7700)==false)
+          esp_mqtt_client_publish(mqtt_client, "/wetterstation/aussen/beleuchtungsstaerke", LuxStr, strlen(LuxStr), 1,0);
         esp_mqtt_client_publish(mqtt_client, "/wetterstation/aussen/luefterdrehzahl", CoolerStr, strlen(CoolerStr), 1,0);
         if (StatusStr.size()==0)
           StatusStr="Alles OK";
-        esp_mqtt_client_publish(mqtt_client, "/wetterstation/aussen/status", StatusStr.c_str(), StatusStr.size(), 1,0);
+        if (c==0)
+        {
+          StatusStr="Wetterstation neu gestartet!";
+          esp_mqtt_client_publish(mqtt_client, "/wetterstation/aussen/status", StatusStr.c_str(), StatusStr.size(), 1,0);
+        }
+        else
+          esp_mqtt_client_publish(mqtt_client, "/wetterstation/aussen/status", StatusStr.c_str(), StatusStr.size(), 1,0);
       }
       vTaskDelay(10000 / portTICK_RATE_MS);
 
@@ -494,6 +510,19 @@ extern "C"
       c++;
     }
   }
+}
+
+void SetSensorErr(uint16_t & aSensorErr, SensorType aSensorType, bool aStatus)
+{
+  if (aStatus)
+    aSensorErr |= (1 << (uint16_t)aSensorType);
+  else
+    aSensorErr &= ~(1 << (uint16_t)aSensorType);
+}
+
+bool GetSensorErr(const uint16_t aSensorErr, SensorType aSensorType)
+{
+  return (aSensorErr & (1 << (uint16_t)aSensorType)) > 0;
 }
 
 void led_cmd_task(void * arg)
