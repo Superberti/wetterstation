@@ -89,7 +89,7 @@ strand_t STRANDS[] =
   {
     .rmtChannel = 0,
     .gpioNum = 21,
-    .ledType = LED_WS2813_V2,
+    .ledType = LED_WS2811_HS,
     .brightLimit = 255,
     .numPixels = NUM_LEDS,
     .pixels = NULL,
@@ -529,7 +529,6 @@ void led_cmd_task(void * arg)
 {
   // rote LED auf dem ESP32
   gpioSetup(GPIO_NUM_2, OUTPUT, HIGH);
-  ESP_LOGI(TAG, "gpioSetup ready");
   digitalLeds_initDriver();
   ESP_LOGI(TAG, "digitalLeds_initDriver ready");
   for (int i = 0; i < STRANDCNT; i++)
@@ -543,7 +542,7 @@ void led_cmd_task(void * arg)
   bool toggle = false;
   if (rc)
   {
-    printf("digitalLeds_addStrands error code: %d. Halting\n", rc);
+    ESP_LOGI(TAG, "digitalLeds_addStrands error code: %d. Halting", rc);
     while (true)
     {
       toggle = !toggle;
@@ -552,7 +551,7 @@ void led_cmd_task(void * arg)
     };
   }
 
-  LEDData * NewLEDCmd;
+  LEDData * NewLEDCmd=NULL;
 
   for(;;)
   {
@@ -560,10 +559,17 @@ void led_cmd_task(void * arg)
     if(xQueueReceive(led_cmd_queue, &NewLEDCmd, portMAX_DELAY))
     {
       // Bei meinen 5mm-LEDs sind die Farben rot-gruen vertauscht...
-      pixelColor_t Color = pixelFromRGB(NewLEDCmd->g, NewLEDCmd->r, NewLEDCmd->b);
-      pStrand->pixels[NewLEDCmd->LEDNum]=Color;
-      digitalLeds_drawPixels(MyStrand, STRANDCNT);
-      free(NewLEDCmd);
+      ESP_LOGI(TAG, "NewLEDCmd*:0x%X",(uint32_t)NewLEDCmd);
+      if (NewLEDCmd!=NULL)
+      {
+        //ESP_LOGI(TAG, "Setup digital LEDs...");
+        pixelColor_t Color = pixelFromRGB(NewLEDCmd->g, NewLEDCmd->r, NewLEDCmd->b);
+        pStrand->pixels[NewLEDCmd->LEDNum]=Color;
+        //ESP_LOGI(TAG, "Setting digital LEDs...");
+        digitalLeds_drawPixels(MyStrand, STRANDCNT);
+        //ESP_LOGI(TAG, "Setting done.");
+        free(NewLEDCmd);
+      }
     }
   }
   vTaskDelete(NULL);
@@ -582,11 +588,12 @@ void SetLEDColor(uint8_t aLEDNum, uint8_t r, uint8_t g, uint8_t b)
   if (aLEDNum>1)
     return;
   LEDData * NewLEDCmd=(LEDData*)malloc(sizeof(LEDData));
+  //SP_LOGI(TAG, "Alloc NewLEDCmd*:0x%X",(uint32_t)NewLEDCmd);
   NewLEDCmd->r=r;
   NewLEDCmd->g=g;
   NewLEDCmd->b=b;
   NewLEDCmd->LEDNum=aLEDNum;
-  if (xQueueSend(led_cmd_queue,NewLEDCmd,10/portTICK_PERIOD_MS)!=pdPASS)
+  if (xQueueSend(led_cmd_queue,&NewLEDCmd,10/portTICK_PERIOD_MS)!=pdPASS)
     free(NewLEDCmd);
 }
 

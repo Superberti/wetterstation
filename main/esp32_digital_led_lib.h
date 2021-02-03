@@ -2,7 +2,7 @@
  * Library for driving digital RGB(W) LEDs using the ESP32's RMT peripheral
  *
  * Modifications Copyright (c) 2017-2019 Martin F. Falatic
- * 
+ *
  * Portions modified using FastLED's ClocklessController as a reference
  *   Copyright (c) 2018 Samuel Z. Guyer
  *   Copyright (c) 2017 Thomas Basler
@@ -12,7 +12,7 @@
  *
  */
 
-/* 
+/*
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
  * in the Software without restriction, including without limitation the rights
@@ -123,6 +123,8 @@ enum led_types {
   LED_WS2813_V3,
   LED_SK6812_V1,
   LED_SK6812W_V1,
+  LED_WS2811_LS,
+  LED_WS2811_HS,
 };
 
 const ledParams_t ledParamsAll[] = {  // Still must match order of `led_types`
@@ -135,6 +137,8 @@ const ledParams_t ledParamsAll[] = {  // Still must match order of `led_types`
   [LED_WS2813_V3]  = { .bytesPerPixel = 3, .T0H = 270, .T1H = 630, .T0L = 630, .T1L = 270, .TRS = 300000}, // 2017-05 WS datasheet
   [LED_SK6812_V1]  = { .bytesPerPixel = 3, .T0H = 300, .T1H = 600, .T0L = 900, .T1L = 600, .TRS =  80000}, // Various, all consistent
   [LED_SK6812W_V1] = { .bytesPerPixel = 4, .T0H = 300, .T1H = 600, .T0L = 900, .T1L = 600, .TRS =  80000}, // Various, all consistent
+  [LED_WS2811_LS]  = { .bytesPerPixel = 3, .T0H = 500, .T1H = 1200, .T0L = 2000, .T1L = 1300, .TRS =  80000},
+  [LED_WS2811_HS]  = { .bytesPerPixel = 3, .T0H = 250, .T1H = 600, .T0L = 1000, .T1L = 650, .TRS =  80000},
 };
 
 extern void espPinMode(int pinNum, int pinDir);
