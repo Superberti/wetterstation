@@ -22,6 +22,7 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
 void SetLEDColor(uint8_t aLEDNum, uint8_t r, uint8_t g, uint8_t b);
 void led_task_init(void);
 void led_cmd_task(void * arg);
+void i2c_master_reset();
 
 struct LEDData
 {

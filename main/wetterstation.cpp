@@ -1,16 +1,9 @@
-/* i2c - Example
+/* ESP32-Wetterstation
+ * Wetterstation mit verschiedenen Sensoren, die ihre Daten über MQTT
+ * in Netz liefern.
+ * 03.02.2021 O.Rutsch
+ */
 
-   For other examples please check:
-   https://github.com/espressif/esp-idf/tree/master/examples
-
-   See README.md file to get detailed usage of this example.
-
-   This example code is in the Public Domain (or CC0 licensed, at your option.)
-
-   Unless required by applicable law or agreed to in writing, this
-   software is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR
-   CONDITIONS OF ANY KIND, either express or implied.
-*/
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
@@ -386,71 +379,123 @@ extern "C"
 
     int16_t count = 0;
     std::string StatusStr="";
+    // Wie oft soll bei einem I2C-Fehler das Kommando wiederholt werden?
+    const int ErrorRetry=5;
+    int RetryCounter=0;
     for(;;)
     {
       SensorErr=0;
       StatusStr="";
+
       if (sht_init_ok)
       {
-        SensorStatus=sht.ReadSHT35(temp, hum, CrcErr);
-        if (CrcErr)
+        RetryCounter=0;
+        do
         {
-          ESP_LOGW(TAG,"WARNUNG: CRC-Datenfehler aufgetreten, Daten könnten falsch sein.\r\n");
-          StatusStr+=strprintf("CRC-Fehler SHT35 ");
+          SensorStatus=sht.ReadSHT35(temp, hum, CrcErr);
+          if (CrcErr)
+          {
+            ESP_LOGW(TAG,"WARNUNG: CRC-Datenfehler aufgetreten, Daten könnten falsch sein.\r\n");
+            StatusStr+=strprintf("CRC-Fehler SHT35 ");
+          }
+          if (SensorStatus!=ESP_OK)
+          {
+            SetSensorErr(SensorErr,eSHT35,true);
+            StatusStr+=strprintf("Fehler SHT35: %d ",SensorStatus);
+            ESP_LOGE(TAG,"Fehler SHT35: %d, Versuch %d ",SensorStatus, RetryCounter+1);
+            // I2C-Reset
+            i2c_master_reset();
+            vTaskDelay(1000 / portTICK_RATE_MS);
+          }
+          else
+            SetSensorErr(SensorErr,eSHT35,false);
+          RetryCounter++;
         }
-        if (SensorStatus!=ESP_OK)
+        while (GetSensorErr(SensorErr,eSHT35) && RetryCounter<=ErrorRetry);
+        if (GetSensorErr(SensorErr,eSHT35))
         {
-          SetSensorErr(SensorErr,eSHT35,true);
-          StatusStr+=strprintf("Fehler SHT35: %d ",SensorStatus);
-          ESP_LOGE(TAG,"Fehler SHT35: %d ",SensorStatus);
+          ESP_LOGE(TAG,"SHT35 Fehler: Gebe auf nach %d Versuchen!",ErrorRetry);
         }
-
-        sprintf(TempStr,"%.2f",temp);
-        sprintf(HumStr,"%.2f",hum);
-        ESP_LOGI(TAG,"SHT35 Temperatur: %s°C Luftfeuchte: %s %%\r\n",TempStr,HumStr);
+        else
+        {
+          sprintf(TempStr,"%.2f",temp);
+          sprintf(HumStr,"%.2f",hum);
+          ESP_LOGI(TAG,"SHT35 Temperatur: %s°C Luftfeuchte: %s %%\r\n",TempStr,HumStr);
+        }
       }
 
       if (bmp_init_ok)
       {
-        //BMP_temp=bmp.ReadTemperature();
-        SensorStatus=bmp.ReadPressure(BMP_pres_raw);
-        if (SensorStatus!=ESP_OK)
+
+        RetryCounter=0;
+        do
         {
-          SetSensorErr(SensorErr,eBMP280,true);
-          StatusStr+=strprintf("Fehler BMP280: %d ",SensorStatus);
-          ESP_LOGE(TAG,"Fehler BMP280: %d ",SensorStatus);
+          SensorStatus=bmp.ReadPressure(BMP_pres_raw);
+          if (SensorStatus!=ESP_OK)
+          {
+            SetSensorErr(SensorErr,eBMP280,true);
+            StatusStr+=strprintf("Fehler BMP280: %d ",SensorStatus);
+            ESP_LOGE(TAG,"Fehler BMP280: %d, Versuch %d ",SensorStatus, RetryCounter+1);
+            // I2C-Reset
+            i2c_master_reset();
+            vTaskDelay(1000 / portTICK_RATE_MS);
+          }
+          else
+            SetSensorErr(SensorErr,eBMP280,false);
+          RetryCounter++;
         }
-
-        BMP_pres=bmp.seaLevelForAltitude(210, BMP_pres_raw);
-
-        sprintf(PresStr,"%.1f",BMP_pres/100);
-        ESP_LOGI(TAG,"BMP280 Luftdruck: %s hPa [raw: %.1f]\r\n",PresStr,BMP_pres_raw/100);
-      }
-      if (veml_init_ok)
-      {
-        SensorStatus=veml.readLuxNormalized(VEML_lux);
-        if (SensorStatus!=ESP_OK)
+        while (GetSensorErr(SensorErr,eBMP280) && RetryCounter<=ErrorRetry);
+        if (GetSensorErr(SensorErr,eBMP280))
         {
-          SetSensorErr(SensorErr,eVEML7700,true);
-          StatusStr+=strprintf("Fehler VEML7700: %d ",SensorStatus);
-          ESP_LOGE(TAG,"Fehler VEML7700: %d ",SensorStatus);
+          ESP_LOGE(TAG,"BMP280 Fehler: Gebe auf nach %d Versuchen!",ErrorRetry);
         }
         else
         {
-          // LED-Power je nach Helligkeit anpassen
-          smLEDPower=10+VEML_lux/1000*2;
+          BMP_pres=bmp.seaLevelForAltitude(210, BMP_pres_raw);
+          sprintf(PresStr,"%.1f",BMP_pres/100);
+          ESP_LOGI(TAG,"BMP280 Luftdruck: %s hPa [raw: %.1f]\r\n",PresStr,BMP_pres_raw/100);
         }
-
-        sprintf(LuxStr,"%.2f",VEML_lux);
-        ESP_LOGI(TAG,"VEML7700 Luxsensor: %s lux\r\n",LuxStr);
-
       }
+
+      if (veml_init_ok)
+      {
+
+        RetryCounter=0;
+        do
+        {
+          SensorStatus=veml.readLuxNormalized(VEML_lux);
+          if (SensorStatus!=ESP_OK)
+          {
+            SetSensorErr(SensorErr,eVEML7700,true);
+            StatusStr+=strprintf("Fehler VEML7700: %d ",SensorStatus);
+            ESP_LOGE(TAG,"Fehler VEML7700: %d, Versuch %d ",SensorStatus, RetryCounter+1);
+            // I2C-Reset
+            i2c_master_reset();
+            vTaskDelay(1000 / portTICK_RATE_MS);
+          }
+          else
+            SetSensorErr(SensorErr,eVEML7700,false);
+          RetryCounter++;
+        }
+        while (GetSensorErr(SensorErr,eVEML7700) && RetryCounter<=ErrorRetry);
+        if (GetSensorErr(SensorErr,eVEML7700))
+        {
+          ESP_LOGE(TAG,"VEML7700 Fehler: Gebe auf nach %d Versuchen!",ErrorRetry);
+        }
+        else
+        {
+          smLEDPower=10+VEML_lux/1000*2;
+          sprintf(LuxStr,"%.2f",VEML_lux);
+          ESP_LOGI(TAG,"VEML7700 Luxsensor: %s lux\r\n",LuxStr);
+        }
+      }
+
       if (c)
       {
         pcnt_get_counter_value(PCNT_UNIT_0, &count);
         uint16_t CoolerCount=abs(count);
         pcnt_counter_clear(PCNT_UNIT_0);
-        printf("Counter CPU-Lüfter: %d PWM: %d\n",CoolerCount,CurrentDuty);
+        ESP_LOGI(TAG,"Counter CPU-Lüfter: %d PWM: %d\n",CoolerCount,CurrentDuty);
 
         sprintf(CoolerStr,"%d",CoolerCount);
         if (CoolerCount<100)
@@ -559,7 +604,7 @@ void led_cmd_task(void * arg)
     if(xQueueReceive(led_cmd_queue, &NewLEDCmd, portMAX_DELAY))
     {
       // Bei meinen 5mm-LEDs sind die Farben rot-gruen vertauscht...
-      ESP_LOGI(TAG, "NewLEDCmd*:0x%X",(uint32_t)NewLEDCmd);
+      //ESP_LOGI(TAG, "NewLEDCmd*:0x%X",(uint32_t)NewLEDCmd);
       if (NewLEDCmd!=NULL)
       {
         //ESP_LOGI(TAG, "Setup digital LEDs...");
@@ -615,6 +660,16 @@ esp_err_t i2c_master_init(void)
   return i2c_driver_install(i2c_master_port, conf.mode, I2C_MASTER_RX_BUF_DISABLE, I2C_MASTER_TX_BUF_DISABLE, 0);
 }
 
+void i2c_master_reset()
+{
+
+  i2c_reset_tx_fifo(I2C_MASTER_NUM);
+  i2c_reset_rx_fifo(I2C_MASTER_NUM);
+  periph_module_disable(PERIPH_I2C0_MODULE);
+  periph_module_enable(PERIPH_I2C0_MODULE);
+  i2c_driver_delete(I2C_MASTER_NUM);
+  i2c_master_init();
+}
 
 void disp_buf(uint8_t *buf, int len)
 {
