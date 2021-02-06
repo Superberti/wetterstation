@@ -24,6 +24,7 @@ TopicPress1="/wetterstation/aussen/luftdruck"
 TopicHum1="/wetterstation/aussen/luftfeuchtigkeit"
 TopicLight="/wetterstation/aussen/beleuchtungsstaerke"
 TopicStatus="/wetterstation/aussen/status"
+TopicLuefter="/wetterstation/aussen/luefterdrehzahl"
 
 TopicCounter=0
 
@@ -41,7 +42,9 @@ def on_connect(client, userdata, flags, rc):
     client.subscribe(TopicPress1)
     client.subscribe(TopicHum1)
     client.subscribe(TopicLight)
-    
+    client.subscribe(TopicStatus)
+    client.subscribe(TopicLuefter)
+ 
 def _parse_mqtt_message(topic, payload):
     match = re.match(MQTT_REGEX, topic)
     if match:

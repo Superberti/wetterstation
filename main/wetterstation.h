@@ -5,6 +5,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/event_groups.h"
+#include <string>
 // Prototypen:
 
 void disp_buf(uint8_t *buf, int len);
@@ -36,12 +37,14 @@ struct LEDData
 // Error-Status erweitert werden
 enum SensorType
 {
-  eSHT35,
+  eSHT35_0,
+  eSHT35_1,
   eBMP280,
   eVEML7700,
 };
 
 void SetSensorErr(uint16_t & aSensorErr, SensorType aSensorType, bool aStatus);
 bool GetSensorErr(const uint16_t aSensorErr, SensorType aSensorType);
+std::string NRFCommand(std::string aCmd);
 
 #endif // WETTERSTATION_H_INCLUDED

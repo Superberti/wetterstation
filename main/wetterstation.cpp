@@ -30,6 +30,8 @@
 #include "esp_netif.h"
 #include "esp32_digital_led_lib.h"
 #include <driver/gpio.h>
+#include "esp_task_wdt.h"
+#include "driver/uart.h"
 
 #include <wifi_provisioning/manager.h>
 #include <wifi_provisioning/scheme_ble.h>
@@ -53,6 +55,7 @@ static const char *TAG = "Wetterstation";
 // pin11=GPIO21=Data out für WS2812-LEDs
 // pin12=GPIO22=CPU-Lüfter grün=Tachosignal
 // pin13=GPIO23=CPU-Lüfter blau=PWM Lüftersteuerung
+// pin07=GPIO17=NRF24 Set. Low=AT-Kommandos, High=Datentransfer
 
 #define _I2C_NUMBER(num) I2C_NUM_##num
 #define I2C_NUMBER(num) _I2C_NUMBER(num)
@@ -100,26 +103,58 @@ static bool smMQTTConnected = false;
 static esp_mqtt_client_handle_t mqtt_client = NULL;
 static volatile uint8_t smLEDPower=128;
 static xQueueHandle led_cmd_queue = NULL;
-
+#define BUF_SIZE (1024)
+std::string nrf_answer;
 extern "C"
 {
   void app_main(void)
   {
     ESP_LOGI(TAG, "Starte ESP32-Wetterstation...");
-    ESP_LOGI(TAG, "Startup..");
-    ESP_LOGI(TAG, "Free memory: %d bytes", esp_get_free_heap_size());
+    ESP_LOGI(TAG, "Freier Heap: %d bytes", esp_get_free_heap_size());
     ESP_LOGI(TAG, "IDF version: %s", esp_get_idf_version());
 
+    // GPIO17 schaltet Kommandomodus des NRF
+    gpioSetup(GPIO_NUM_17, OUTPUT, LOW);
+
+    uart_config_t uart_config = {
+        .baud_rate = 9600,
+        .data_bits = UART_DATA_8_BITS,
+        .parity    = UART_PARITY_DISABLE,
+        .stop_bits = UART_STOP_BITS_1,
+        .flow_ctrl = UART_HW_FLOWCTRL_DISABLE,
+        .rx_flow_ctrl_thresh = 0,
+        .source_clk = UART_SCLK_APB,
+    };
+    ESP_ERROR_CHECK(uart_driver_install(UART_NUM_1, BUF_SIZE * 2, 0, 0, NULL, 0));
+    ESP_ERROR_CHECK(uart_param_config(UART_NUM_1, &uart_config));
+    ESP_ERROR_CHECK(uart_set_pin(UART_NUM_1, 4, 5, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE));
+
+    // NRF24 einrichten
+    bool NrfErr=false;
+    nrf_answer=NRFCommand("AT+RFID2008\r\n");
+    NrfErr|=nrf_answer!="OK";
+    nrf_answer=NRFCommand("AT+DVID1374\r\n");
+    NrfErr|=nrf_answer!="OK";
+    nrf_answer=NRFCommand("AT+RFC079\r\n");
+    NrfErr|=nrf_answer!="OK";
+    nrf_answer=NRFCommand("AT+POWE8\r\n");
+    NrfErr|=nrf_answer!="OK";
+    nrf_answer=NRFCommand("AT+CLSSA0\r\n");
+    NrfErr|=nrf_answer!="OK";
+
+    if (NrfErr)
+      ESP_LOGE(TAG,"Fehler beim initialisieren vom NRF24-Modul!");
+    else
+      ESP_LOGI(TAG, "Init NRF24 OK.");
     led_task_init();
-    ESP_LOGI(TAG, "Setting digital LEDs...");
     SetLEDColor(0,128,0,0);
     SetLEDColor(1,128,0,0);
-    ESP_LOGI(TAG, "Digital LEDs ready");
+    ESP_LOGI(TAG, "Digital LEDs OK");
 
     // TODO (pi#1#): Auf Konopfdruck (z.B. 10s) nvs_flash_erase() aufrufen und rebooten, damit wieder das WiFi konfiguriert werden kann.
 
     ESP_ERROR_CHECK(i2c_master_init());
-    ESP_LOGI(TAG, "I2C ready");
+    ESP_LOGI(TAG, "I2C OK");
 
     /* Initialize NVS partition */
     esp_err_t ret = nvs_flash_init();
@@ -132,11 +167,11 @@ extern "C"
       /* Retry nvs_flash_init */
       ESP_ERROR_CHECK(nvs_flash_init());
     }
-    ESP_LOGI(TAG, "NVS ready");
+    ESP_LOGI(TAG, "NVS OK");
 
     /* Initialize TCP/IP */
     ESP_ERROR_CHECK(esp_netif_init());
-    ESP_LOGI(TAG, "TCP/IP ready");
+    ESP_LOGI(TAG, "TCP/IP OK");
 
     /* Initialize the event loop */
     ESP_ERROR_CHECK(esp_event_loop_create_default());
@@ -152,7 +187,7 @@ extern "C"
 
     wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
     ESP_ERROR_CHECK(esp_wifi_init(&cfg));
-    ESP_LOGI(TAG, "Wifi init ready");
+    ESP_LOGI(TAG, "Wifi init OK");
 
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wmissing-field-initializers"
@@ -269,20 +304,22 @@ extern "C"
       wifi_init_sta();
     }
 
-    ESP_LOGI(TAG,"Waiting for Wifi...");
+    ESP_LOGI(TAG,"Warte auf WLAN...");
     /* Wait for Wi-Fi connection */
     xEventGroupWaitBits(wifi_event_group, WIFI_CONNECTED_EVENT, false, true, portMAX_DELAY);
-    ESP_LOGI(TAG,"got Wifi...");
+    ESP_LOGI(TAG,"WLAN eingeloggt.");
     SetLEDColor(0, 0, smLEDPower, 0);
 
     mqtt_app_start();
-    ESP_LOGI(TAG, "MQTT ready");
+    ESP_LOGI(TAG, "MQTT OK");
 
     int c=0;
     double temp=0,hum=0;
     bool CrcErr=false;
-    char TempStr[16]= {0};
-    char HumStr[16]= {0};
+    char TempStr0[16]= {0};
+    char HumStr0[16]= {0};
+    char TempStr1[16]= {0};
+    char HumStr1[16]= {0};
     char PresStr[16]= {0};
     char LuxStr[16]= {0};
     char CoolerStr[16]= {0};
@@ -290,7 +327,8 @@ extern "C"
 
     BMP280 bmp;
     VEML7700 veml;
-    SHT35 sht;
+    SHT35 sht0(0);
+    SHT35 sht1(1);
 
     bool bmp_init_ok = bmp.init();
     if (!bmp_init_ok)
@@ -300,11 +338,15 @@ extern "C"
     if (!veml_init_ok)
       ESP_LOGE(TAG, "Fehler bei der Initialisierung vom VEML7700!");
 
-    bool sht_init_ok=sht.init();
-    if (!sht_init_ok)
-      ESP_LOGE(TAG, "Fehler bei der Initialisierung vom SHT35!");
+    bool sht0_init_ok=sht0.init();
+    if (!sht0_init_ok)
+      ESP_LOGE(TAG, "Fehler bei der Initialisierung vom SHT35-0!");
 
-    if (bmp_init_ok && veml_init_ok && sht_init_ok)
+    bool sht1_init_ok=sht1.init();
+    if (!sht1_init_ok)
+      ESP_LOGE(TAG, "Fehler bei der Initialisierung vom SHT35-1!");
+
+    if (bmp_init_ok && veml_init_ok && sht0_init_ok && sht1_init_ok)
       SetLEDColor(1, 0, smLEDPower, 0);
 
     esp_err_t SensorStatus=ESP_OK;
@@ -339,7 +381,7 @@ extern "C"
 
     ledc_channel_config(&ledc_channel);
     //const int MaxDuty=1024;
-    uint32_t CurrentDuty=640;
+    uint32_t CurrentDuty=800;
     ledc_set_duty(ledc_channel.speed_mode, ledc_channel.channel, CurrentDuty);
     ledc_update_duty(ledc_channel.speed_mode, ledc_channel.channel);
 
@@ -382,47 +424,92 @@ extern "C"
     // Wie oft soll bei einem I2C-Fehler das Kommando wiederholt werden?
     const int ErrorRetry=5;
     int RetryCounter=0;
+    // Messdaten alle 10 Sekunden abfragen
+    const int LoopDelayTime_s=10;
+    // Watchdog auf 30 s, panic-handler bei timeout auslösen
+    ESP_ERROR_CHECK(esp_task_wdt_init(LoopDelayTime_s*3, true));
+    ESP_ERROR_CHECK(esp_task_wdt_add(NULL));
+
     for(;;)
     {
+      esp_task_wdt_reset();
       SensorErr=0;
       StatusStr="";
 
-      if (sht_init_ok)
+      if (sht0_init_ok)
       {
         RetryCounter=0;
         do
         {
-          SensorStatus=sht.ReadSHT35(temp, hum, CrcErr);
+          SensorStatus=sht0.ReadSHT35(temp, hum, CrcErr);
           if (CrcErr)
           {
-            ESP_LOGW(TAG,"WARNUNG: CRC-Datenfehler aufgetreten, Daten könnten falsch sein.\r\n");
-            StatusStr+=strprintf("CRC-Fehler SHT35 ");
+            ESP_LOGW(TAG,"WARNUNG: SHT35-0 CRC-Datenfehler aufgetreten, Daten könnten falsch sein.");
+            StatusStr+=strprintf("CRC-Fehler SHT35-0 ");
           }
           if (SensorStatus!=ESP_OK)
           {
-            SetSensorErr(SensorErr,eSHT35,true);
-            StatusStr+=strprintf("Fehler SHT35: %d ",SensorStatus);
-            ESP_LOGE(TAG,"Fehler SHT35: %d, Versuch %d ",SensorStatus, RetryCounter+1);
+            SetSensorErr(SensorErr,eSHT35_0,true);
+            StatusStr+=strprintf("Fehler SHT35-0: %d ",SensorStatus);
+            ESP_LOGE(TAG,"Fehler SHT35-0: %d, Versuch %d ",SensorStatus, RetryCounter+1);
             // I2C-Reset
             i2c_master_reset();
             vTaskDelay(1000 / portTICK_RATE_MS);
           }
           else
-            SetSensorErr(SensorErr,eSHT35,false);
+            SetSensorErr(SensorErr,eSHT35_0,false);
           RetryCounter++;
         }
-        while (GetSensorErr(SensorErr,eSHT35) && RetryCounter<=ErrorRetry);
-        if (GetSensorErr(SensorErr,eSHT35))
+        while (GetSensorErr(SensorErr,eSHT35_0) && RetryCounter<=ErrorRetry);
+        if (GetSensorErr(SensorErr,eSHT35_0))
         {
-          ESP_LOGE(TAG,"SHT35 Fehler: Gebe auf nach %d Versuchen!",ErrorRetry);
+          ESP_LOGE(TAG,"SHT35-0 Fehler: Gebe auf nach %d Versuchen!",ErrorRetry);
         }
         else
         {
-          sprintf(TempStr,"%.2f",temp);
-          sprintf(HumStr,"%.2f",hum);
-          ESP_LOGI(TAG,"SHT35 Temperatur: %s°C Luftfeuchte: %s %%\r\n",TempStr,HumStr);
+          sprintf(TempStr0,"%.2f",temp);
+          sprintf(HumStr0,"%.2f",hum);
+          ESP_LOGI(TAG,"SHT35-0 Temperatur: %s°C Luftfeuchte: %s %%",TempStr0,HumStr0);
         }
       }
+
+      if (sht1_init_ok)
+      {
+        RetryCounter=0;
+        do
+        {
+          SensorStatus=sht1.ReadSHT35(temp, hum, CrcErr);
+          if (CrcErr)
+          {
+            ESP_LOGW(TAG,"WARNUNG: SHT35-1 CRC-Datenfehler aufgetreten, Daten könnten falsch sein.");
+            StatusStr+=strprintf("CRC-Fehler SHT35-1 ");
+          }
+          if (SensorStatus!=ESP_OK)
+          {
+            SetSensorErr(SensorErr,eSHT35_1,true);
+            StatusStr+=strprintf("Fehler SHT35-1: %d ",SensorStatus);
+            ESP_LOGE(TAG,"Fehler SHT35-1: %d, Versuch %d ",SensorStatus, RetryCounter+1);
+            // I2C-Reset
+            i2c_master_reset();
+            vTaskDelay(1000 / portTICK_RATE_MS);
+          }
+          else
+            SetSensorErr(SensorErr,eSHT35_1,false);
+          RetryCounter++;
+        }
+        while (GetSensorErr(SensorErr,eSHT35_1) && RetryCounter<=ErrorRetry);
+        if (GetSensorErr(SensorErr,eSHT35_1))
+        {
+          ESP_LOGE(TAG,"SHT35-1 Fehler: Gebe auf nach %d Versuchen!",ErrorRetry);
+        }
+        else
+        {
+          sprintf(TempStr1,"%.2f",temp);
+          sprintf(HumStr1,"%.2f",hum);
+          ESP_LOGI(TAG,"SHT35-1 Temperatur: %s°C Luftfeuchte: %s %%",TempStr1,HumStr1);
+        }
+      }
+
 
       if (bmp_init_ok)
       {
@@ -453,7 +540,7 @@ extern "C"
         {
           BMP_pres=bmp.seaLevelForAltitude(210, BMP_pres_raw);
           sprintf(PresStr,"%.1f",BMP_pres/100);
-          ESP_LOGI(TAG,"BMP280 Luftdruck: %s hPa [raw: %.1f]\r\n",PresStr,BMP_pres_raw/100);
+          ESP_LOGI(TAG,"BMP280 Luftdruck: %s hPa [raw: %.1f]",PresStr,BMP_pres_raw/100);
         }
       }
 
@@ -484,9 +571,9 @@ extern "C"
         }
         else
         {
-          smLEDPower=10+VEML_lux/1000*2;
+          smLEDPower=std::max((int)255,(int)(10+VEML_lux/20));
           sprintf(LuxStr,"%.2f",VEML_lux);
-          ESP_LOGI(TAG,"VEML7700 Luxsensor: %s lux\r\n",LuxStr);
+          ESP_LOGI(TAG,"VEML7700 Luxsensor: %s lux",LuxStr);
         }
       }
 
@@ -495,7 +582,7 @@ extern "C"
         pcnt_get_counter_value(PCNT_UNIT_0, &count);
         uint16_t CoolerCount=abs(count);
         pcnt_counter_clear(PCNT_UNIT_0);
-        ESP_LOGI(TAG,"Counter CPU-Lüfter: %d PWM: %d\n",CoolerCount,CurrentDuty);
+        ESP_LOGI(TAG,"Counter CPU-Lüfter: %d PWM: %d",CoolerCount,CurrentDuty);
 
         sprintf(CoolerStr,"%d",CoolerCount);
         if (CoolerCount<100)
@@ -518,15 +605,20 @@ extern "C"
           vTaskDelay(100 / portTICK_RATE_MS);
         }
       }
-      SetLEDColor(0,SensorErr==0 ? smLEDPower : 0, 0,0);
+      SetLEDColor(0,SensorErr ? smLEDPower : 0, 0,0);
       gpio_set_level(GPIO_NUM_2, SensorErr ? 1 : 0);
       // Ablegen auf den MQTT-Server
       if (smMQTTConnected && mqtt_client!=NULL)
       {
-        if (GetSensorErr(SensorErr,eSHT35)==false)
+        if (GetSensorErr(SensorErr,eSHT35_1)==false)
         {
-          esp_mqtt_client_publish(mqtt_client, "/wetterstation/aussen/temperatur", TempStr, strlen(TempStr), 1,0);
-          esp_mqtt_client_publish(mqtt_client, "/wetterstation/aussen/luftfeuchtigkeit", HumStr, strlen(HumStr), 1,0);
+          esp_mqtt_client_publish(mqtt_client, "/wetterstation/aussen/temperatur", TempStr1, strlen(TempStr1), 1,0);
+          esp_mqtt_client_publish(mqtt_client, "/wetterstation/aussen/luftfeuchtigkeit", HumStr1, strlen(HumStr1), 1,0);
+        }
+        if (GetSensorErr(SensorErr,eSHT35_0)==false)
+        {
+          esp_mqtt_client_publish(mqtt_client, "/wetterstation/schuppen/temperatur", TempStr0, strlen(TempStr0), 1,0);
+          esp_mqtt_client_publish(mqtt_client, "/wetterstation/schuppen/luftfeuchtigkeit", HumStr0, strlen(HumStr0), 1,0);
         }
         if (GetSensorErr(SensorErr,eBMP280)==false)
           esp_mqtt_client_publish(mqtt_client, "/wetterstation/aussen/luftdruck", PresStr, strlen(PresStr), 1,0);
@@ -543,18 +635,34 @@ extern "C"
         else
           esp_mqtt_client_publish(mqtt_client, "/wetterstation/aussen/status", StatusStr.c_str(), StatusStr.size(), 1,0);
       }
-      vTaskDelay(10000 / portTICK_RATE_MS);
-
-      /*
-      CurrentDuty+=128;
-      if (CurrentDuty>MaxDuty)
-        CurrentDuty=0;
-      ledc_set_duty(ledc_channel.speed_mode, ledc_channel.channel, CurrentDuty);
-      ledc_update_duty(ledc_channel.speed_mode, ledc_channel.channel);*/
-      //SetLEDColors(0, 0, c%2 ? smLEDPower : 0, 0, 0, c%2 ? 0: smLEDPower);
+      vTaskDelay(LoopDelayTime_s*1000 / portTICK_RATE_MS);
       c++;
     }
+    esp_task_wdt_deinit();
   }
+}
+
+std::string NRFCommand(std::string aCmd)
+{
+  char nrf_answer[20];
+  gpio_set_level(GPIO_NUM_17, LOW); // Kommandomodus einschalten
+  vTaskDelay(100 / portTICK_RATE_MS);  // etwas warten
+  uart_write_bytes(UART_NUM_1, aCmd.c_str(), aCmd.size());
+  int len = uart_read_bytes(UART_NUM_1, nrf_answer, sizeof(nrf_answer)-1, 200 / portTICK_RATE_MS);
+  std::string ans="";
+  if (len>0)
+  {
+    nrf_answer[std::min(len,(int)(sizeof(nrf_answer)-1))]=0;
+    KillReturnAndEndl(nrf_answer);
+    ans=std::string(nrf_answer);
+    ESP_LOGI(TAG, "%d bytes vom NRF24 gelesen: %s", len, nrf_answer);
+  }
+  else if (len<0)
+    ESP_LOGE(TAG, "Fehler beim Lesen vom NRF01!");
+  else
+    ESP_LOGE(TAG, "Timeout beim Lesen vom NRF01!");
+  gpioSetup(GPIO_NUM_17, OUTPUT, HIGH);
+  return ans;
 }
 
 void SetSensorErr(uint16_t & aSensorErr, SensorType aSensorType, bool aStatus)
@@ -648,6 +756,8 @@ void SetLEDColor(uint8_t aLEDNum, uint8_t r, uint8_t g, uint8_t b)
  */
 esp_err_t i2c_master_init(void)
 {
+  // Erster I2C-Bus
+  esp_err_t status=ESP_OK;
   int i2c_master_port = I2C_MASTER_NUM;
   i2c_config_t conf;
   conf.mode = I2C_MODE_MASTER;
@@ -657,17 +767,35 @@ esp_err_t i2c_master_init(void)
   conf.scl_pullup_en = GPIO_PULLUP_ENABLE;
   conf.master.clk_speed = I2C_MASTER_FREQ_HZ;
   i2c_param_config(i2c_master_port, &conf);
-  return i2c_driver_install(i2c_master_port, conf.mode, I2C_MASTER_RX_BUF_DISABLE, I2C_MASTER_TX_BUF_DISABLE, 0);
+  status = i2c_driver_install(i2c_master_port, conf.mode, I2C_MASTER_RX_BUF_DISABLE, I2C_MASTER_TX_BUF_DISABLE, 0);
+  if (status!=ESP_OK)
+    return status;
+
+  // Zweiter I2C-Bus
+  conf.mode = I2C_MODE_MASTER;
+  conf.sda_io_num = 26;
+  conf.sda_pullup_en = GPIO_PULLUP_ENABLE;
+  conf.scl_io_num = 27;
+  conf.scl_pullup_en = GPIO_PULLUP_ENABLE;
+  conf.master.clk_speed = I2C_MASTER_FREQ_HZ;
+  i2c_param_config(1, &conf);
+  status = i2c_driver_install(1, conf.mode, I2C_MASTER_RX_BUF_DISABLE, I2C_MASTER_TX_BUF_DISABLE, 0);
+  return status;
 }
 
 void i2c_master_reset()
 {
-
   i2c_reset_tx_fifo(I2C_MASTER_NUM);
   i2c_reset_rx_fifo(I2C_MASTER_NUM);
   periph_module_disable(PERIPH_I2C0_MODULE);
   periph_module_enable(PERIPH_I2C0_MODULE);
   i2c_driver_delete(I2C_MASTER_NUM);
+
+  i2c_reset_tx_fifo(1);
+  i2c_reset_rx_fifo(1);
+  periph_module_disable(PERIPH_I2C0_MODULE);
+  periph_module_enable(PERIPH_I2C0_MODULE);
+  i2c_driver_delete(1);
   i2c_master_init();
 }
 
