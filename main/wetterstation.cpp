@@ -1,5 +1,5 @@
 /* ESP32-Wetterstation
- * Wetterstation mit verschiedenen Sensoren, die ihre Daten Ã¼ber MQTT
+ * Wetterstation mit verschiedenen Sensoren, die ihre Daten über MQTT
  * in Netz liefern.
  * 03.02.2021 O.Rutsch
  */
@@ -44,6 +44,7 @@
 #include "driver/ledc.h"
 #include "driver/pcnt.h"
 #include "tools.h"
+#include <math.h>
 
 #define NUM_LEDS 2
 
@@ -52,9 +53,9 @@ static const char *TAG = "Wetterstation";
 // Pinbelegung:
 // pin9=GPIO18=I2C SDA
 // pin10=GPIO19=I2C SCL
-// pin11=GPIO21=Data out fÃ¼r WS2812-LEDs
-// pin12=GPIO22=CPU-LÃ¼fter grÃ¼n=Tachosignal
-// pin13=GPIO23=CPU-LÃ¼fter blau=PWM LÃ¼ftersteuerung
+// pin11=GPIO21=Data out für WS2812-LEDs
+// pin12=GPIO22=CPU-Lüfter grün=Tachosignal
+// pin13=GPIO23=CPU-Lüfter blau=PWM Lüftersteuerung
 // pin07=GPIO17=NRF24 Set. Low=AT-Kommandos, High=Datentransfer
 
 #define _I2C_NUMBER(num) I2C_NUM_##num
@@ -63,7 +64,7 @@ static const char *TAG = "Wetterstation";
 #define I2C_MASTER_SCL_IO 19               /*!< gpio number for I2C master clock */
 #define I2C_MASTER_SDA_IO 18               /*!< gpio number for I2C master data  */
 #define I2C_MASTER_NUM I2C_NUMBER(0)       /*!< I2C port number for master dev */
-#define I2C_MASTER_FREQ_HZ 100000          /*!< I2C master clock frequency */
+#define I2C_MASTER_FREQ_HZ 20000           /*!< I2C master clock frequency */
 #define I2C_MASTER_TX_BUF_DISABLE 0        /*!< I2C master doesn't need buffer */
 #define I2C_MASTER_RX_BUF_DISABLE 0        /*!< I2C master doesn't need buffer */
 
@@ -351,7 +352,7 @@ extern "C"
 
     esp_err_t SensorStatus=ESP_OK;
 
-    // Bitfeld mit mÃ¶glichen Sensorfehlern
+    // Bitfeld mit möglichen Sensorfehlern
     uint16_t SensorErr=0;
 
     // Ansteuerung CPU-Luefter
@@ -386,7 +387,7 @@ extern "C"
     ledc_update_duty(ledc_channel.speed_mode, ledc_channel.channel);
 
 
-    // PCNT-Einheit zÃ¤hlt die Counterpulse vom CPU-LÃ¼fter
+    // PCNT-Einheit zählt die Counterpulse vom CPU-Lüfter
     // Prepare configuration for the PCNT unit
     pcnt_config_t pcnt_config =
     {
@@ -421,15 +422,30 @@ extern "C"
 
     int16_t count = 0;
     std::string StatusStr="";
+    std::string LastErrorString="";
+
+    // Gleitende Mittelwerte der Messdaten
+    double temp0_mean=0.0;
+    double temp1_mean=0.0;
+    double press_mean=0.0;
+    double lux_mean=0.0;
+    double hum0_mean=0.0;
+    double hum1_mean=0.0;
+    // Maximale Sprunggrößen zwischen zwei Messwerten bevor der Wert als suspekt eingestuft wird
+    double temp_diff_max=1;     // Grad
+    double press_diff_max=5;    // Millibar
+    double lux_diff_max=50000;  // lux
+    double hum_diff_max=5;      // Prozent
+
     // Wie oft soll bei einem I2C-Fehler das Kommando wiederholt werden?
     const int ErrorRetry=5;
     int RetryCounter=0;
     // Messdaten alle 10 Sekunden abfragen
     const int LoopDelayTime_s=10;
-    // Watchdog auf 30 s, panic-handler bei timeout auslÃ¶sen
+    // Watchdog auf 30 s, panic-handler bei timeout auslösen
     ESP_ERROR_CHECK(esp_task_wdt_init(LoopDelayTime_s*3, true));
     ESP_ERROR_CHECK(esp_task_wdt_add(NULL));
-
+    bool RetrySuspectData=false;
     for(;;)
     {
       esp_task_wdt_reset();
@@ -441,12 +457,15 @@ extern "C"
         RetryCounter=0;
         do
         {
+          RetrySuspectData=false;
           SensorStatus=sht0.ReadSHT35(temp, hum, CrcErr);
-          if (CrcErr)
+          if (c==0)
           {
-            ESP_LOGW(TAG,"WARNUNG: SHT35-0 CRC-Datenfehler aufgetreten, Daten kÃ¶nnten falsch sein.");
-            StatusStr+=strprintf("CRC-Fehler SHT35-0 ");
+            // Startwerte
+            temp0_mean=temp;
+            hum0_mean= hum;
           }
+
           if (SensorStatus!=ESP_OK)
           {
             SetSensorErr(SensorErr,eSHT35_0,true);
@@ -456,20 +475,58 @@ extern "C"
             i2c_master_reset();
             vTaskDelay(1000 / portTICK_RATE_MS);
           }
+          else if (CrcErr)
+          {
+            ESP_LOGW(TAG,"WARNUNG: SHT35-0 CRC-Datenfehler aufgetreten, Daten könnten falsch sein.");
+            StatusStr+=strprintf("CRC-Fehler SHT35-0 ");
+            RetrySuspectData=true;
+          }
           else
+          {
             SetSensorErr(SensorErr,eSHT35_0,false);
+            // Daten plausibel? (sollte durch CRC eigentlich nicht auftreten können...)
+            if (fabs(temp-temp0_mean)>temp_diff_max)
+            {
+              ESP_LOGW(TAG,"WARNUNG: SHT35-0 Temperatur suspekt.");
+              StatusStr+=strprintf("Suspekte Temperatur SHT35-0: Aktuell: %.2f°C Glt.Mitt.: %.2f°C ",temp,temp0_mean);
+              RetrySuspectData=true;
+            }
+            else
+              temp0_mean = temp0_mean*0.8+0.2*temp;
+
+            if (fabs(hum-hum0_mean)>hum_diff_max)
+            {
+              ESP_LOGW(TAG,"WARNUNG: SHT35-0 Luftfeuchtigkeit suspekt.");
+              StatusStr+=strprintf("Suspekte Luftfeuchtigkeit SHT35-0: Aktuell: %.2f %% Glt.Mitt.: %.2f %% ",hum,hum0_mean);
+              RetrySuspectData=true;
+            }
+            else
+              hum0_mean= hum0_mean*0.8+0.2*hum;
+
+          }
+
           RetryCounter++;
         }
-        while (GetSensorErr(SensorErr,eSHT35_0) && RetryCounter<=ErrorRetry);
+        while ((GetSensorErr(SensorErr,eSHT35_0) || RetrySuspectData) && RetryCounter<=ErrorRetry);
         if (GetSensorErr(SensorErr,eSHT35_0))
         {
           ESP_LOGE(TAG,"SHT35-0 Fehler: Gebe auf nach %d Versuchen!",ErrorRetry);
         }
         else
         {
-          sprintf(TempStr0,"%.2f",temp);
-          sprintf(HumStr0,"%.2f",hum);
-          ESP_LOGI(TAG,"SHT35-0 Temperatur: %sÂ°C Luftfeuchte: %s %%",TempStr0,HumStr0);
+          if (RetrySuspectData)
+          {
+            // Auch nach mehrmaligem Neuversuchen weichen die Daten zu sehr vom
+            // Mittelwert ab. Damit sich die Werte nicht "festfahren" initialisieren
+            // wir den gleitenden Mittelwert neu...
+            ESP_LOGW(TAG,"WARNUNG: Neuzuweisung gleitender Mittelwert SHT35-0.");
+            StatusStr+=strprintf("WARNUNG: Neuzuweisung gleitender Mittelwert SHT35-0.");
+            temp0_mean=temp;
+            hum0_mean=hum;
+          }
+          sprintf(TempStr0,"%.2f",temp0_mean);
+          sprintf(HumStr0,"%.2f",hum0_mean);
+          ESP_LOGI(TAG,"SHT35-0 Temperatur: %s°C Luftfeuchte: %s %%",TempStr0,HumStr0);
         }
       }
 
@@ -478,12 +535,15 @@ extern "C"
         RetryCounter=0;
         do
         {
+          RetrySuspectData=false;
           SensorStatus=sht1.ReadSHT35(temp, hum, CrcErr);
-          if (CrcErr)
+          if (c==0)
           {
-            ESP_LOGW(TAG,"WARNUNG: SHT35-1 CRC-Datenfehler aufgetreten, Daten kÃ¶nnten falsch sein.");
-            StatusStr+=strprintf("CRC-Fehler SHT35-1 ");
+            // Startwerte
+            temp1_mean=temp;
+            hum1_mean= hum;
           }
+
           if (SensorStatus!=ESP_OK)
           {
             SetSensorErr(SensorErr,eSHT35_1,true);
@@ -493,31 +553,72 @@ extern "C"
             i2c_master_reset();
             vTaskDelay(1000 / portTICK_RATE_MS);
           }
+          else if (CrcErr)
+          {
+            ESP_LOGW(TAG,"WARNUNG: SHT35-1 CRC-Datenfehler aufgetreten, Daten könnten falsch sein.");
+            StatusStr+=strprintf("CRC-Fehler SHT35-1 ");
+            RetrySuspectData=true;
+          }
           else
+          {
             SetSensorErr(SensorErr,eSHT35_1,false);
+            // Daten plausibel? (sollte durch CRC eigentlich nicht auftreten können...)
+            if (fabs(temp-temp1_mean)>temp_diff_max)
+            {
+              ESP_LOGW(TAG,"WARNUNG: SHT35-1 Temperatur suspekt.");
+              StatusStr+=strprintf("Suspekte Temperatur SHT35-1: Aktuell: %.2f°C Glt.Mitt.: %.2f°C ",temp,temp1_mean);
+              RetrySuspectData=true;
+            }
+            else
+              temp1_mean = temp1_mean*0.8+0.2*temp;
+
+            if (fabs(hum-hum1_mean)>hum_diff_max)
+            {
+              ESP_LOGW(TAG,"WARNUNG: SHT35-1 Luftfeuchtigkeit suspekt.");
+              StatusStr+=strprintf("Suspekte Luftfeuchtigkeit SHT35-1: Aktuell: %.2f %% Glt.Mitt.: %.2f %% ",hum,hum1_mean);
+              RetrySuspectData=true;
+            }
+            else
+              hum1_mean= hum1_mean*0.8+0.2*hum;
+
+          }
+
           RetryCounter++;
         }
-        while (GetSensorErr(SensorErr,eSHT35_1) && RetryCounter<=ErrorRetry);
+        while ((GetSensorErr(SensorErr,eSHT35_1) || RetrySuspectData) && RetryCounter<=ErrorRetry);
         if (GetSensorErr(SensorErr,eSHT35_1))
         {
           ESP_LOGE(TAG,"SHT35-1 Fehler: Gebe auf nach %d Versuchen!",ErrorRetry);
         }
         else
         {
-          sprintf(TempStr1,"%.2f",temp);
-          sprintf(HumStr1,"%.2f",hum);
-          ESP_LOGI(TAG,"SHT35-1 Temperatur: %sÂ°C Luftfeuchte: %s %%",TempStr1,HumStr1);
+          if (RetrySuspectData)
+          {
+            // Auch nach mehrmaligem Neuversuchen weichen die Daten zu sehr vom
+            // Mittelwert ab. Damit sich die Werte nicht "festfahren" initialisieren
+            // wir den gleitenden Mittelwert neu...
+            ESP_LOGW(TAG,"WARNUNG: Neuzuweisung gleitender Mittelwert SHT35-1.");
+            StatusStr+=strprintf("WARNUNG: Neuzuweisung gleitender Mittelwert SHT35-1.");
+            temp1_mean=temp;
+            hum1_mean=hum;
+          }
+          sprintf(TempStr1,"%.2f",temp1_mean);
+          sprintf(HumStr1,"%.2f",hum1_mean);
+          ESP_LOGI(TAG,"SHT35-1 Temperatur: %s°C Luftfeuchte: %s %%",TempStr1,HumStr1);
         }
       }
 
 
       if (bmp_init_ok)
       {
-
         RetryCounter=0;
         do
         {
+          RetrySuspectData=false;
           SensorStatus=bmp.ReadPressure(BMP_pres_raw);
+          BMP_pres=bmp.seaLevelForAltitude(210, BMP_pres_raw)/100; // in mbar=hPa
+          if (c==0)
+            press_mean=BMP_pres;
           if (SensorStatus!=ESP_OK)
           {
             SetSensorErr(SensorErr,eBMP280,true);
@@ -528,29 +629,51 @@ extern "C"
             vTaskDelay(1000 / portTICK_RATE_MS);
           }
           else
+          {
             SetSensorErr(SensorErr,eBMP280,false);
+            // Daten plausibel?
+            if (fabs(BMP_pres-press_mean)>press_diff_max)
+            {
+              ESP_LOGW(TAG,"WARNUNG: BMP280 Luftdruck suspekt.");
+              StatusStr+=strprintf("Suspekter Luftdruck BMP280: Aktuell: %.2f hPa Glt.Mitt.: %.2f hPa ",BMP_pres,press_mean);
+              RetrySuspectData=true;
+            }
+            else
+              press_mean = press_mean*0.8+0.2*BMP_pres;
+          }
+
           RetryCounter++;
         }
-        while (GetSensorErr(SensorErr,eBMP280) && RetryCounter<=ErrorRetry);
+        while ((GetSensorErr(SensorErr,eBMP280) | RetrySuspectData) && RetryCounter<=ErrorRetry);
         if (GetSensorErr(SensorErr,eBMP280))
         {
           ESP_LOGE(TAG,"BMP280 Fehler: Gebe auf nach %d Versuchen!",ErrorRetry);
         }
         else
         {
-          BMP_pres=bmp.seaLevelForAltitude(210, BMP_pres_raw);
-          sprintf(PresStr,"%.1f",BMP_pres/100);
+          if (RetrySuspectData)
+          {
+            // Auch nach mehrmaligem Neuversuchen weichen die Daten zu sehr vom
+            // Mittelwert ab. Damit sich die Werte nicht "festfahren" initialisieren
+            // wir den gleitenden Mittelwert neu...
+            ESP_LOGW(TAG,"WARNUNG: Neuzuweisung gleitender Mittelwert BMP280.");
+            StatusStr+=strprintf("WARNUNG: Neuzuweisung gleitender Mittelwert BMP280.");
+            press_mean=BMP_pres;
+          }
+          sprintf(PresStr,"%.1f",press_mean);
           ESP_LOGI(TAG,"BMP280 Luftdruck: %s hPa [raw: %.1f]",PresStr,BMP_pres_raw/100);
         }
       }
 
       if (veml_init_ok)
       {
-
         RetryCounter=0;
         do
         {
+          RetrySuspectData=false;
           SensorStatus=veml.readLuxNormalized(VEML_lux);
+          if (c==0)
+            lux_mean=VEML_lux;
           if (SensorStatus!=ESP_OK)
           {
             SetSensorErr(SensorErr,eVEML7700,true);
@@ -561,18 +684,39 @@ extern "C"
             vTaskDelay(1000 / portTICK_RATE_MS);
           }
           else
+          {
             SetSensorErr(SensorErr,eVEML7700,false);
+            // Daten plausibel?
+            if (fabs(VEML_lux-lux_mean)>lux_diff_max || VEML_lux>150000)
+            {
+              ESP_LOGW(TAG,"WARNUNG: VEML7700 Bel.Stärke suspekt.");
+              StatusStr+=strprintf("Suspekte Bel.Stärke VEML7700: Aktuell: %.2f lux Glt.Mitt.: %.2f lux ",VEML_lux,lux_mean);
+              RetrySuspectData=true;
+            }
+            else
+              lux_mean = lux_mean*0.8+0.2*VEML_lux;
+          }
+
           RetryCounter++;
         }
-        while (GetSensorErr(SensorErr,eVEML7700) && RetryCounter<=ErrorRetry);
+        while ((GetSensorErr(SensorErr,eVEML7700) | RetrySuspectData) && RetryCounter<=ErrorRetry);
         if (GetSensorErr(SensorErr,eVEML7700))
         {
           ESP_LOGE(TAG,"VEML7700 Fehler: Gebe auf nach %d Versuchen!",ErrorRetry);
         }
         else
         {
+          if (RetrySuspectData)
+          {
+            // Auch nach mehrmaligem Neuversuchen weichen die Daten zu sehr vom
+            // Mittelwert ab. Damit sich die Werte nicht "festfahren" initialisieren
+            // wir den gleitenden Mittelwert neu...
+            ESP_LOGW(TAG,"WARNUNG: Neuzuweisung gleitender Mittelwert VEML7700.");
+            StatusStr+=strprintf("WARNUNG: Neuzuweisung gleitender Mittelwert VEML7700.");
+            lux_mean=VEML_lux;
+          }
           smLEDPower=std::max((int)255,(int)(10+VEML_lux/20));
-          sprintf(LuxStr,"%.2f",VEML_lux);
+          sprintf(LuxStr,"%.2f",lux_mean);
           ESP_LOGI(TAG,"VEML7700 Luxsensor: %s lux",LuxStr);
         }
       }
@@ -582,14 +726,14 @@ extern "C"
         pcnt_get_counter_value(PCNT_UNIT_0, &count);
         uint16_t CoolerCount=abs(count);
         pcnt_counter_clear(PCNT_UNIT_0);
-        ESP_LOGI(TAG,"Counter CPU-LÃ¼fter: %d PWM: %d",CoolerCount,CurrentDuty);
+        ESP_LOGI(TAG,"Counter CPU-Lüfter: %d PWM: %d",CoolerCount,CurrentDuty);
 
         sprintf(CoolerStr,"%d",CoolerCount);
         if (CoolerCount<100)
         {
-          // LÃ¼fter ausgefallen?
-          StatusStr+=strprintf("Empfange keine oder zu wenige LÃ¼fter-Impulse: %d ",CoolerCount);
-          ESP_LOGE(TAG,"Empfange keine oder zu wenige LÃ¼fter-Impulse: %d ",CoolerCount);
+          // Lüfter ausgefallen?
+          StatusStr+=strprintf("Empfange keine oder zu wenige Lüfter-Impulse: %d ",CoolerCount);
+          ESP_LOGE(TAG,"Empfange keine oder zu wenige Lüfter-Impulse: %d ",CoolerCount);
         }
       }
 
@@ -617,8 +761,8 @@ extern "C"
         }
         if (GetSensorErr(SensorErr,eSHT35_0)==false)
         {
-          esp_mqtt_client_publish(mqtt_client, "/wetterstation/schuppen/temperatur", TempStr0, strlen(TempStr0), 1,0);
-          esp_mqtt_client_publish(mqtt_client, "/wetterstation/schuppen/luftfeuchtigkeit", HumStr0, strlen(HumStr0), 1,0);
+          esp_mqtt_client_publish(mqtt_client, "/wetterstation/aussen/temperatur_top", TempStr0, strlen(TempStr0), 1,0);
+          esp_mqtt_client_publish(mqtt_client, "/wetterstation/aussen/luftfeuchtigkeit_top", HumStr0, strlen(HumStr0), 1,0);
         }
         if (GetSensorErr(SensorErr,eBMP280)==false)
           esp_mqtt_client_publish(mqtt_client, "/wetterstation/aussen/luftdruck", PresStr, strlen(PresStr), 1,0);
@@ -627,6 +771,8 @@ extern "C"
         esp_mqtt_client_publish(mqtt_client, "/wetterstation/aussen/luefterdrehzahl", CoolerStr, strlen(CoolerStr), 1,0);
         if (StatusStr.size()==0)
           StatusStr="Alles OK";
+        else
+          LastErrorString=StatusStr;
         if (c==0)
         {
           StatusStr="Wetterstation neu gestartet!";
@@ -634,6 +780,8 @@ extern "C"
         }
         else
           esp_mqtt_client_publish(mqtt_client, "/wetterstation/aussen/status", StatusStr.c_str(), StatusStr.size(), 1,0);
+
+        esp_mqtt_client_publish(mqtt_client, "/wetterstation/error/status", LastErrorString.c_str(), LastErrorString.size(), 1,0);
       }
       vTaskDelay(LoopDelayTime_s*1000 / portTICK_RATE_MS);
       c++;
@@ -648,7 +796,7 @@ std::string NRFCommand(std::string aCmd)
   gpio_set_level(GPIO_NUM_17, LOW); // Kommandomodus einschalten
   vTaskDelay(100 / portTICK_RATE_MS);  // etwas warten
   uart_write_bytes(UART_NUM_1, aCmd.c_str(), aCmd.size());
-  int len = uart_read_bytes(UART_NUM_1, nrf_answer, sizeof(nrf_answer)-1, 200 / portTICK_RATE_MS);
+  int len = uart_read_bytes(UART_NUM_1, (uint8_t*)nrf_answer, sizeof(nrf_answer)-1, 200 / portTICK_RATE_MS);
   std::string ans="";
   if (len>0)
   {
