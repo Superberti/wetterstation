@@ -28,6 +28,7 @@ TopicHum2="/wetterstation/aussen/luftfeuchtigkeit_top"
 TopicLight="/wetterstation/aussen/beleuchtungsstaerke"
 TopicStatus="/wetterstation/aussen/status"
 TopicLuefter="/wetterstation/aussen/luefterdrehzahl"
+TopicError="/wetterstation/error/status"
 
 TopicCounter=0
 
@@ -49,6 +50,7 @@ def on_connect(client, userdata, flags, rc):
     client.subscribe(TopicLight)
     client.subscribe(TopicStatus)
     client.subscribe(TopicLuefter)
+    client.subscribe(TopicError)
  
 def _parse_mqtt_message(topic, payload):
     match = re.match(MQTT_REGEX, topic)
@@ -77,18 +79,26 @@ def _send_sensor_data_to_influxdb(sensor_data):
     print('JSON: '+str(json_body))
     influxdb_client.write_points(json_body)
 
+def _send_error_log_to_influxdb(error_log):
+    json_body = [
+        {
+            'errorlog': error_log
+        }
+    ]
+    print('JSON: '+str(json_body))
+    influxdb_client.write_points(json_body)
+
 def on_message(client, userdata, msg):
     """The callback for when a PUBLISH message is received from the server."""
     print(msg.topic + ' ' + str(msg.payload))
     try:
         sensor_data = _parse_mqtt_message(msg.topic, msg.payload.decode('utf-8'))
         if sensor_data is not None:
-            if msg.topic is not TopicStatus:
-                _send_sensor_data_to_influxdb(sensor_data)
-            else:
+            _send_sensor_data_to_influxdb(sensor_data)
+        else:
+            if msg.topic is TopicError:
                 status=msg.payload.decode('utf-8')
-                if status is not "Alles OK":
-                    _send_sensor_data_to_influxdb(sensor_data)
+                _send_error_log_to_influxdb(status)
                     
     except Exception as e:
         logging.info("Fehler", e.__class__, "occurred: ",e)
