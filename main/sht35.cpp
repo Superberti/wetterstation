@@ -66,6 +66,7 @@ bool SHT35::init()
 esp_err_t SHT35::ReadSHT35(double & aTemp, double & aHum, bool & rCRC_Err)
 {
   int ret;
+  rCRC_Err=false;
   i2c_cmd_handle_t cmd = i2c_cmd_link_create();
   i2c_master_start(cmd);
   i2c_master_write_byte(cmd, SHT35_ADDR << 1 | I2C_MASTER_WRITE, ACK_CHECK_EN);
@@ -102,7 +103,7 @@ esp_err_t SHT35::ReadSHT35(double & aTemp, double & aHum, bool & rCRC_Err)
   if (crc!=rb[2])
   {
     ESP_LOGE("ReadSHT35:","Falscher Temperatur-CRC: [0x%x] <> [0x%x]\r\n",crc,rb[2]);
-    rCRC_Err=1;
+    rCRC_Err=true;
   }
 
   // Checksumme Luftfeuchte
@@ -110,7 +111,7 @@ esp_err_t SHT35::ReadSHT35(double & aTemp, double & aHum, bool & rCRC_Err)
   if (crc!=rb[5])
   {
     ESP_LOGE("ReadSHT35:","Falscher Luftfeuchte-CRC: [0x%x] <> [0x%x]\r\n",crc,rb[5]);
-    rCRC_Err=1;
+    rCRC_Err=true;
   }
 
   return ret;

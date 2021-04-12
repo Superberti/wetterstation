@@ -117,14 +117,15 @@ extern "C"
     // GPIO17 schaltet Kommandomodus des NRF
     gpioSetup(GPIO_NUM_17, OUTPUT, LOW);
 
-    uart_config_t uart_config = {
-        .baud_rate = 9600,
-        .data_bits = UART_DATA_8_BITS,
-        .parity    = UART_PARITY_DISABLE,
-        .stop_bits = UART_STOP_BITS_1,
-        .flow_ctrl = UART_HW_FLOWCTRL_DISABLE,
-        .rx_flow_ctrl_thresh = 0,
-        .source_clk = UART_SCLK_APB,
+    uart_config_t uart_config =
+    {
+      .baud_rate = 9600,
+      .data_bits = UART_DATA_8_BITS,
+      .parity    = UART_PARITY_DISABLE,
+      .stop_bits = UART_STOP_BITS_1,
+      .flow_ctrl = UART_HW_FLOWCTRL_DISABLE,
+      .rx_flow_ctrl_thresh = 0,
+      .source_clk = UART_SCLK_APB,
     };
     ESP_ERROR_CHECK(uart_driver_install(UART_NUM_1, BUF_SIZE * 2, 0, 0, NULL, 0));
     ESP_ERROR_CHECK(uart_param_config(UART_NUM_1, &uart_config));
@@ -146,7 +147,12 @@ extern "C"
     if (NrfErr)
       ESP_LOGE(TAG,"Fehler beim initialisieren vom NRF24-Modul!");
     else
+    {
       ESP_LOGI(TAG, "Init NRF24 OK.");
+      //ESP_LOGI(TAG, "Splitte ESP_LOG-Ausgabe auf NRF24.");
+      //esp_log_set_vprintf(&nrf_vprintf);
+    }
+
     led_task_init();
     SetLEDColor(0,128,0,0);
     SetLEDColor(1,128,0,0);
@@ -446,6 +452,7 @@ extern "C"
     ESP_ERROR_CHECK(esp_task_wdt_init(LoopDelayTime_s*3, true));
     ESP_ERROR_CHECK(esp_task_wdt_add(NULL));
     bool RetrySuspectData=false;
+    bool ErrorLogged=false;
     for(;;)
     {
       esp_task_wdt_reset();
@@ -478,7 +485,7 @@ extern "C"
           else if (CrcErr)
           {
             ESP_LOGW(TAG,"WARNUNG: SHT35-0 CRC-Datenfehler aufgetreten, Daten könnten falsch sein.");
-            StatusStr+=strprintf("CRC-Fehler SHT35-0 ");
+            StatusStr+=strprintf("CRC-Fehler SHT35-0 Versuch %d ",RetryCounter+1);
             RetrySuspectData=true;
           }
           else
@@ -556,7 +563,7 @@ extern "C"
           else if (CrcErr)
           {
             ESP_LOGW(TAG,"WARNUNG: SHT35-1 CRC-Datenfehler aufgetreten, Daten könnten falsch sein.");
-            StatusStr+=strprintf("CRC-Fehler SHT35-1 ");
+            StatusStr+=strprintf("CRC-Fehler SHT35-1 Versuch %d ",RetryCounter+1);
             RetrySuspectData=true;
           }
           else
@@ -608,7 +615,6 @@ extern "C"
         }
       }
 
-
       if (bmp_init_ok)
       {
         RetryCounter=0;
@@ -616,7 +622,7 @@ extern "C"
         {
           RetrySuspectData=false;
           SensorStatus=bmp.ReadPressure(BMP_pres_raw);
-          BMP_pres=bmp.seaLevelForAltitude(210, BMP_pres_raw)/100; // in mbar=hPa
+          BMP_pres=bmp.seaLevelForAltitude(210, BMP_pres_raw)/100.0; // in mbar=hPa
           if (c==0)
             press_mean=BMP_pres;
           if (SensorStatus!=ESP_OK)
@@ -687,7 +693,7 @@ extern "C"
           {
             SetSensorErr(SensorErr,eVEML7700,false);
             // Daten plausibel?
-            if (fabs(VEML_lux-lux_mean)>lux_diff_max || VEML_lux>150000)
+            if (fabs(VEML_lux-lux_mean)>lux_diff_max || VEML_lux>300000)
             {
               ESP_LOGW(TAG,"WARNUNG: VEML7700 Bel.Stärke suspekt.");
               StatusStr+=strprintf("Suspekte Bel.Stärke VEML7700: Aktuell: %.2f lux Glt.Mitt.: %.2f lux ",VEML_lux,lux_mean);
@@ -708,12 +714,15 @@ extern "C"
         {
           if (RetrySuspectData)
           {
-            // Auch nach mehrmaligem Neuversuchen weichen die Daten zu sehr vom
-            // Mittelwert ab. Damit sich die Werte nicht "festfahren" initialisieren
-            // wir den gleitenden Mittelwert neu...
-            ESP_LOGW(TAG,"WARNUNG: Neuzuweisung gleitender Mittelwert VEML7700.");
-            StatusStr+=strprintf("WARNUNG: Neuzuweisung gleitender Mittelwert VEML7700.");
-            lux_mean=VEML_lux;
+            if (VEML_lux<300000)
+            {
+              // Auch nach mehrmaligem Neuversuchen weichen die Daten zu sehr vom
+              // Mittelwert ab. Damit sich die Werte nicht "festfahren" initialisieren
+              // wir den gleitenden Mittelwert neu...
+              ESP_LOGW(TAG,"WARNUNG: Neuzuweisung gleitender Mittelwert VEML7700.");
+              StatusStr+=strprintf("WARNUNG: Neuzuweisung gleitender Mittelwert VEML7700.");
+              lux_mean=VEML_lux;
+            }
           }
           smLEDPower=std::max((int)255,(int)(10+VEML_lux/20));
           sprintf(LuxStr,"%.2f",lux_mean);
@@ -772,7 +781,11 @@ extern "C"
         if (StatusStr.size()==0)
           StatusStr="Alles OK";
         else
+        {
           LastErrorString=StatusStr;
+          ErrorLogged=false;
+        }
+
         if (c==0)
         {
           StatusStr="Wetterstation neu gestartet!";
@@ -780,8 +793,11 @@ extern "C"
         }
         else
           esp_mqtt_client_publish(mqtt_client, "/wetterstation/aussen/status", StatusStr.c_str(), StatusStr.size(), 1,0);
-
-        esp_mqtt_client_publish(mqtt_client, "/wetterstation/error/status", LastErrorString.c_str(), LastErrorString.size(), 1,0);
+        if (!ErrorLogged)
+        {
+          ErrorLogged=true;
+          esp_mqtt_client_publish(mqtt_client, "/wetterstation/error/status", LastErrorString.c_str(), LastErrorString.size(), 1,0);
+        }
       }
       vTaskDelay(LoopDelayTime_s*1000 / portTICK_RATE_MS);
       c++;
@@ -811,6 +827,19 @@ std::string NRFCommand(std::string aCmd)
     ESP_LOGE(TAG, "Timeout beim Lesen vom NRF01!");
   gpioSetup(GPIO_NUM_17, OUTPUT, HIGH);
   return ans;
+}
+
+void NRFLog(std::string aLog)
+{
+  gpio_set_level(GPIO_NUM_17, HIGH); // Write through einschalten
+  uart_write_bytes(UART_NUM_1, aLog.c_str(), aLog.size());
+}
+
+int nrf_vprintf(const char *fmt, va_list args)
+{
+  std::string log=strprintf(fmt,args);
+  NRFLog(log);
+  return log.size();
 }
 
 void SetSensorErr(uint16_t & aSensorErr, SensorType aSensorType, bool aStatus)
