@@ -10,7 +10,7 @@ import logging
 
 INFLUXDB_ADDRESS = 'localhost'
 
-MQTT_ADDRESS = 'raspiwetter'
+MQTT_ADDRESS = 'localhost'
 MQTT_USER = 'Oliver'
 MQTT_PASSWORD = 'Oliver'
 MQTT_TOPIC = '/wetterstation/+'
@@ -18,10 +18,10 @@ MQTT_REGEX = '/wetterstation/([^/]+)/([^/]+)'
 MQTT_CLIENT_ID = 'MQTT_Prometheus_Bridge'
 
 TopicTemp1="/wetterstation/aussen/temperatur"
-TopicTemp2="/wetterstation/schuppen/temperatur"
+TopicTemp2="/wetterstation/aussen/temperatur_top"
 TopicPress1="/wetterstation/aussen/luftdruck"
 TopicHum1="/wetterstation/aussen/luftfeuchtigkeit"
-TopicHum2="/wetterstation/schuppen/luftfeuchtigkeit"
+TopicHum2="/wetterstation/aussen/luftfeuchtigkeit_top"
 TopicLight="/wetterstation/aussen/beleuchtungsstaerke"
 TopicStatus="/wetterstation/aussen/status"
 TopicLuefter="/wetterstation/aussen/luefterdrehzahl"
@@ -41,7 +41,7 @@ prom_hum = Gauge("Luftfeuchtigkeit", "Luftfeuchtigkeit der Wetterstation", ['ort
 prom_press = Gauge("Luftdruck", "Luftdruck der Wetterstation", ['ort','sensorart'])
 prom_bright = Gauge("Beleuchtungsstaerke", "Beleuchtungsstaerke der Wetterstation", ['ort','sensorart'])
 prom_cool = Gauge("Luefterdrehzal", "Drehzahl des Lüfters", ['ort','sensorart'])
-prom_status = Gauge("Status", "Status der Wetterstation", ['ort','sensorart'])
+#prom_status = Gauge("Status", "Status der Wetterstation", ['ort','sensorart'])
 
 class SensorData(NamedTuple):
     location: str
@@ -50,7 +50,7 @@ class SensorData(NamedTuple):
 
 def on_connect(client, userdata, flags, rc):
     """ The callback for when the client receives a CONNACK response from the server."""
-    print('Connected with result code ' + str(rc))
+    print('Connected to MQTT server with result code ' + str(rc))
     client.subscribe(TopicTemp1)
     client.subscribe(TopicTemp2)
     client.subscribe(TopicPress1)
@@ -78,7 +78,7 @@ def on_message(client, userdata, msg):
             prom_temp.labels(ort='Aussen', sensorart='SHT35').set(temp1)
         elif (msg.topic==TopicTemp2):
             temp2=float(msg.payload)
-            prom_temp.labels(ort='Schuppen', sensorart='SHT35').set(temp2)
+            prom_temp.labels(ort='Schuppendach', sensorart='SHT35').set(temp2)
         elif (msg.topic==TopicPress1):
             press1=float(msg.payload)
             prom_press.labels(ort='Schuppen', sensorart='BMP280').set(press1)
@@ -87,16 +87,16 @@ def on_message(client, userdata, msg):
             prom_hum.labels(ort='Aussen', sensorart='SHT35').set(hum1)
         elif (msg.topic==TopicHum2):
             hum2=float(msg.payload)
-            prom_hum.labels(ort='Schuppen', sensorart='SHT35').set(hum2)
+            prom_hum.labels(ort='Schuppendach', sensorart='SHT35').set(hum2)
         elif (msg.topic==TopicLight):
             brightness=float(msg.payload)
             prom_bright.labels(ort='Aussen', sensorart='VEML7700').set(brightness)
         elif (msg.topic==TopicLuefter):
             cooler=float(msg.payload)
-            prom_cool.labels(ort='Schuppen', sensorart='Luefter').set(cooler)
-        elif (msg.topic==TopicStatus):
-            status=msg.payload
-            prom_status.labels(ort='Schuppen', sensorart='log').set(status)
+            prom_cool.labels(ort='Aussen', sensorart='Luefter').set(cooler)
+        #elif (msg.topic==TopicStatus):
+        #    status=msg.payload
+        #    prom_status.labels(ort='Schuppen', sensorart='log').set(status)
     except Exception as e:
         logging.info("Fehler", e.__class__, "occurred: ",e)
 
