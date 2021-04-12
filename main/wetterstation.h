@@ -6,6 +6,7 @@
 #include "freertos/task.h"
 #include "freertos/event_groups.h"
 #include <string>
+#include <stdarg.h>
 // Prototypen:
 
 void disp_buf(uint8_t *buf, int len);
@@ -46,5 +47,7 @@ enum SensorType
 void SetSensorErr(uint16_t & aSensorErr, SensorType aSensorType, bool aStatus);
 bool GetSensorErr(const uint16_t aSensorErr, SensorType aSensorType);
 std::string NRFCommand(std::string aCmd);
+void NRFLog(std::string aLog);
+int nrf_vprintf(const char *fmt, va_list args);
 
 #endif // WETTERSTATION_H_INCLUDED
