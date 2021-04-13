@@ -1,4 +1,4 @@
-#ifndef WETTERSTATION_H_INCLUDED
+﻿#ifndef WETTERSTATION_H_INCLUDED
 #define WETTERSTATION_H_INCLUDED
 
 #include <stdio.h>
@@ -10,7 +10,6 @@
 // Prototypen:
 
 void disp_buf(uint8_t *buf, int len);
-esp_err_t i2c_master_init(void);
 
 static void event_handler(void* arg, esp_event_base_t event_base, int event_id, void* event_data);
 static void wifi_init_sta(void);
@@ -24,7 +23,8 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
 void SetLEDColor(uint8_t aLEDNum, uint8_t r, uint8_t g, uint8_t b);
 void led_task_init(void);
 void led_cmd_task(void * arg);
-void i2c_master_reset();
+void i2c_master_reset(uint8_t aPortNum);
+esp_err_t i2c_master_init(uint8_t aPortNum);
 
 struct LEDData
 {
@@ -47,7 +47,8 @@ enum SensorType
 void SetSensorErr(uint16_t & aSensorErr, SensorType aSensorType, bool aStatus);
 bool GetSensorErr(const uint16_t aSensorErr, SensorType aSensorType);
 std::string NRFCommand(std::string aCmd);
-void NRFLog(std::string aLog);
+void NRFLog(const std::string & aLog);
+void NRFLog(const char * const aLog, int len);
 int nrf_vprintf(const char *fmt, va_list args);
 
 #endif // WETTERSTATION_H_INCLUDED
