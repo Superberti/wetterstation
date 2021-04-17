@@ -152,11 +152,11 @@ extern "C"
     else
     {
       ESP_LOGI(TAG, "Init NRF24 OK.");
+      ESP_LOGI(TAG, "Splitte ESP_LOG-Ausgabe auf NRF24.");
+      esp_log_set_vprintf(nrf_vprintf);
     }
     
-    ESP_LOGI(TAG, "Splitte ESP_LOG-Ausgabe auf NRF24.");
-    esp_log_set_vprintf(nrf_vprintf);
-
+    
     led_task_init();
     SetLEDColor(0, 128, 0, 0);
     SetLEDColor(1, 128, 0, 0);
