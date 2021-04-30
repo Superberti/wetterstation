@@ -11,6 +11,7 @@
 #include "esp_log.h"
 
 #include "cbor_tools.h"
+#include "tools.h"
 
 static const char *TAG = "JSON";
 

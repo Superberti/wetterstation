@@ -18,6 +18,7 @@
 #include <string>
 #include "wetterstation-lora.h"
 #include "cbor_tools.h"
+#include "tools.h"
 
 static const char *TAG = "WS LORA";
 
@@ -55,6 +56,24 @@ extern "C"
 }
 
 #define SENDING
+
+esp_err_t SendLoraMsg(uint8_t* aBuf, uint16_t aSize)
+{
+  uint8_t lora_buf[256];
+  uint8_t MaxPayloadPerPaketSize=255-sizeof(LoraPacketHeader);
+  uint8_t NumPackets=aSize/MaxPayloadPerPaketSize+1;
+  uint8_t LastPacketSize=aSize-(NumPackets-1)*MaxPayloadPerPaketSize;
+  LoraPacketHeader ph;
+  for (int i=0;i<NumPackets;i++)
+  {
+    ph.NumPackets=NumPackets;
+    ph.PacketNumber=i;
+    ph.PacketPayloadSize=i==(NumPackets-1) ? LastPacketSize : MaxPayloadPerPaketSize;
+    ph.TotalPacketSize=aSize;
+    ph.PayloadCRC=compute_crc(aBuf,ph.PacketPayloadSize);
+  }
+  return ESP_OK;
+}
 
 void task_tx(void *p)
 {
