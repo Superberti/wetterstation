@@ -59,19 +59,20 @@ static const char *TAG = "Wetterstation";
 // GPIO26=I2C1-SDA
 // GPIO27=i2C1-SCL
 // pin07=GPIO17=NRF24 Set. Low=AT-Kommandos, High=Datentransfer
+// GPIO4=NRF24 TX
+// GPIO5=NRF24 RX
 
 // I2C0-Pins
-#define I2C0_SDA_IO 18     
-#define I2C0_SCL_IO 19         
-  
+#define I2C0_SDA_IO 18
+#define I2C0_SCL_IO 19
+
 // I2C1-Pins
 #define I2C1_SDA_IO 26
-#define I2C1_SCL_IO 27         
+#define I2C1_SCL_IO 27
 
-
-#define I2C_MASTER_FREQ_HZ 20000     /*!< I2C master clock frequency */
-#define I2C_MASTER_TX_BUF_DISABLE 0  /*!< I2C master doesn't need buffer */
-#define I2C_MASTER_RX_BUF_DISABLE 0  /*!< I2C master doesn't need buffer */
+#define I2C_MASTER_FREQ_HZ 20000    /*!< I2C master clock frequency */
+#define I2C_MASTER_TX_BUF_DISABLE 0 /*!< I2C master doesn't need buffer */
+#define I2C_MASTER_RX_BUF_DISABLE 0 /*!< I2C master doesn't need buffer */
 
 #define HIGH 1
 #define LOW 0
@@ -130,7 +131,7 @@ extern "C"
             .rx_flow_ctrl_thresh = 0,
             .source_clk = UART_SCLK_APB,
         };
-    ESP_ERROR_CHECK(uart_driver_install(UART_NUM_1, BUF_SIZE , BUF_SIZE, 0, NULL, 0));
+    ESP_ERROR_CHECK(uart_driver_install(UART_NUM_1, BUF_SIZE, BUF_SIZE, 0, NULL, 0));
     ESP_ERROR_CHECK(uart_param_config(UART_NUM_1, &uart_config));
     ESP_ERROR_CHECK(uart_set_pin(UART_NUM_1, 4, 5, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE));
 
@@ -153,7 +154,7 @@ extern "C"
     {
       ESP_LOGI(TAG, "Init NRF24 OK.");
     }
-    
+
     ESP_LOGI(TAG, "Splitte ESP_LOG-Ausgabe auf NRF24.");
     esp_log_set_vprintf(nrf_vprintf);
 
@@ -839,14 +840,14 @@ std::string NRFCommand(std::string aCmd)
   return ans;
 }
 
-void NRFLog(const std::string & aLog)
+void NRFLog(const std::string &aLog)
 {
   gpio_set_level(GPIO_NUM_17, HIGH); // Write through einschalten
   // nicht warten, bis alles geschrieben werden konnte. Evtl. fehlt dann halt was
   uart_tx_chars(UART_NUM_1, aLog.c_str(), aLog.size());
 }
 
-void NRFLog(const char * const aLog, int len)
+void NRFLog(const char *const aLog, int len)
 {
   gpio_set_level(GPIO_NUM_17, HIGH); // Write through einschalten
   // nicht warten, bis alles geschrieben werden konnte. Evtl. fehlt dann halt was
@@ -857,9 +858,9 @@ void NRFLog(const char * const aLog, int len)
 char vprintf_buffer[MAX_VPBUFLEN];
 
 int nrf_vprintf(const char *format, va_list args)
-{ 
-  int length=vsnprintf (vprintf_buffer,MAX_VPBUFLEN,format, args);
-  NRFLog(vprintf_buffer,length);
+{
+  int length = vsnprintf(vprintf_buffer, MAX_VPBUFLEN, format, args);
+  NRFLog(vprintf_buffer, length);
   // immer auch auf stdout loggen (UART0)
   return vprintf(format, args);
 }
@@ -954,14 +955,14 @@ void SetLEDColor(uint8_t aLEDNum, uint8_t r, uint8_t g, uint8_t b)
  */
 esp_err_t i2c_master_init(uint8_t aPortNum)
 {
-  if (aPortNum>1)
+  if (aPortNum > 1)
     return ESP_ERR_INVALID_ARG;
 
   i2c_config_t conf;
   conf.mode = I2C_MODE_MASTER;
-  conf.sda_io_num = aPortNum==0 ? I2C0_SDA_IO : I2C1_SDA_IO;
+  conf.sda_io_num = aPortNum == 0 ? I2C0_SDA_IO : I2C1_SDA_IO;
   conf.sda_pullup_en = GPIO_PULLUP_ENABLE;
-  conf.scl_io_num = aPortNum==0 ? I2C0_SCL_IO : I2C1_SCL_IO;
+  conf.scl_io_num = aPortNum == 0 ? I2C0_SCL_IO : I2C1_SCL_IO;
   conf.scl_pullup_en = GPIO_PULLUP_ENABLE;
   conf.master.clk_speed = I2C_MASTER_FREQ_HZ;
   i2c_param_config(aPortNum, &conf);
@@ -970,7 +971,7 @@ esp_err_t i2c_master_init(uint8_t aPortNum)
 
 void i2c_master_reset(uint8_t aPortNum)
 {
-  if (aPortNum>1)
+  if (aPortNum > 1)
     return;
   i2c_reset_tx_fifo(aPortNum);
   i2c_reset_rx_fifo(aPortNum);
