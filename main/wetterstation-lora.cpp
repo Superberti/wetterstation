@@ -34,8 +34,6 @@ static const char *ORT_SCHUPPEN_SCHATTEN = "Sch_Scha";
 static const char *ORT_SCHUPPEN_SONNE = "Sch_So";
 static const char *ORT_SCHUPPEN_INNEN = "Sch_In";
 
-
-
 extern "C"
 {
   void app_main()
@@ -57,20 +55,27 @@ extern "C"
 
 #define SENDING
 
-esp_err_t SendLoraMsg(uint8_t* aBuf, uint16_t aSize)
+uint8_t lora_buf[256];
+
+esp_err_t SendLoraMsg(uint8_t *aBuf, uint16_t aSize)
 {
-  uint8_t lora_buf[256];
-  uint8_t MaxPayloadPerPaketSize=255-sizeof(LoraPacketHeader);
-  uint8_t NumPackets=aSize/MaxPayloadPerPaketSize+1;
-  uint8_t LastPacketSize=aSize-(NumPackets-1)*MaxPayloadPerPaketSize;
+
+  uint8_t MaxPayloadPerPaketSize = 255 - sizeof(LoraPacketHeader);
+  uint8_t NumPackets = aSize / MaxPayloadPerPaketSize + 1;
+  uint8_t LastPacketSize = aSize - (NumPackets - 1) * MaxPayloadPerPaketSize;
   LoraPacketHeader ph;
-  for (int i=0;i<NumPackets;i++)
+  int BytesWritten = 0;
+  for (int i = 0; i < NumPackets; i++)
   {
-    ph.NumPackets=NumPackets;
-    ph.PacketNumber=i;
-    ph.PacketPayloadSize=i==(NumPackets-1) ? LastPacketSize : MaxPayloadPerPaketSize;
-    ph.TotalPacketSize=aSize;
-    ph.PayloadCRC=compute_crc(aBuf,ph.PacketPayloadSize);
+    ph.NumPackets = NumPackets;
+    ph.PacketNumber = i;
+    ph.PacketPayloadSize = i == (NumPackets - 1) ? LastPacketSize : MaxPayloadPerPaketSize;
+    ph.TotalPacketSize = aSize;
+    ph.PayloadCRC = compute_crc(aBuf + BytesWritten, ph.PacketPayloadSize);
+    memcpy(lora_buf, &ph, sizeof(ph)); // Header kopieren
+    memcpy(lora_buf + sizeof(ph), aBuf + BytesWritten, ph.PacketPayloadSize);
+    lora_send_packet(lora_buf, sizeof(ph)+ph.PacketPayloadSize);
+    BytesWritten += ph.PacketPayloadSize;
   }
   return ESP_OK;
 }
@@ -261,6 +266,3 @@ void task_tx(void *p)
   }
 #endif
 }
-
-
-
