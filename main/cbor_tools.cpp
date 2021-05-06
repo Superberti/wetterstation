@@ -176,32 +176,3 @@ err:
   return ret;
 }
 
-void HexDump(unsigned char *Buffer, const unsigned int dwBytes, const unsigned int offset)
-{
-  std::string Dump, AsciiDump;
-  char cell[10];
-  const unsigned int BytesPerLine = 16;
-  for (unsigned int i = 0; i < dwBytes; i++)
-  {
-    sprintf(cell, "%02X ", Buffer[i]);
-    Dump += std::string(cell);
-    AsciiDump += Buffer[i] >= 0x20 ? char(Buffer[i]) : '.';
-    if ((i && !((i + 1) % BytesPerLine)) || (i == dwBytes - 1))
-    {
-      if (i == dwBytes - 1 && dwBytes % BytesPerLine)
-      {
-        // Letzte, unvollständige Zeile
-        // Spaces einfügen
-        Dump += std::string(BytesPerLine * 3 - Dump.size(), ' ');
-        printf("%04Xh:%s | %s\n", i / BytesPerLine * BytesPerLine + offset, Dump.c_str(), AsciiDump.c_str());
-      }
-      else
-      {
-        // Zeile rausschreiben
-        printf("%04Xh:%s | %s\n", (i - 1) / BytesPerLine * BytesPerLine + offset, Dump.c_str(), AsciiDump.c_str());
-        Dump = "";
-        AsciiDump = "";
-      }
-    }
-  }
-}

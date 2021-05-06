@@ -16,6 +16,7 @@
 #include "esp_log.h"
 #include "cJSON.h"
 #include <string>
+#include "driver/gpio.h"
 #include "wetterstation-lora.h"
 #include "cbor_tools.h"
 #include "tools.h"
@@ -34,15 +35,28 @@ static const char *ORT_SCHUPPEN_SCHATTEN = "Sch_Scha";
 static const char *ORT_SCHUPPEN_SONNE = "Sch_So";
 static const char *ORT_SCHUPPEN_INNEN = "Sch_In";
 
+#define LED_PIN GPIO_NUM_25
+
 extern "C"
 {
   void app_main()
   {
-    lora_init();
-    lora_explicit_header_mode();
-    lora_set_frequency(433e6);
-    lora_enable_crc();
-    printf("Init OK\r\n");
+    gpio_pad_select_gpio(LED_PIN);
+    gpio_set_direction(LED_PIN, GPIO_MODE_OUTPUT);
+    esp_err_t ret;
+    ret = lora_init();
+    if (ret != ESP_OK)
+      error();
+    ret = lora_explicit_header_mode();
+    if (ret != ESP_OK)
+      error();
+    ret = lora_set_frequency(433e6);
+    if (ret != ESP_OK)
+      error();
+    //ret = lora_enable_crc();
+    //if (ret != ESP_OK)
+    //error();
+    ESP_LOGI(TAG, "Init LoRa OK");
     //for(;;){}
     xTaskCreate(&task_tx, "task_tx", 4096, NULL, 5, NULL);
     for (;;)
@@ -53,30 +67,51 @@ extern "C"
   }
 }
 
-#define SENDING
+void error()
+{
+  ESP_LOGE(TAG, "Error. Halting MCU");
+  int toggle = 0;
+  for (;;)
+  {
+    toggle = 1 - toggle;
+    gpio_set_level(LED_PIN, toggle);
+    vTaskDelay(pdMS_TO_TICKS(100));
+  }
+}
+
+//#define SENDING
 
 uint8_t lora_buf[256];
 
-esp_err_t SendLoraMsg(uint8_t *aBuf, uint16_t aSize)
+esp_err_t SendLoraMsg(LoraCommand aCmd, uint8_t *aBuf, uint16_t aSize)
 {
-
+  gpio_set_level(LED_PIN, 1);
   uint8_t MaxPayloadPerPaketSize = 255 - sizeof(LoraPacketHeader);
   uint8_t NumPackets = aSize / MaxPayloadPerPaketSize + 1;
   uint8_t LastPacketSize = aSize - (NumPackets - 1) * MaxPayloadPerPaketSize;
   LoraPacketHeader ph;
   int BytesWritten = 0;
+  esp_err_t ret;
   for (int i = 0; i < NumPackets; i++)
   {
+    ph.Cmd=(uint8_t)aCmd;
     ph.NumPackets = NumPackets;
     ph.PacketNumber = i;
     ph.PacketPayloadSize = i == (NumPackets - 1) ? LastPacketSize : MaxPayloadPerPaketSize;
-    ph.TotalPacketSize = aSize;
+    ph.TotalTransmissionSize = aSize;
     ph.PayloadCRC = compute_crc(aBuf + BytesWritten, ph.PacketPayloadSize);
     memcpy(lora_buf, &ph, sizeof(ph)); // Header kopieren
     memcpy(lora_buf + sizeof(ph), aBuf + BytesWritten, ph.PacketPayloadSize);
-    lora_send_packet(lora_buf, sizeof(ph)+ph.PacketPayloadSize);
+    ESP_LOGI(TAG, "Sending LoRa packet %d/%d, %d bytes", i + 1, NumPackets, sizeof(ph) + ph.PacketPayloadSize);
+    ret = lora_send_packet(lora_buf, sizeof(ph) + ph.PacketPayloadSize);
+    if (ret != ESP_OK)
+    {
+      gpio_set_level(LED_PIN, 0);
+      return ret;
+    }
     BytesWritten += ph.PacketPayloadSize;
   }
+  gpio_set_level(LED_PIN, 0);
   return ESP_OK;
 }
 
@@ -100,7 +135,7 @@ void task_tx(void *p)
   {
     // Achtung: In einer Map müssesn stets zwei Einträge paarweise stehen, sonst
     // schlägt der Encoder fehl!
-    CborEncoder encoder, me0, me1, me2, me3, me4, arr;
+    CborEncoder encoder, me0, me1, arr;
     cbor_encoder_init(&encoder, cbor_buf, sizeof(cbor_buf), 0);
     //cbor_encode_text_stringz(&encoder, "WS");
 
@@ -178,9 +213,12 @@ void task_tx(void *p)
     cbor_encoder_close_container(&encoder, &me0);
 
     int len = cbor_encoder_get_buffer_size(&encoder, cbor_buf);
-    ESP_LOGI(TAG, "CBOR erstellt, Groesse: %d\n\n", len);
-    HexDump(cbor_buf, len);
-    //ESP_LOGI(TAG, "Sende Paket: %d", c);
+    ESP_LOGI(TAG, "CBOR erstellt, Groesse: %d", len);
+    //HexDump(cbor_buf, len);
+    esp_err_t ret = SendLoraMsg(CMD_CBORDATA,cbor_buf, len);
+    if (ret != ESP_OK)
+      ESP_LOGE(TAG, "Fehler beim Senden eines LoRa-Paketes: %d", ret);
+    vTaskDelay(pdMS_TO_TICKS(5000));
 
     /*
     cJSON *root;
@@ -240,29 +278,81 @@ void task_tx(void *p)
       lora_send_packet((uint8_t *)my_json_string, (uint8_t)strlen(my_json_string));
     }
     else
-      ESP_LOGE(TAG, "my_json_string zu gross: %d \n", strlen(my_json_string));
+      ESP_LOGE(TAG, "my_json_string zu gross: %d ", strlen(my_json_string));
 
     cJSON_free(my_json_string);
     cJSON_Delete(root);
     */
 
-    vTaskDelay(pdMS_TO_TICKS(20000));
+    //vTaskDelay(pdMS_TO_TICKS(20000));
     c++;
   }
 #else
-  int x;
+  uint8_t BytesRead;
   uint8_t buf[255];
+  esp_err_t ret;
+  ESP_LOGI(TAG, "LoRa-Lesethread startet jetzt...");
   for (;;)
   {
     lora_receive(); // put into receive mode
     while (lora_received())
     {
-      x = lora_receive_packet(buf, (uint8_t)sizeof(buf));
-      buf[x] = 0;
-      printf("Received: %d: %s\n", x, buf);
+      gpio_set_level(LED_PIN, 1);
+      ret = lora_receive_packet(buf, (uint8_t)sizeof(buf), &BytesRead);
+      ESP_LOGI(TAG, "Gelesen: %d bytes", BytesRead);
+      gpio_set_level(LED_PIN, 0);
+      if (ret != ESP_OK)
+      {
+        ESP_LOGE(TAG, "Fehler beim Lesen eines LoRa-Paketes: %d", ret);
+        lora_receive();
+        continue;
+      }
+
+      ParseLoraPacket(buf, BytesRead);
       lora_receive();
     }
     vTaskDelay(1);
   }
 #endif
+}
+
+void ParseLoraPacket(uint8_t *buf, uint8_t len)
+{
+  if (len < sizeof(LoraPacketHeader))
+  {
+    ESP_LOGE(TAG, "Length of packet shorter than packet header. Aborting");
+    return;
+  }
+
+  CborParser root_parser;
+  CborValue it;
+
+  LoraPacketHeader *ph = (LoraPacketHeader *)buf;
+  if (ph->Magic != PACKET_MAGIC)
+  {
+    ESP_LOGE(TAG, "Wrong package header. Header Magic: 0x%x, correct Magic: 0x%x", ph->Magic, PACKET_MAGIC);
+  }
+  uint8_t PacketSize = ph->PacketPayloadSize;
+  uint8_t PacketOffset = sizeof(LoraPacketHeader);
+  ESP_LOGI(TAG, "Packet payload size: %d", ph->PacketPayloadSize);
+  uint16_t PayloadCRC = compute_crc(buf + PacketOffset, PacketSize);
+  if (PayloadCRC != ph->PayloadCRC)
+  {
+    ESP_LOGE(TAG, "CRC-Error. CRC package header: 0x%x, calculated: 0x%x", ph->PayloadCRC, PayloadCRC);
+    return;
+  }
+  else
+    ESP_LOGI(TAG, "Package CRC OK!");
+
+  // Initialize the cbor parser and the value iterator
+  cbor_parser_init(buf + PacketOffset, PacketSize, 0, &root_parser, &it);
+
+  ESP_LOGI(TAG, "convert CBOR to JSON");
+  // Dump the values in JSON format
+  cbor_value_to_json(stdout, &it, 0);
+  puts("");
+
+  //ESP_LOGI(TAG, "decode CBOR manually");
+  // Decode CBOR data manully
+  //example_dump_cbor_buffer(&it, 0);
 }

@@ -4,6 +4,7 @@
 extern "C"
 {
 #include "../components/cbor/cbor.h"
+#include "../components/cbor/cborjson.h"
 }
 
 CborError example_dump_cbor_buffer(CborValue *it, int nestingLevel);
