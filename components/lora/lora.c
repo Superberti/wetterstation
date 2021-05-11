@@ -499,6 +499,19 @@ esp_err_t lora_send_packet(uint8_t *buf, uint8_t size)
   ret = lora_write_reg(REG_OP_MODE, MODE_LONG_RANGE_MODE | MODE_TX);
   if (ret != ESP_OK)
     return ret;
+  vTaskDelay(1);
+  // Überprüfen, ob der Chip wirklich in den Modus gewechselt hat
+  ret = lora_read_reg(REG_OP_MODE, &reg);
+  if (ret != ESP_OK)
+    return ret;
+  if (reg!=(MODE_LONG_RANGE_MODE | MODE_TX))
+  {
+    ESP_LOGE("lora","Umschalten in den TX-Modus hat nicht funktioniert! Reg: 0x%x",reg);
+    return ESP_ERR_TIMEOUT;
+  }
+  //else
+    //ESP_LOGI("RegOpMode"," 0x%x",reg);
+
   ret = lora_read_reg(REG_IRQ_FLAGS, &reg);
   if (ret != ESP_OK)
     return ret;
