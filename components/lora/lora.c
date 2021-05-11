@@ -509,8 +509,7 @@ esp_err_t lora_send_packet(uint8_t *buf, uint8_t size)
     ESP_LOGE("lora","Umschalten in den TX-Modus hat nicht funktioniert! Reg: 0x%x",reg);
     return ESP_ERR_TIMEOUT;
   }
-  //else
-    //ESP_LOGI("RegOpMode"," 0x%x",reg);
+  
 
   ret = lora_read_reg(REG_IRQ_FLAGS, &reg);
   if (ret != ESP_OK)
