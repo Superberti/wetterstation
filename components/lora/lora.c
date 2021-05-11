@@ -28,6 +28,7 @@
 #define REG_FIFO_TX_BASE_ADDR 0x0e
 #define REG_FIFO_RX_BASE_ADDR 0x0f
 #define REG_FIFO_RX_CURRENT_ADDR 0x10
+#define REG_IRQ_MASK_FLAGS 0x11
 #define REG_IRQ_FLAGS 0x12
 #define REG_RX_NB_BYTES 0x13
 #define REG_PKT_SNR_VALUE 0x19
@@ -452,6 +453,9 @@ esp_err_t lora_init(void)
   ret = lora_set_tx_power(10);
   if (ret != ESP_OK)
     return ret;
+  ret = lora_write_reg(REG_IRQ_MASK_FLAGS,0);
+  if (ret != ESP_OK)
+    return ret;
   return lora_idle();
 }
 
@@ -471,18 +475,18 @@ esp_err_t lora_send_packet(uint8_t *buf, uint8_t size)
   ret = lora_idle();
   if (ret != ESP_OK)
     return ret;
-  ESP_LOGI("lora","lora is idle");
+  //ESP_LOGI("lora","lora is idle");
   ret = lora_write_reg(REG_FIFO_ADDR_PTR, 0);
   if (ret != ESP_OK)
     return ret;
-  ESP_LOGI("lora","filling FIFO");
+  //ESP_LOGI("lora","filling FIFO");
   for (int i = 0; i < size; i++)
   {
     ret = lora_write_reg(REG_FIFO, *buf++);
     if (ret != ESP_OK)
       return ret;
   }
-  ESP_LOGI("lora","FIFO is idle");
+  //ESP_LOGI("lora","FIFO is idle");
   ret = lora_write_reg(REG_PAYLOAD_LENGTH, size);
   if (ret != ESP_OK)
     return ret;
@@ -490,26 +494,27 @@ esp_err_t lora_send_packet(uint8_t *buf, uint8_t size)
   /*
     * Start transmission and wait for conclusion.
     */
-  ESP_LOGI("lora","starting transmission");
+  //ESP_LOGI("lora","starting transmission");
+  
   ret = lora_write_reg(REG_OP_MODE, MODE_LONG_RANGE_MODE | MODE_TX);
   if (ret != ESP_OK)
     return ret;
   ret = lora_read_reg(REG_IRQ_FLAGS, &reg);
   if (ret != ESP_OK)
     return ret;
-    ESP_LOGI("lora","Reg: %d",reg);
-  ESP_LOGI("lora","waiting for end of transmission");
+  //ESP_LOGI("lora","Reg: %d",reg);
+  //ESP_LOGI("lora","waiting for end of transmission");
   while ((reg & IRQ_TX_DONE_MASK) == 0)
   {
     ret = lora_read_reg(REG_IRQ_FLAGS, &reg);
     if (reg & IRQ_TX_DONE_MASK)
       break;
-    ESP_LOGI("lora","Reg: %d",reg);
+    //ESP_LOGI("lora","Reg: %d",reg);
     if (ret != ESP_OK)
       return ret;
     vTaskDelay(2);
   };
-  ESP_LOGI("lora","Sending done");
+  //ESP_LOGI("lora","Sending done");
   return lora_write_reg(REG_IRQ_FLAGS, IRQ_TX_DONE_MASK);
 }
 
