@@ -31,9 +31,9 @@ static const char *COOL_TAG = "LU";
 static const char *POS_TAG = "Ort";
 static const char *VAL_TAG = "W";
 
-static const char *ORT_SCHUPPEN_SCHATTEN = "Sch_Scha";
-static const char *ORT_SCHUPPEN_SONNE = "Sch_So";
-static const char *ORT_SCHUPPEN_INNEN = "Sch_In";
+static const char *ORT_SCHUPPEN_SCHATTEN = "A";
+static const char *ORT_SCHUPPEN_SONNE = "B";
+static const char *ORT_SCHUPPEN_INNEN = "C";
 
 #define SENDER_ADDRESS 155
 #define RECEIVER_ADDRESS 156
@@ -70,7 +70,7 @@ void InitLora()
   ret = lora_enable_crc();
   if (ret != ESP_OK)
     error("lora_enable_crc failed: %d", ret);
-  /*
+  
   ret = lora_set_preamble_length(14);
   if (ret != ESP_OK)
     error("lora_set_preamble_length failed: %d", ret);
@@ -79,7 +79,7 @@ void InitLora()
     error("lora_set_bandwidth failed: %d", ret);
   ret = lora_set_sync_word(0x3d);
   if (ret != ESP_OK)
-    error("lora_set_sync_word failed: %d", ret);*/
+    error("lora_set_sync_word failed: %d", ret);
   ESP_LOGI(TAG, "Init LoRa OK");
 }
 
