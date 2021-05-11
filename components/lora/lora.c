@@ -6,6 +6,7 @@
 #include "soc/gpio_struct.h"
 #include "driver/gpio.h"
 #include <string.h>
+#include "esp_log.h"
 
 // Pin definitions
 #define CONFIG_CS_GPIO 18
@@ -470,17 +471,18 @@ esp_err_t lora_send_packet(uint8_t *buf, uint8_t size)
   ret = lora_idle();
   if (ret != ESP_OK)
     return ret;
+  ESP_LOGI("lora","lora is idle");
   ret = lora_write_reg(REG_FIFO_ADDR_PTR, 0);
   if (ret != ESP_OK)
     return ret;
-
+  ESP_LOGI("lora","filling FIFO");
   for (int i = 0; i < size; i++)
   {
     ret = lora_write_reg(REG_FIFO, *buf++);
     if (ret != ESP_OK)
       return ret;
   }
-
+  ESP_LOGI("lora","FIFO is idle");
   ret = lora_write_reg(REG_PAYLOAD_LENGTH, size);
   if (ret != ESP_OK)
     return ret;
@@ -488,20 +490,26 @@ esp_err_t lora_send_packet(uint8_t *buf, uint8_t size)
   /*
     * Start transmission and wait for conclusion.
     */
+  ESP_LOGI("lora","starting transmission");
   ret = lora_write_reg(REG_OP_MODE, MODE_LONG_RANGE_MODE | MODE_TX);
   if (ret != ESP_OK)
     return ret;
   ret = lora_read_reg(REG_IRQ_FLAGS, &reg);
   if (ret != ESP_OK)
     return ret;
+    ESP_LOGI("lora","Reg: %d",reg);
+  ESP_LOGI("lora","waiting for end of transmission");
   while ((reg & IRQ_TX_DONE_MASK) == 0)
   {
     ret = lora_read_reg(REG_IRQ_FLAGS, &reg);
+    if (reg & IRQ_TX_DONE_MASK)
+      break;
+    ESP_LOGI("lora","Reg: %d",reg);
     if (ret != ESP_OK)
       return ret;
     vTaskDelay(2);
   };
-
+  ESP_LOGI("lora","Sending done");
   return lora_write_reg(REG_IRQ_FLAGS, IRQ_TX_DONE_MASK);
 }
 

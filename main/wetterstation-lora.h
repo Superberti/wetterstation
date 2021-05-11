@@ -25,11 +25,13 @@ enum LoraCommand
 };
 
 // Lora-Paketheader. Ein Einzelpaket darf incl. Payload nicht größer als 255 bytes werden (max. Lora-Paketgröße)
-// Größe 10 Byte
+// Größe 12 Byte
 struct LoraPacketHeader
 {
   // Erkennungswert für Datenpaket
   const uint16_t Magic = PACKET_MAGIC;
+  // Adresse bei mehreren Teilnehmern
+  uint16_t Address;
   // Gesamtgröße einer Lora-Kommunikation. Diese kann mehrere Pakete beinhalten und größer sein,
   // als die max. Lora-Paketgröße. Nur totaler Payload ohne Header!
   uint16_t TotalTransmissionSize;
@@ -49,10 +51,9 @@ struct LoraPacketHeader
 
 // Nachricht über LoRa senden. Wird evtl in mehrere Pakete aufgeteilt
 esp_err_t SendLoraMsg(uint8_t* aBuf, uint16_t aSize);
-
 void task_tx(void *p);
-
-void error();
-
+void error(const char *format, ...);
 void ParseLoraPacket(uint8_t *buf, uint8_t len);
+void InitLora();
+
 #endif
