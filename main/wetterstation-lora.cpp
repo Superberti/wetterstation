@@ -31,9 +31,9 @@ static const char *COOL_TAG = "LU";
 static const char *POS_TAG = "Ort";
 static const char *VAL_TAG = "W";
 
-static const char *ORT_SCHUPPEN_SCHATTEN = "Sch_Scha";
-static const char *ORT_SCHUPPEN_SONNE = "Sch_So";
-static const char *ORT_SCHUPPEN_INNEN = "Sch_In";
+static const char *ORT_SCHUPPEN_SCHATTEN = "A";
+static const char *ORT_SCHUPPEN_SONNE = "B";
+static const char *ORT_SCHUPPEN_INNEN = "C";
 
 #define SENDER_ADDRESS 155
 #define RECEIVER_ADDRESS 156
@@ -46,41 +46,13 @@ extern "C"
   {
     gpio_pad_select_gpio(LED_PIN);
     gpio_set_direction(LED_PIN, GPIO_MODE_OUTPUT);
-    InitLora();
+    
     xTaskCreate(&task_tx, "task_tx", 4096, NULL, 5, NULL);
     for (;;)
     {
       vTaskDelay(pdMS_TO_TICKS(5000));
     }
   }
-}
-
-void InitLora()
-{
-  esp_err_t ret;
-  ret = lora_init();
-  if (ret != ESP_OK)
-    error("lora_init failed: %d", ret);
-  ret = lora_explicit_header_mode();
-  if (ret != ESP_OK)
-    error("lora_explicit_header_mode failed: %d", ret);
-  ret = lora_set_frequency(433e6);//lora_set_frequency(434.54e6);
-  if (ret != ESP_OK)
-    error("lora_set_frequency failed: %d", ret);
-  ret = lora_enable_crc();
-  if (ret != ESP_OK)
-    error("lora_enable_crc failed: %d", ret);
-  /*
-  ret = lora_set_preamble_length(14);
-  if (ret != ESP_OK)
-    error("lora_set_preamble_length failed: %d", ret);
-  ret = lora_set_bandwidth(500E3);
-  if (ret != ESP_OK)
-    error("lora_set_bandwidth failed: %d", ret);
-  ret = lora_set_sync_word(0x3d);
-  if (ret != ESP_OK)
-    error("lora_set_sync_word failed: %d", ret);*/
-  ESP_LOGI(TAG, "Init LoRa OK");
 }
 
 #define MAX_VPBUFLEN 256
@@ -107,7 +79,7 @@ void error(const char *format, ...)
 
 uint8_t lora_buf[256];
 
-esp_err_t SendLoraMsg(LoraCommand aCmd, uint8_t *aBuf, uint16_t aSize)
+esp_err_t SendLoraMsg(SX1278_LoRa & aLoRa, LoraCommand aCmd, uint8_t *aBuf, uint16_t aSize)
 {
   gpio_set_level(LED_PIN, 1);
   uint8_t MaxPayloadPerPaketSize = 255 - sizeof(LoraPacketHeader);
@@ -129,7 +101,7 @@ esp_err_t SendLoraMsg(LoraCommand aCmd, uint8_t *aBuf, uint16_t aSize)
     memcpy(lora_buf, &ph, sizeof(ph)); // Header kopieren
     memcpy(lora_buf + sizeof(ph), aBuf + BytesWritten, ph.PacketPayloadSize);
     ESP_LOGI(TAG, "Sending LoRa packet %d/%d, %d bytes", i + 1, NumPackets, sizeof(ph) + ph.PacketPayloadSize);
-    ret = lora_send_packet(lora_buf, sizeof(ph) + ph.PacketPayloadSize);
+    ret = aLoRa.lora_send_packet(lora_buf, sizeof(ph) + ph.PacketPayloadSize);
     if (ret != ESP_OK)
     {
       gpio_set_level(LED_PIN, 0);
@@ -141,8 +113,20 @@ esp_err_t SendLoraMsg(LoraCommand aCmd, uint8_t *aBuf, uint16_t aSize)
   return ESP_OK;
 }
 
+int64_t GetTime_us()
+{
+  struct timeval tv_now;
+  gettimeofday(&tv_now, NULL);
+  return (int64_t)tv_now.tv_sec * 1000000L + (int64_t)tv_now.tv_usec;
+}
+
 void task_tx(void *p)
 {
+  SX1278_LoRa LoRa;
+  esp_err_t ret=LoRa.SetupModule();
+  if (ret!=ESP_OK)
+    error(TAG,"Fehler beim Initialisieren des LoRa Moduls: %d",ret);
+
 #ifdef SENDING
 
   uint8_t cbor_buf[255];
@@ -241,7 +225,10 @@ void task_tx(void *p)
     int len = cbor_encoder_get_buffer_size(&encoder, cbor_buf);
     ESP_LOGI(TAG, "CBOR erstellt, Groesse: %d", len);
     //HexDump(cbor_buf, len);
-    esp_err_t ret = SendLoraMsg(CMD_CBORDATA, cbor_buf, len);
+    int64_t ts = GetTime_us();
+    esp_err_t ret = SendLoraMsg(LoRa, CMD_CBORDATA, cbor_buf, len);
+    int64_t te = GetTime_us();
+    ESP_LOGI(TAG,"Zeit fuer LoRa: %.1f ms",double(te-ts)/1000.0);
     if (ret != ESP_OK)
       ESP_LOGE(TAG, "Fehler beim Senden eines LoRa-Paketes: %d", ret);
     vTaskDelay(pdMS_TO_TICKS(5000));

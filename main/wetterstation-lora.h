@@ -1,10 +1,7 @@
 #ifndef WETTERSTATION_LORA_H
 #define WETTERSTATION_LORA_H
 
-extern "C"
-{
 #include "../components/lora/include/lora.h"
-}
 
 // Kennung für einen gültigen Paketheader
 #define PACKET_MAGIC 0x2008
@@ -50,10 +47,11 @@ struct LoraPacketHeader
 } __attribute__((packed));
 
 // Nachricht über LoRa senden. Wird evtl in mehrere Pakete aufgeteilt
-esp_err_t SendLoraMsg(uint8_t* aBuf, uint16_t aSize);
+esp_err_t SendLoraMsg(SX1278_LoRa & aLoRa, uint8_t* aBuf, uint16_t aSize);
 void task_tx(void *p);
 void error(const char *format, ...);
 void ParseLoraPacket(uint8_t *buf, uint8_t len);
 void InitLora();
+int64_t GetTime_us();
 
 #endif
