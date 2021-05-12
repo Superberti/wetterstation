@@ -55,6 +55,7 @@ extern "C"
   }
 }
 
+
 #define MAX_VPBUFLEN 256
 char vprintf_buffer[MAX_VPBUFLEN];
 
