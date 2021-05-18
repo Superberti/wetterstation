@@ -53,5 +53,6 @@ void error(const char *format, ...);
 void ParseLoraPacket(uint8_t *buf, uint8_t len);
 void InitLora();
 int64_t GetTime_us();
+void InitSSD1306();
 
 #endif

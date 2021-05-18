@@ -66,19 +66,21 @@ class SX1278_LoRa
   struct PinConfiguration
   {
     // Pin definitions für Heltec-ESP-LoRa
-    /*
-    const uint8_t CONFIG_CS_GPIO = 18;
-    const uint8_t CONFIG_RST_GPIO = 14;
-    const uint8_t CONFIG_MISO_GPIO = 19;
-    const uint8_t CONFIG_MOSI_GPIO = 27;
-    const uint8_t CONFIG_SCK_GPIO = 5;
-*/
+    
+    static const uint8_t CONFIG_CS_GPIO = 18;
+    static const uint8_t CONFIG_RST_GPIO = 14;
+    static const uint8_t CONFIG_MISO_GPIO = 19;
+    static const uint8_t CONFIG_MOSI_GPIO = 27;
+    static const uint8_t CONFIG_SCK_GPIO = 5;
+
+/*
     // Pin definitions für ESP-DevKit mit externem LoRa-Modul
     static const uint8_t CONFIG_CS_GPIO = 12;
     static const uint8_t CONFIG_RST_GPIO = 13;
     static const uint8_t CONFIG_MISO_GPIO = 15;
     static const uint8_t CONFIG_MOSI_GPIO = 16;
     static const uint8_t CONFIG_SCK_GPIO = 2;
+    */
   };
 
   spi_device_handle_t mhSpi;
