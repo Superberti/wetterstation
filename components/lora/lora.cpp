@@ -10,13 +10,15 @@
 #include "include/lora.h"
 
 SX1278_LoRa::SX1278_LoRa()
+  : mhSpi(NULL)
+  , mInitialized(false)
+  , mImplicit(false)
 {
-  mInitialized = false;
-  mImplicit = false;
 }
 
 SX1278_LoRa::~SX1278_LoRa()
 {
+  lora_close();
 }
 
 esp_err_t SX1278_LoRa::SetupModule()
@@ -623,12 +625,12 @@ float SX1278_LoRa::lora_packet_snr(void)
 void SX1278_LoRa::lora_close(void)
 {
   lora_sleep();
-  //   close(mhSpi);  FIXME: end hardware features after lora_close
-  //   close(__cs);
-  //   close(__rst);
-  //   mhSpi = -1;
-  //   __cs = -1;
-  //   __rst = -1;
+  if (mhSpi!=NULL)
+  {
+    spi_bus_remove_device(mhSpi);
+    spi_bus_free(VSPI_HOST);
+    mhSpi=NULL;
+  }
 }
 
 esp_err_t SX1278_LoRa::lora_dump_registers(void)

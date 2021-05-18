@@ -303,71 +303,7 @@ void task_tx(void *p)
     u8g2_SendBuffer(&u8g2);
     vTaskDelay(pdMS_TO_TICKS(5000));
 
-    /*
-    cJSON *root;
-    root = cJSON_CreateObject();
-    cJSON_AddStringToObject(root, "TAG", "WS");
-    cJSON_AddNumberToObject(root, "TC", c);
-
-    cJSON *Temperatur = cJSON_CreateObject();
-    cJSON *Luftfeuchtigkeit = cJSON_CreateObject();
-    cJSON *Luftdruck = cJSON_CreateObject();
-    cJSON *Beleuchtungsstaerke = cJSON_CreateObject();
-    cJSON *Luefter = cJSON_CreateObject();
-
-    cJSON_AddItemToObject(root, TEMP_TAG, Temperatur);
-    cJSON_AddItemToObject(root, HUM_TAG, Luftfeuchtigkeit);
-    cJSON_AddItemToObject(root, PRESS_TAG, Luftdruck);
-    cJSON_AddItemToObject(root, ILLU_TAG, Beleuchtungsstaerke);
-    cJSON_AddItemToObject(root, COOL_TAG, Luefter);
-
-    // Temperaturen:
-    cJSON_AddItemToObject(Temperatur, "T", tmp = cJSON_CreateObject());
-    cJSON_AddStringToObject(tmp, "ORT", ORT_SCHUPPEN_SCHATTEN);
-    cJSON_AddNumberToObject(tmp, "Wert", 23.6);
-    cJSON_AddItemToObject(Temperatur, "T", tmp = cJSON_CreateObject());
-    cJSON_AddStringToObject(tmp, "ORT", ORT_SCHUPPEN_SONNE);
-    cJSON_AddNumberToObject(tmp, "Wert", 25.3);
-
-    // Luftfeuchtigkeit:
-    cJSON_AddItemToObject(Luftfeuchtigkeit, "H", tmp = cJSON_CreateObject());
-    cJSON_AddStringToObject(tmp, "ORT", ORT_SCHUPPEN_SCHATTEN);
-    cJSON_AddNumberToObject(tmp, "Wert", 54.9);
-    cJSON_AddItemToObject(Luftfeuchtigkeit, "H", tmp = cJSON_CreateObject());
-    cJSON_AddStringToObject(tmp, "ORT", ORT_SCHUPPEN_SONNE);
-    cJSON_AddNumberToObject(tmp, "Wert", 45.2);
-
-    // Luftdruck:
-    cJSON_AddItemToObject(Luftfeuchtigkeit, "P", tmp = cJSON_CreateObject());
-    cJSON_AddStringToObject(tmp, "ORT", ORT_SCHUPPEN_INNEN);
-    cJSON_AddNumberToObject(tmp, "Wert", 1005.5);
-
-    // Beleuchtungsstaerke
-    cJSON_AddItemToObject(Beleuchtungsstaerke, "L", tmp = cJSON_CreateObject());
-    cJSON_AddStringToObject(tmp, "ORT", ORT_SCHUPPEN_SONNE);
-    cJSON_AddNumberToObject(tmp, "Wert", 56210);
-
-    // Luefter
-    cJSON_AddItemToObject(Luefter, "C", tmp = cJSON_CreateObject());
-    cJSON_AddStringToObject(tmp, "ORT", ORT_SCHUPPEN_SONNE);
-    cJSON_AddNumberToObject(tmp, "Wert", 512);
-
-    char *my_json_string = cJSON_PrintUnformatted(root);
-
-    ESP_LOGI(TAG, "my_json_string: %d \n%s", strlen(my_json_string), my_json_string);
-
-    if (strlen(my_json_string) < 256)
-    {
-      lora_send_packet((uint8_t *)my_json_string, (uint8_t)strlen(my_json_string));
-    }
-    else
-      ESP_LOGE(TAG, "my_json_string zu gross: %d ", strlen(my_json_string));
-
-    cJSON_free(my_json_string);
-    cJSON_Delete(root);
-    */
-
-    //vTaskDelay(pdMS_TO_TICKS(20000));
+    
     c++;
   }
 #else
