@@ -37,7 +37,7 @@ esp_err_t SX1278_LoRa::SetupModule()
     ESP_LOGE("lora", "lora_explicit_header_mode failed: %d", ret);
     return ret;
   }
-  ret = lora_set_frequency(433e6); //lora_set_frequency(434.54e6);
+  ret = lora_set_frequency(434.54e6);
   if (ret != ESP_OK)
   {
     ESP_LOGE("lora", "lora_set_frequency failed: %d", ret);
