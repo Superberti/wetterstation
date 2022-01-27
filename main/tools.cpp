@@ -284,3 +284,28 @@ unsigned int SwapEndian(const unsigned int x)
 }
 
 //----------------------------------------------------------------------------
+
+/// CCITT-CRC16 berechnen
+unsigned short compute_crc(unsigned char *data_ptr, unsigned short data_len)
+{
+  unsigned short x16;
+  int i;
+  unsigned short crc_buf(0);
+  for (unsigned short it=0; it<data_len;it++)
+  {
+    unsigned char input=data_ptr[it];
+    for (i=0;i<8;i++)
+    {
+      if ((crc_buf & 0x0001) ^ (input & 0x01))
+        x16=0x8408;
+      else
+        x16=0x0000;
+      crc_buf=crc_buf >> 1;
+      crc_buf ^=x16;
+      input=input>>1;
+    }
+  }
+  return crc_buf;
+}
+
+//----------------------------------------------------------------------------

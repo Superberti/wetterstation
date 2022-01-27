@@ -6,6 +6,7 @@ from typing import NamedTuple
 import paho.mqtt.client as mqtt
 from influxdb import InfluxDBClient
 import time
+import logging
 
 INFLUXDB_ADDRESS = 'localhost'
 INFLUXDB_USER = 'mqtt'
@@ -20,11 +21,14 @@ MQTT_REGEX = '/wetterstation/([^/]+)/([^/]+)'
 MQTT_CLIENT_ID = 'MQTTInfluxDBBridge'
 
 TopicTemp1="/wetterstation/aussen/temperatur"
+TopicTemp2="/wetterstation/aussen/temperatur_top"
 TopicPress1="/wetterstation/aussen/luftdruck"
 TopicHum1="/wetterstation/aussen/luftfeuchtigkeit"
+TopicHum2="/wetterstation/aussen/luftfeuchtigkeit_top"
 TopicLight="/wetterstation/aussen/beleuchtungsstaerke"
 TopicStatus="/wetterstation/aussen/status"
 TopicLuefter="/wetterstation/aussen/luefterdrehzahl"
+TopicError="/wetterstation/error/status"
 
 TopicCounter=0
 
@@ -39,11 +43,14 @@ def on_connect(client, userdata, flags, rc):
     """ The callback for when the client receives a CONNACK response from the server."""
     print('Connected with result code ' + str(rc))
     client.subscribe(TopicTemp1)
+    client.subscribe(TopicTemp2)
     client.subscribe(TopicPress1)
     client.subscribe(TopicHum1)
+    client.subscribe(TopicHum2)
     client.subscribe(TopicLight)
     client.subscribe(TopicStatus)
     client.subscribe(TopicLuefter)
+    client.subscribe(TopicError)
  
 def _parse_mqtt_message(topic, payload):
     match = re.match(MQTT_REGEX, topic)
@@ -72,17 +79,31 @@ def _send_sensor_data_to_influxdb(sensor_data):
     print('JSON: '+str(json_body))
     influxdb_client.write_points(json_body)
 
+def _send_error_log_to_influxdb(error_log):
+    json_body = [
+        {
+            'errorlog': error_log
+        }
+    ]
+    print('JSON: '+str(json_body))
+    influxdb_client.write_points(json_body)
+
 def on_message(client, userdata, msg):
     """The callback for when a PUBLISH message is received from the server."""
     print(msg.topic + ' ' + str(msg.payload))
-    sensor_data = _parse_mqtt_message(msg.topic, msg.payload.decode('utf-8'))
-    if sensor_data is not None:
-        if msg.topic is not TopicStatus:
+    try:
+        sensor_data = _parse_mqtt_message(msg.topic, msg.payload.decode('utf-8'))
+        if sensor_data is not None:
             _send_sensor_data_to_influxdb(sensor_data)
         else:
-            status=msg.payload.decode('utf-8')
-            if status is not "Alles OK":
-                _send_sensor_data_to_influxdb(sensor_data)
+            if msg.topic is TopicError:
+                status=msg.payload.decode('utf-8')
+                _send_error_log_to_influxdb(status)
+                    
+    except Exception as e:
+        logging.info("Fehler", e.__class__, "occurred: ",e)
+        
+    
 
 def _init_influxdb_database():
     databases = influxdb_client.get_list_database()
