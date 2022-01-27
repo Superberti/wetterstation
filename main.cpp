@@ -2,7 +2,7 @@
   ******************************************************************************
   * @file    src/main.c
   * @author  Oliver Rutsch
-  * @brief   Batteriebetriebene Anzeige (E-Paper) für Wetterstation mit LoRa
+  * @brief   Testprogramm Raspi mit LoRa (SX1278)
   *
   ******************************************************************************
   */
