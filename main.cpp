@@ -122,6 +122,7 @@ int main(int argc, char* argv[])
         fprintf(stderr,"IsReceiving() failed.\n");
         IsReceiving=false;
       }
+      
       if ((GetTime_s()-StartTime)>Timeout || !IsReceiving)
       {
         if (IsReceiving)

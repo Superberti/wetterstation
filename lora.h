@@ -123,6 +123,7 @@ public:
   ReturnStatus lora_dump_registers(void);
   uint16_t RadioComputeCRC( uint8_t *buffer, uint8_t length, uint8_t crcType);
   ReturnStatus IsReceiving(bool & aIsReceiving);
+  void RestartReceiver();
 
   SX1278_LoRa();
   ~SX1278_LoRa();

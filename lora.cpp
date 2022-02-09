@@ -272,6 +272,13 @@ ReturnStatus SX1278_LoRa::lora_receive(void)
   }
 }
 
+void SX1278_LoRa::RestartReceiver()
+{
+  lora_sleep();
+  delay(1);
+  lora_receive();
+}
+
 ReturnStatus SX1278_LoRa::IsReceiving(bool & aIsReceiving)
 {
   aIsReceiving=false;
