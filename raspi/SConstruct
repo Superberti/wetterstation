@@ -1,0 +1,18 @@
+# -*- coding: utf-8 -*-
+
+# Build-File für PiShow
+import os
+import struct
+
+env = Environment(ENV = {'PATH' : os.environ['PATH']})
+
+env.Append(CCFLAGS = '-Wall -std=c++11 -O2')
+env['LIBS']=['m','pthread','pigpio','rt','paho-mqtt3a','paho-mqtt3c','paho-mqttpp3']
+#env['LIBPATH']=['/opt/libjpeg-turbo/lib32/']
+env['CPPPATH']=['/usr/local/include/mqtt']
+
+env.Program('LoraToMQTT',['LoraToMQTT.cpp','../shared/tinycbor/src/cborencoder_close_container_checked.c',
+    '../shared/tinycbor/src/cborencoder.c', '../shared/tinycbor/src/cborerrorstrings.c', '../shared/tinycbor/src/cborparser_dup_string.c',
+    '../shared/tinycbor/src/cborparser.c', '../shared/tinycbor/src/cborpretty_stdio.c', '../shared/tinycbor/src/cborpretty.c',
+    '../shared/tinycbor/src/cbortojson.c', '../shared/tinycbor/src/cborvalidation.c', '../shared/tinycbor/src/open_memstream.c'])
+env.Program('loratest',['main.cpp','lora.cpp'])
