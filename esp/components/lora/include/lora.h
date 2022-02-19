@@ -72,6 +72,7 @@ class SX1278_LoRa
     static const uint8_t CONFIG_MISO_GPIO = 19;
     static const uint8_t CONFIG_MOSI_GPIO = 27;
     static const uint8_t CONFIG_SCK_GPIO = 5;
+    static const uint8_t CONFIG_DIO0_GPIO = 33;
 
 /*
     // Pin definitions für ESP-DevKit mit externem LoRa-Modul
