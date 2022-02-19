@@ -15,7 +15,7 @@ MQTT_USER = 'Oliver'
 MQTT_PASSWORD = 'Oliver'
 MQTT_TOPIC = '/wetterstation/+'
 MQTT_REGEX = '/wetterstation/([^/]+)/([^/]+)'
-MQTT_CLIENT_ID = 'ShowMQTTData'
+MQTT_CLIENT_ID = 'MQTTtoWeathercloud'
 
 TopicTemp1="/wetterstation/aussen/temperatur"
 TopicTemp2="/wetterstation/schuppen/temperatur"

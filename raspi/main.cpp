@@ -106,6 +106,7 @@ int main(int argc, char* argv[])
   const double Timeout=20.0;
   double StartTime=GetTime_s();
   bool IsReceiving;
+  int RecCounter=0;
   while (true)
   {
     if (SendMode)
@@ -155,10 +156,11 @@ int main(int argc, char* argv[])
           if (BytesRead>0)
           {
             // Paket empfangen
+	    RecCounter++;
             lora_buf[LoraBufSize-1]=0;
             if (BytesRead<LoraBufSize-1)
               lora_buf[BytesRead]=0;
-            fprintf(stdout,"Rec size: %d: 0:%d 1:%d %s\n",BytesRead,lora_buf[0], lora_buf[1], lora_buf);
+            fprintf(stdout,"Received valid packet no.: %d size: %d: \n",RecCounter,BytesRead);
           }
           else
             fprintf(stderr,"got zero length packet...\n");
