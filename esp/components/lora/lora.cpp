@@ -554,6 +554,14 @@ esp_err_t SX1278_LoRa::lora_receive_packet(uint8_t *buf, uint8_t size, uint8_t *
   if (irq & IrqMask::IRQ_PAYLOAD_CRC_ERROR_MASK)
     return ESP_ERR_INVALID_CRC;
 
+  // Kein CRC im Header aktiviert? Das wird nicht akzeptiert
+  uint8_t hop;
+  ret = lora_read_reg(Registers::REG_HOP_CHANNEL, &hop);
+  if (ret != ESP_OK)
+    return ret;
+  if (!(hop & 0x40))
+    return ESP_ERR_INVALID_CRC;
+
   /*
     * Find packet size.
     */
@@ -564,9 +572,9 @@ esp_err_t SX1278_LoRa::lora_receive_packet(uint8_t *buf, uint8_t size, uint8_t *
   /*
     * Transfer data from radio.
     */
-  ret = lora_idle();
-  if (ret != ESP_OK)
-    return ret;
+  //ret = lora_idle();
+  //if (ret != ESP_OK)
+    //return ret;
   ret = lora_read_reg(Registers::REG_FIFO_RX_CURRENT_ADDR, &reg);
   if (ret != ESP_OK)
     return ret;
@@ -650,3 +658,5 @@ esp_err_t SX1278_LoRa::lora_dump_registers(void)
   printf("\n");
   return ESP_OK;
 }
+
+

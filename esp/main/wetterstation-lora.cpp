@@ -20,10 +20,15 @@
 #include "wetterstation-lora.h"
 #include "cbor_tools.h"
 #include "tools.h"
+#ifdef USEDISPLAY
 extern "C"
 {
 #include "u8g2_esp32_hal.h"
 }
+#endif
+
+#define SENDING
+//#define USEDISPLAY
 
 static const char *TAG = "WS LORA";
 
@@ -59,12 +64,11 @@ extern "C"
   {
     gpio_pad_select_gpio(LED_PIN);
     gpio_set_direction(LED_PIN, GPIO_MODE_OUTPUT);
-
+#ifdef USEDISPLAY
     gpio_pad_select_gpio(PIN_DISP_RESET);
     gpio_set_direction(PIN_DISP_RESET, GPIO_MODE_OUTPUT);
-
     InitSSD1306();
-
+#endif
     xTaskCreate(&task_tx, "task_tx", 4096, NULL, 5, NULL);
     for (;;)
     {
@@ -72,7 +76,7 @@ extern "C"
     }
   }
 }
-
+#ifdef USEDISPLAY
 static u8g2_t u8g2; // a structure which will contain all the data for one display
 
 void InitSSD1306()
@@ -116,6 +120,7 @@ void InitSSD1306()
 */
   ESP_LOGI(TAG, "SSD 1306 display initialized!");
 }
+#endif
 
 #define MAX_VPBUFLEN 256
 char vprintf_buffer[MAX_VPBUFLEN];
@@ -137,7 +142,7 @@ void error(const char *format, ...)
   }
 }
 
-#define SENDING
+
 
 uint8_t lora_buf[256];
 
@@ -202,8 +207,11 @@ void task_tx(void *p)
   double bright = 54680;
   double cool = 513;
   double press = 1006.8;
+
+  #ifdef USEDISPLAY
   u8g2_SetFont(&u8g2, u8g2_font_lucasarts_scumm_subtitle_o_tf);
   char DisplayBuf[128];
+  #endif
   for (;;)
   {
     // Achtung: In einer Map müssesn stets zwei Einträge paarweise stehen, sonst
@@ -288,28 +296,47 @@ void task_tx(void *p)
     int len = cbor_encoder_get_buffer_size(&encoder, cbor_buf);
     ESP_LOGI(TAG, "CBOR erstellt, Groesse: %d", len);
     //HexDump(cbor_buf, len);
-    int64_t ts = GetTime_us();
-    esp_err_t ret = SendLoraMsg(LoRa, CMD_CBORDATA, cbor_buf, len);
-    int64_t te = GetTime_us();
-    ESP_LOGI(TAG, "Zeit fuer LoRa: %.1f ms", double(te - ts) / 1000.0);
-    if (ret != ESP_OK)
-      ESP_LOGE(TAG, "Fehler beim Senden eines LoRa-Paketes: %d", ret);
-
+    int RetryCounter=0;
+    bool SendOK=true;
+    do
+    {
+      /* code */
+      int64_t ts = GetTime_us();
+      ret = SendLoraMsg(LoRa, CMD_CBORDATA, cbor_buf, len);
+      int64_t te = GetTime_us();
+      ESP_LOGI(TAG, "Zeit fuer LoRa: %.1f ms", double(te - ts) / 1000.0);
+      if (ret != ESP_OK)
+      {
+        SendOK=false;
+        RetryCounter++;
+        ESP_LOGE(TAG, "Fehler beim Senden eines LoRa-Paketes: %d Versuch: %d", ret, RetryCounter);  
+        ESP_LOGE(TAG, "Resette LORA-Modul...");  
+        LoRa.lora_reset();  
+        vTaskDelay(pdMS_TO_TICKS(100));  
+        ret = LoRa.SetupModule();
+        if (ret != ESP_OK)
+          error(TAG, "Fehler beim Initialisieren des LoRa Moduls: %d", ret);
+        else
+          ESP_LOGI(TAG, "Re-Init LORA erfolgreich");
+      }
+    } 
+    while (!SendOK);
+    
+    
+#ifdef USEDISPLAY
     u8g2_ClearBuffer(&u8g2);
     sprintf(DisplayBuf, "Paket: %d", c);
     u8g2_DrawStr(&u8g2, 2, 17, DisplayBuf);
     sprintf(DisplayBuf, "Zeit: %.1f ms", double(te - ts) / 1000.0);
     u8g2_DrawStr(&u8g2, 2, 34, DisplayBuf);
     u8g2_SendBuffer(&u8g2);
+#endif
     vTaskDelay(pdMS_TO_TICKS(5000));
-
-    
     c++;
   }
 #else
   uint8_t BytesRead;
   uint8_t buf[255];
-  esp_err_t ret;
   ESP_LOGI(TAG, "LoRa-Lesethread startet jetzt...");
   for (;;)
   {

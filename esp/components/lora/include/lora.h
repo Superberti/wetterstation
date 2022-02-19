@@ -24,6 +24,7 @@ class SX1278_LoRa
     static const uint8_t REG_RX_NB_BYTES = 0x13;
     static const uint8_t REG_PKT_SNR_VALUE = 0x19;
     static const uint8_t REG_PKT_RSSI_VALUE = 0x1a;
+    static const uint8_t REG_HOP_CHANNEL = 0x1c;
     static const uint8_t REG_MODEM_CONFIG_1 = 0x1d;
     static const uint8_t REG_MODEM_CONFIG_2 = 0x1e;
     static const uint8_t REG_PREAMBLE_MSB = 0x20;
@@ -89,7 +90,7 @@ class SX1278_LoRa
   bool mImplicit;
   long mFrequency;
 
-  void lora_reset(void);
+  
   esp_err_t lora_explicit_header_mode(void);
   esp_err_t lora_implicit_header_mode(uint8_t size);
   esp_err_t lora_idle(void);
@@ -111,6 +112,7 @@ class SX1278_LoRa
   bool lora_initialized(){return mInitialized;}
 
 public:
+  void lora_reset(void);
   esp_err_t lora_receive(void);
   
   esp_err_t lora_send_packet(uint8_t *buf, uint8_t size);
