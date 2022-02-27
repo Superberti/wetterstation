@@ -15,6 +15,7 @@
 #include <unistd.h>
 #include <atomic>
 #include <sys/time.h>
+#include "../shared/lorastructs.h"
 
 /* Private typedef -----------------------------------------------------------*/
 /* Private define ------------------------------------------------------------*/
@@ -156,11 +157,16 @@ int main(int argc, char* argv[])
           if (BytesRead>0)
           {
             // Paket empfangen
-	    RecCounter++;
-            lora_buf[LoraBufSize-1]=0;
-            if (BytesRead<LoraBufSize-1)
-              lora_buf[BytesRead]=0;
-            fprintf(stdout,"Received valid packet no.: %d size: %d: \n",RecCounter,BytesRead);
+			
+            //lora_buf[LoraBufSize-1]=0;
+            //if (BytesRead<LoraBufSize-1)
+              //lora_buf[BytesRead]=0;
+            fprintf(stdout,"Lora Paket empfangen. Lfd. Nummer: %d Groesse: %d: \n",RecCounter,BytesRead);
+			LoraPacketHeader ph;
+			memcpy(&ph,lora_buf,sizeof(ph));
+			fprintf(stdout,"Lora Tag (Lfd. Nummer remote: %d \n",ph.Tag);
+			
+			RecCounter++;
           }
           else
             fprintf(stderr,"got zero length packet...\n");
