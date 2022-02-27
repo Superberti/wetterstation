@@ -41,13 +41,15 @@ struct LoraPacketHeader
   // Lora-Kommando. Es können nicht nur CBOR-Daten übertragen werden, sondern auch Kommandos von und zu beiden
   // Seiten
   uint8_t Cmd;
+  // Zur freien Verwendung
+  uint32_t Tag; 
 
   // CRC16 über den reinen Payload (nicht Header)
   uint16_t PayloadCRC;
 } __attribute__((packed));
 
 // Nachricht über LoRa senden. Wird evtl in mehrere Pakete aufgeteilt
-esp_err_t SendLoraMsg(SX1278_LoRa & aLoRa, uint8_t* aBuf, uint16_t aSize);
+esp_err_t SendLoraMsg(SX1278_LoRa & aLoRa, uint8_t* aBuf, uint16_t aSize, uint32_t aTag);
 void task_tx(void *p);
 void error(const char *format, ...);
 void ParseLoraPacket(uint8_t *buf, uint8_t len);
