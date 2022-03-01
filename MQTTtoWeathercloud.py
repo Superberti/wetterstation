@@ -7,6 +7,7 @@ import paho.mqtt.client as mqtt
 import time
 import requests
 import json
+import sys
 
 INFLUXDB_ADDRESS = 'localhost'
 
@@ -74,7 +75,7 @@ def on_message(client, userdata, msg):
             _send_sensor_data_to_weathercloud(sensor_data)
                     
     except Exception as e:
-        logging.info("Fehler", e.__class__, "occurred: ",e)
+        print("Error", e.__class__, "occurred: ",e, file = sys.stderr)
     
 def _send_sensor_data_to_weathercloud(sensor_data):
     global Temperatur
