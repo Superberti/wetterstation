@@ -39,10 +39,15 @@ static const char *ILLU_TAG = "BS";
 static const char *COOL_TAG = "LU";
 static const char *POS_TAG = "Ort";
 static const char *VAL_TAG = "W";
+// Paket-Zähler
+static const char *PC_TAG = "PC";
 
 static const char *ORT_SCHUPPEN_SCHATTEN = "A";
 static const char *ORT_SCHUPPEN_SONNE = "B";
 static const char *ORT_SCHUPPEN_INNEN = "C";
+static const char *ORT_CARPORT = "D";
+static const char *ORT_GARTENHAUS = "E";
+static const char *ORT_GEWAECHSHAUS = "F";
 
 #define SENDER_ADDRESS 155
 #define RECEIVER_ADDRESS 156
@@ -146,7 +151,7 @@ void error(const char *format, ...)
 
 uint8_t lora_buf[256];
 
-esp_err_t SendLoraMsg(SX1278_LoRa &aLoRa, LoraCommand aCmd, uint8_t *aBuf, uint16_t aSize)
+esp_err_t SendLoraMsg(SX1278_LoRa &aLoRa, LoraCommand aCmd, uint8_t *aBuf, uint16_t aSize, uint32_t aTag)
 {
   gpio_set_level(LED_PIN, 1);
   uint8_t MaxPayloadPerPaketSize = 255 - sizeof(LoraPacketHeader);
@@ -156,6 +161,7 @@ esp_err_t SendLoraMsg(SX1278_LoRa &aLoRa, LoraCommand aCmd, uint8_t *aBuf, uint1
   ph.Address = SENDER_ADDRESS;
   ph.Cmd = (uint8_t)aCmd;
   ph.NumPackets = NumPackets;
+  ph.Tag=aTag;
   int BytesWritten = 0;
   esp_err_t ret;
   for (int i = 0; i < NumPackets; i++)
@@ -220,8 +226,9 @@ void task_tx(void *p)
     cbor_encoder_init(&encoder, cbor_buf, sizeof(cbor_buf), 0);
     //cbor_encode_text_stringz(&encoder, "WS");
 
+    // Paketzähler
     cbor_encoder_create_map(&encoder, &me0, CborIndefiniteLength);
-    cbor_encode_text_stringz(&me0, "TC");
+    cbor_encode_text_stringz(&me0, PC_TAG);
     cbor_encode_int(&me0, c);
 
     // Temperaturen
@@ -294,7 +301,7 @@ void task_tx(void *p)
     cbor_encoder_close_container(&encoder, &me0);
 
     int len = cbor_encoder_get_buffer_size(&encoder, cbor_buf);
-    ESP_LOGI(TAG, "CBOR erstellt, Groesse: %d", len);
+    //ESP_LOGI(TAG, "CBOR erstellt, Groesse: %d", len);
     //HexDump(cbor_buf, len);
     int RetryCounter=0;
     bool SendOK=true;
@@ -302,9 +309,9 @@ void task_tx(void *p)
     {
       /* code */
       int64_t ts = GetTime_us();
-      ret = SendLoraMsg(LoRa, CMD_CBORDATA, cbor_buf, len);
+      ret = SendLoraMsg(LoRa, CMD_CBORDATA, cbor_buf, len, c);
       int64_t te = GetTime_us();
-      ESP_LOGI(TAG, "Zeit fuer LoRa: %.1f ms", double(te - ts) / 1000.0);
+      //ESP_LOGI(TAG, "Zeit fuer LoRa: %.1f ms", double(te - ts) / 1000.0);
       if (ret != ESP_OK)
       {
         SendOK=false;
@@ -319,6 +326,8 @@ void task_tx(void *p)
         else
           ESP_LOGI(TAG, "Re-Init LORA erfolgreich");
       }
+      else
+        ESP_LOGI(TAG, "LORA Paket Nummer: %d erfolgreich versendet.", c);
     } 
     while (!SendOK);
     
