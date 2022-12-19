@@ -1,3 +1,6 @@
 [submodule "shared/tinycbor"]
 	path = shared/tinycbor
 	url = https://github.com/intel/tinycbor.git
+[submodule "shared/u8g2"]
+	path = shared/u8g2
+	url = https://github.com/olikraus/u8g2.git
