@@ -50,7 +50,7 @@ extern "C"
 #elif defined(ESP_PLATFORM)
 #include <esp_intr_alloc.h>
 #include <driver/gpio.h>
-#include <driver/rmt.h>
+#include <driver/rmt_tx.h>
 #include <freertos/FreeRTOS.h>
 #include "freertos/task.h"
 #include <freertos/semphr.h>
@@ -124,11 +124,6 @@ typedef struct
   bool isProcessing;
 } digitalLeds_stateData;
 
-double randDouble()
-{
-  return double(esp_random() >> 16) / (UINT16_MAX + 1);
-}
-
 pixelColor_t adjustByUniformFactor(pixelColor_t *color, double adjFactor)
 {
   color->r = uint8_t(color->r * (1.0 - adjFactor));
@@ -145,7 +140,7 @@ static strand_t *strandDataPtrs[MAX_RMT_CHANNELS] = {nullptr}; // Indexed by RMT
 static void copyHalfBlockToRmt(strand_t *pStrand);
 static void rmtInterruptHandler(void *arg);
 
-static xSemaphoreHandle gRmtSem = nullptr;
+static SemaphoreHandle_t gRmtSem = nullptr;
 static intr_handle_t gRmtIntrHandle = nullptr;
 
 static int gToProcess = 0;
@@ -183,7 +178,7 @@ void gpioSetup(int gpioNum, int gpioMode, int gpioVal)
 #elif defined(ESP_PLATFORM)
   gpio_num_t gpioNumNative = static_cast<gpio_num_t>(gpioNum);
   gpio_mode_t gpioModeNative = static_cast<gpio_mode_t>(gpioMode);
-  gpio_pad_select_gpio(gpioNumNative);
+  gpio_reset_pin(gpioNumNative);
   gpio_set_direction(gpioNumNative, gpioModeNative);
   gpio_set_level(gpioNumNative, gpioVal);
 #endif

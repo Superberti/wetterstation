@@ -8,7 +8,8 @@
 #include "esp_log.h"
 #include "driver/gpio.h"
 #include <u8g2.h>
-#include "../../../shared/u8g2_esp32_hal.h"
+#include <u8g2_esp32_hal.h>
+#include "cbor.h"
 
 #define LED_PIN GPIO_NUM_25
 #define TAG "LORA_TEMP"
@@ -18,7 +19,7 @@
 
 // SCL - GPIO22
 #define PIN_SCL 22
-u8g2_t u8g2;  // a structure which will contain all the data for one display
+u8g2_t u8g2; // a structure which will contain all the data for one display
 
 void InitSSD1306_u8g2()
 {
@@ -27,11 +28,11 @@ void InitSSD1306_u8g2()
   u8g2_esp32_hal.scl = PIN_SCL;
   u8g2_esp32_hal_init(u8g2_esp32_hal);
 
-/*
-  gpio_set_level(PIN_DISP_RESET, 0);
-  vTaskDelay(pdMS_TO_TICKS(50));
-  gpio_set_level(PIN_DISP_RESET, 1);
-*/
+  /*
+    gpio_set_level(PIN_DISP_RESET, 0);
+    vTaskDelay(pdMS_TO_TICKS(50));
+    gpio_set_level(PIN_DISP_RESET, 1);
+  */
 
   u8g2_Setup_ssd1306_i2c_128x64_noname_f(
       &u8g2,
@@ -49,7 +50,6 @@ void InitSSD1306_u8g2()
   u8g2_ClearBuffer(&u8g2);
   u8g2_SendBuffer(&u8g2);
 
-  
   ESP_LOGI(TAG, "u8g2_DrawBox");
   u8g2_DrawBox(&u8g2, 0, 26, 80, 6);
   u8g2_DrawFrame(&u8g2, 0, 26, 100, 6);
@@ -66,6 +66,18 @@ void InitSSD1306_u8g2()
 
 void app_main(void)
 {
+  CborEncoder root_encoder;
+  CborParser root_parser;
+  CborValue it;
+  uint8_t buf[100];
+
+  // Initialize the outermost cbor encoder
+  cbor_encoder_init(&root_encoder, buf, sizeof(buf), 0);
+
+  // Create an array containing several items
+  CborEncoder array_encoder;
+  CborEncoder map_encoder;
+
   gpio_reset_pin(LED_PIN);
   /* Set the GPIO as a push/pull output */
   gpio_set_direction(LED_PIN, GPIO_MODE_OUTPUT);
