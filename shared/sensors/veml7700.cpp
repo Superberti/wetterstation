@@ -50,7 +50,7 @@ bool VEML7700::init(uint8_t aGain, uint8_t aIntegrationTime)
   esp_err_t ret=WriteRegister(VEML7700_ALS_CONFIG,cr.val);
   ret=ReadRegister(VEML7700_ALS_CONFIG,(uint8_t*)&cr.val,sizeof(cr));
   //ESP_LOGI("VEML7700::init", "Lese: %d",cr.val);
-  vTaskDelay(3 / portTICK_RATE_MS);
+  vTaskDelay(3 / portTICK_PERIOD_MS);
   return ret==ESP_OK;
 }
 
@@ -68,7 +68,7 @@ esp_err_t VEML7700::WriteRegister(uint8_t reg_addr, uint16_t value)
   i2c_master_write_byte(cmd, value >> 8, ACK_CHECK_EN);
 
   i2c_master_stop(cmd);
-  ret = i2c_master_cmd_begin(I2C_NUM_0, cmd, 1000 / portTICK_RATE_MS);
+  ret = i2c_master_cmd_begin(I2C_NUM_0, cmd, 1000 / portTICK_PERIOD_MS);
   i2c_cmd_link_delete(cmd);
   if (ret!=ESP_OK)
     ESP_LOGE("VEML7700::WriteRegister", "I2C error no.: %d",ret);
@@ -86,7 +86,7 @@ esp_err_t VEML7700::ReadRegister(uint8_t reg_addr, uint8_t *data, uint16_t len)
   i2c_master_write_byte(cmd, VEML7700_ADDRESS << 1 | I2C_MASTER_READ, ACK_CHECK_EN);
   i2c_master_read(cmd, data, len,  I2C_MASTER_LAST_NACK);
   i2c_master_stop(cmd);
-  ret = i2c_master_cmd_begin(I2C_NUM_0, cmd, 1000 / portTICK_RATE_MS);
+  ret = i2c_master_cmd_begin(I2C_NUM_0, cmd, 1000 / portTICK_PERIOD_MS);
   i2c_cmd_link_delete(cmd);
   if (ret != ESP_OK)
   {

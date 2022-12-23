@@ -1,7 +1,7 @@
-set(component_srcs "src/matrix_keyboard.c")
+set(component_srcs "bmp280.cpp" "sht35.cpp" "veml7700.cpp")
 
 idf_component_register(SRCS "${component_srcs}"
-                       INCLUDE_DIRS "include"
+                       INCLUDE_DIRS "."
                        PRIV_INCLUDE_DIRS ""
                        PRIV_REQUIRES "driver"
                        REQUIRES "")

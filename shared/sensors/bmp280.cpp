@@ -45,7 +45,7 @@ bool BMP280::init(uint8_t addr, uint8_t chipid)
   readCoefficients();
   // WriteRegister(BMP280_REGISTER_CONTROL, 0x3F); /* needed? */
   setSampling();
-  vTaskDelay(100 / portTICK_RATE_MS);
+  vTaskDelay(100 / portTICK_PERIOD_MS);
   return true;
 }
 
@@ -94,7 +94,7 @@ esp_err_t BMP280::WriteRegister(uint8_t reg_addr, uint8_t value)
   i2c_master_write_byte(cmd, reg_addr, ACK_CHECK_EN);
   i2c_master_write_byte(cmd, value, ACK_CHECK_EN);
   i2c_master_stop(cmd);
-  ret = i2c_master_cmd_begin(I2C_NUM_0, cmd, 1000 / portTICK_RATE_MS);
+  ret = i2c_master_cmd_begin(I2C_NUM_0, cmd, 1000 / portTICK_PERIOD_MS);
   i2c_cmd_link_delete(cmd);
   if (ret!=ESP_OK)
     ESP_LOGE("BMP280::WriteRegister", "I2C error no.: %d",ret);
@@ -109,7 +109,7 @@ esp_err_t BMP280::ReadRegister(uint8_t reg_addr, uint8_t *data, uint16_t len)
   i2c_master_write_byte(cmd, _i2caddr << 1 | I2C_MASTER_WRITE, ACK_CHECK_EN);
   i2c_master_write_byte(cmd, reg_addr, ACK_CHECK_EN);
   i2c_master_stop(cmd);
-  ret = i2c_master_cmd_begin(I2C_NUM_0, cmd, 1000 / portTICK_RATE_MS);
+  ret = i2c_master_cmd_begin(I2C_NUM_0, cmd, 1000 / portTICK_PERIOD_MS);
   i2c_cmd_link_delete(cmd);
   if (ret != ESP_OK)
   {
@@ -121,7 +121,7 @@ esp_err_t BMP280::ReadRegister(uint8_t reg_addr, uint8_t *data, uint16_t len)
   i2c_master_write_byte(cmd, _i2caddr << 1 | I2C_MASTER_READ, ACK_CHECK_EN);
   i2c_master_read(cmd, data, len,  I2C_MASTER_LAST_NACK);
   i2c_master_stop(cmd);
-  ret = i2c_master_cmd_begin(I2C_NUM_0, cmd, 1000 / portTICK_RATE_MS);
+  ret = i2c_master_cmd_begin(I2C_NUM_0, cmd, 1000 / portTICK_PERIOD_MS);
   i2c_cmd_link_delete(cmd);
   if (ret!=ESP_OK)
     ESP_LOGE("BMP280::ReadRegister", "I2C error no.: %d",ret);
