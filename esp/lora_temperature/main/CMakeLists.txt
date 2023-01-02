@@ -1,2 +1,2 @@
-idf_component_register(SRCS "main.c" 
-                    INCLUDE_DIRS "." )
+idf_component_register(SRCS "lora_temp.cpp"  
+                    INCLUDE_DIRS "." "../../../shared/")
