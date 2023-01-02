@@ -94,7 +94,6 @@ class SX1278_LoRa
   esp_err_t lora_explicit_header_mode(void);
   esp_err_t lora_implicit_header_mode(uint8_t size);
   esp_err_t lora_idle(void);
-  esp_err_t lora_sleep(void);
   esp_err_t lora_write_reg(uint8_t reg, uint8_t val);
   esp_err_t lora_read_reg(uint8_t reg, uint8_t *aInVal);
 
@@ -114,7 +113,7 @@ class SX1278_LoRa
 public:
   void lora_reset(void);
   esp_err_t lora_receive(void);
-  
+  esp_err_t lora_sleep(void);
   esp_err_t lora_send_packet(uint8_t *buf, uint8_t size);
   esp_err_t lora_receive_packet(uint8_t *buf, uint8_t size, uint8_t *BytesRead);
   uint8_t lora_received(void);

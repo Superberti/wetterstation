@@ -7,47 +7,51 @@
 #include <string.h>
 #include "esp_log.h"
 #include "driver/gpio.h"
+#include <sys/time.h>
+extern "C"
+{
 #include <u8g2.h>
 #include <u8g2_esp32_hal.h>
+}
 #include "cbor.h"
 #include <esp_sleep.h>
 #include <driver/rtc_io.h>
-#include "lora.h"
+
 #include "lorastructs.h"
 #include "esp_wifi.h"
+#include "lora_temp.h"
 
 #define LED_PIN GPIO_NUM_25
 #define TAG "LORA_TEMP"
 
 // SDA - GPIO21
-#define PIN_SDA 21
+#define PIN_SDA GPIO_NUM_21
 
 // SCL - GPIO22
-#define PIN_SCL 22
+#define PIN_SCL GPIO_NUM_22
 
 // aus Lilygo-Beispielen
-#define I2C_SDA 21
-#define I2C_SCL 22
-#define OLED_RST UNUSE_PIN
+#define I2C_SDA GPIO_NUM_21
+#define I2C_SCL GPIO_NUM_22
 
-#define RADIO_SCLK_PIN 5
-#define RADIO_MISO_PIN 19
-#define RADIO_MOSI_PIN 27
-#define RADIO_CS_PIN 18
-#define RADIO_DIO0_PIN 26
-#define RADIO_RST_PIN 23
-#define RADIO_DIO1_PIN 33
-#define RADIO_BUSY_PIN 32
+#define RADIO_SCLK_PIN GPIO_NUM_5
+#define RADIO_MISO_PIN GPIO_NUM_19
+#define RADIO_MOSI_PIN GPIO_NUM_27
+#define RADIO_CS_PIN GPIO_NUM_18
+#define RADIO_DIO0_PIN GPIO_NUM_26
+#define RADIO_RST_PIN GPIO_NUM_23
+#define RADIO_DIO1_PIN GPIO_NUM_33
+#define RADIO_BUSY_PIN GPIO_NUM_32
 
-#define SDCARD_MOSI 15
-#define SDCARD_MISO 2
-#define SDCARD_SCLK 14
-#define SDCARD_CS 13
+#define SDCARD_MOSI GPIO_NUM_15
+#define SDCARD_MISO GPIO_NUM_2
+#define SDCARD_SCLK GPIO_NUM_14
+#define SDCARD_CS GPIO_NUM_13
 
-#define BOARD_LED 25
+#define BOARD_LED GPIO_NUM_25
 #define LED_ON HIGH
 
-#define ADC_PIN 35
+#define ADC_PIN GPIO_NUM_35
 
 u8g2_t u8g2; // a structure which will contain all the data for one display
 
@@ -94,9 +98,17 @@ void InitSSD1306_u8g2()
   ESP_LOGI(TAG, "SSD 1306 display initialized!");
 }
 
-void app_main(void)
+extern "C"
 {
-  vTaskDelay(5000 / portTICK_PERIOD_MS);
+  void app_main()
+  {
+    app_main_cpp();
+  }
+}
+
+void app_main_cpp()
+{
+  //vTaskDelay(5000 / portTICK_PERIOD_MS);
   CborEncoder root_encoder;
   CborParser root_parser;
   CborValue it;
@@ -114,11 +126,15 @@ void app_main(void)
   gpio_set_direction(LED_PIN, GPIO_MODE_OUTPUT);
   gpio_set_level(LED_PIN, 1);
   InitSSD1306_u8g2();
+  SX1278_LoRa LoRa;
+  esp_err_t ret = LoRa.SetupModule();
+  if (ret != ESP_OK)
+    error(TAG, "Fehler beim Initialisieren des LoRa Moduls: %d", ret);
 
   vTaskDelay(5000 / portTICK_PERIOD_MS);
   gpio_set_level(LED_PIN, 0);
   u8g2_SetPowerSave(&u8g2, 1);
-
+  LoRa.lora_sleep();
 /*
   gpio_reset_pin(RADIO_CS_PIN);
   gpio_set_direction(RADIO_CS_PIN, GPIO_MODE_INPUT);
@@ -136,9 +152,9 @@ void app_main(void)
   gpio_set_direction(RADIO_CS_PIN, GPIO_MODE_INPUT);
   //pinMode(RADIO_CS_PIN, INPUT);
 
-  gpio_reset_pin(I2C_SDA);
+  gpio_reset_pin(RADIO_RST_PIN);
   gpio_set_direction(RADIO_RST_PIN, GPIO_MODE_INPUT);
-  //pinMode(I2C_SDA, INPUT);
+  //pinMode(RADIO_RST_PIN, INPUT);
 
   gpio_reset_pin(I2C_SDA);
   gpio_set_direction(I2C_SDA, GPIO_MODE_INPUT);
@@ -176,15 +192,15 @@ void app_main(void)
   gpio_set_direction(SDCARD_CS, GPIO_MODE_INPUT);
   //pinMode(SDCARD_CS, INPUT);
 
-  gpio_reset_pin(BOARD_LED);
-  gpio_set_direction(BOARD_LED, GPIO_MODE_INPUT);
+  //gpio_reset_pin(BOARD_LED);
+  //gpio_set_direction(BOARD_LED, GPIO_MODE_INPUT);
   //pinMode(BOARD_LED, INPUT);
 
   gpio_reset_pin(ADC_PIN);
   gpio_set_direction(ADC_PIN, GPIO_MODE_INPUT);
   //pinMode(ADC_PIN, INPUT);
 */
-
+  
   esp_wifi_stop();
   rtc_gpio_isolate(LED_PIN);
   esp_sleep_disable_wakeup_source(ESP_SLEEP_WAKEUP_ALL);
@@ -204,4 +220,31 @@ void app_main(void)
     vTaskDelay(200 / portTICK_PERIOD_MS);
     c++;
   }*/
+}
+
+int64_t GetTime_us()
+{
+  struct timeval tv_now;
+  gettimeofday(&tv_now, NULL);
+  return (int64_t)tv_now.tv_sec * 1000000L + (int64_t)tv_now.tv_usec;
+}
+
+#define MAX_VPBUFLEN 256
+char vprintf_buffer[MAX_VPBUFLEN];
+
+void error(const char *format, ...)
+{
+  va_list myargs;
+  va_start(myargs, format);
+
+  vsnprintf(vprintf_buffer, MAX_VPBUFLEN, format, myargs);
+  ESP_LOGE(TAG, "%s", vprintf_buffer);
+  va_end(myargs);
+  int toggle = 0;
+  for (;;)
+  {
+    toggle = 1 - toggle;
+    gpio_set_level(LED_PIN, toggle);
+    vTaskDelay(pdMS_TO_TICKS(100));
+  }
 }
