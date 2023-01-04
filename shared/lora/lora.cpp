@@ -6,63 +6,66 @@
 #include "driver/gpio.h"
 #include <string.h>
 #include "esp_log.h"
-
+#include "lorastructs.h"
 #include "lora.h"
+#include "../tools/tools.h"
 
 SX1278_LoRa::SX1278_LoRa()
   : mhSpi(NULL)
   , mInitialized(false)
   , mImplicit(false)
+  , mAddress(0)
 {
 }
 
 SX1278_LoRa::~SX1278_LoRa()
 {
-  lora_close();
+  Close();
 }
 
-esp_err_t SX1278_LoRa::SetupModule()
+esp_err_t SX1278_LoRa::SetupModule(uint8_t aAddress, long aFrq, uint16_t aPreambleLength, long aBandwidth, uint8_t aSyncByte)
 {
+  mAddress=aAddress;
   mInitialized = false;
   esp_err_t ret;
-  ret = lora_init();
+  ret = Init();
   if (ret != ESP_OK)
   {
     ESP_LOGE("lora", "lora_init failed: %d", ret);
     return ret;
   }
-  ret = lora_explicit_header_mode();
+  ret = ExplicitHeaderMode();
   if (ret != ESP_OK)
   {
     ESP_LOGE("lora", "lora_explicit_header_mode failed: %d", ret);
     return ret;
   }
-  ret = lora_set_frequency(434.54e6);
+  ret = SetFrequency(aFrq);
   if (ret != ESP_OK)
   {
     ESP_LOGE("lora", "lora_set_frequency failed: %d", ret);
     return ret;
   }
-  ret = lora_enable_crc();
+  ret = EnableCrc();
   if (ret != ESP_OK)
   {
     ESP_LOGE("lora", "lora_enable_crc failed: %d", ret);
     return ret;
   }
 
-  ret = lora_set_preamble_length(14);
+  ret = SetPreambleLength(aPreambleLength);
   if (ret != ESP_OK)
   {
     ESP_LOGE("lora", "lora_set_preamble_length failed: %d", ret);
     return ret;
   }
-  ret = lora_set_bandwidth(500E3);
+  ret = SetBandwidth(aBandwidth);
   if (ret != ESP_OK)
   {
     ESP_LOGE("lora", "lora_set_bandwidth failed: %d", ret);
     return ret;
   }
-  ret = lora_set_sync_word(0x3d);
+  ret = SetSyncWord(aSyncByte);
   if (ret != ESP_OK)
   {
     ESP_LOGE("lora", "lora_set_sync_word failed: %d", ret);
@@ -77,7 +80,7 @@ esp_err_t SX1278_LoRa::SetupModule()
  * @param reg Register index.
  * @param val Value to write.
  */
-esp_err_t SX1278_LoRa::lora_write_reg(uint8_t reg, uint8_t val)
+esp_err_t SX1278_LoRa::WriteReg(uint8_t reg, uint8_t val)
 {
   uint8_t out[2] = {(uint8_t)(0x80 | reg), val};
   uint8_t in[2];
@@ -99,7 +102,7 @@ esp_err_t SX1278_LoRa::lora_write_reg(uint8_t reg, uint8_t val)
  * @param reg Register index.
  * @return Value of the register.
  */
-esp_err_t SX1278_LoRa::lora_read_reg(uint8_t reg, uint8_t *aInVal)
+esp_err_t SX1278_LoRa::ReadReg(uint8_t reg, uint8_t *aInVal)
 {
   uint8_t out[2] = {reg, 0xff};
   uint8_t in[2];
@@ -120,7 +123,7 @@ esp_err_t SX1278_LoRa::lora_read_reg(uint8_t reg, uint8_t *aInVal)
 /**
  * Perform physical reset on the Lora chip
  */
-void SX1278_LoRa::lora_reset(void)
+void SX1278_LoRa::Reset(void)
 {
   gpio_set_level((gpio_num_t)PinConfiguration::CONFIG_RST_GPIO, 0);
   vTaskDelay(pdMS_TO_TICKS(1));
@@ -132,14 +135,14 @@ void SX1278_LoRa::lora_reset(void)
  * Configure explicit header mode.
  * Packet size will be included in the frame.
  */
-esp_err_t SX1278_LoRa::lora_explicit_header_mode(void)
+esp_err_t SX1278_LoRa::ExplicitHeaderMode(void)
 {
   uint8_t reg;
-  esp_err_t ret = lora_read_reg(Registers::REG_MODEM_CONFIG_1, &reg);
+  esp_err_t ret = ReadReg(Registers::REG_MODEM_CONFIG_1, &reg);
   if (ret != ESP_OK)
     return ret;
   mImplicit = false;
-  return lora_write_reg(Registers::REG_MODEM_CONFIG_1, reg & 0xfe);
+  return WriteReg(Registers::REG_MODEM_CONFIG_1, reg & 0xfe);
 }
 
 /**
@@ -147,84 +150,84 @@ esp_err_t SX1278_LoRa::lora_explicit_header_mode(void)
  * All packets will have a predefined size.
  * @param size Size of the packets.
  */
-esp_err_t SX1278_LoRa::lora_implicit_header_mode(uint8_t size)
+esp_err_t SX1278_LoRa::ImplicitHeaderMode(uint8_t size)
 {
   uint8_t reg;
   mImplicit = true;
-  esp_err_t ret = lora_read_reg(Registers::REG_MODEM_CONFIG_1, &reg);
+  esp_err_t ret = ReadReg(Registers::REG_MODEM_CONFIG_1, &reg);
   if (ret != ESP_OK)
     return ret;
-  ret = lora_write_reg(Registers::REG_MODEM_CONFIG_1, reg | 0x01);
+  ret = WriteReg(Registers::REG_MODEM_CONFIG_1, reg | 0x01);
   if (ret != ESP_OK)
     return ret;
-  return lora_write_reg(Registers::REG_PAYLOAD_LENGTH, size);
+  return WriteReg(Registers::REG_PAYLOAD_LENGTH, size);
 }
 
 /**
  * Sets the radio transceiver in idle mode.
  * Must be used to change registers and access the FIFO.
  */
-esp_err_t SX1278_LoRa::lora_idle(void)
+esp_err_t SX1278_LoRa::Idle(void)
 {
-  return lora_write_reg(Registers::REG_OP_MODE, TransceiverMode::MODE_LONG_RANGE_MODE | TransceiverMode::MODE_STDBY);
+  return WriteReg(Registers::REG_OP_MODE, TransceiverMode::MODE_LONG_RANGE_MODE | TransceiverMode::MODE_STDBY);
 }
 
 /**
  * Sets the radio transceiver in sleep mode.
  * Low power consumption and FIFO is lost.
  */
-esp_err_t SX1278_LoRa::lora_sleep(void)
+esp_err_t SX1278_LoRa::Sleep(void)
 {
-  return lora_write_reg(Registers::REG_OP_MODE, TransceiverMode::MODE_LONG_RANGE_MODE | TransceiverMode::MODE_SLEEP);
+  return WriteReg(Registers::REG_OP_MODE, TransceiverMode::MODE_LONG_RANGE_MODE | TransceiverMode::MODE_SLEEP);
 }
 
 /**
  * Sets the radio transceiver in receive mode.
  * Incoming packets will be received.
  */
-esp_err_t SX1278_LoRa::lora_receive(void)
+esp_err_t SX1278_LoRa::Receive(void)
 {
-  return lora_write_reg(Registers::REG_OP_MODE, TransceiverMode::MODE_LONG_RANGE_MODE | TransceiverMode::MODE_RX_CONTINUOUS);
+  return WriteReg(Registers::REG_OP_MODE, TransceiverMode::MODE_LONG_RANGE_MODE | TransceiverMode::MODE_RX_CONTINUOUS);
 }
 
 /**
  * Configure power level for transmission
  * @param level 2-17, from least to most power
  */
-esp_err_t SX1278_LoRa::lora_set_tx_power(uint8_t level)
+esp_err_t SX1278_LoRa::SetTxPower(uint8_t level)
 {
   // RF9x module uses PA_BOOST pin
   if (level < 2)
     level = 2;
   else if (level > 17)
     level = 17;
-  return lora_write_reg(Registers::REG_PA_CONFIG, Misc::PA_BOOST | (level - 2));
+  return WriteReg(Registers::REG_PA_CONFIG, Misc::PA_BOOST | (level - 2));
 }
 
 /**
  * Set carrier frequency.
  * @param frequency Frequency in Hz
  */
-esp_err_t SX1278_LoRa::lora_set_frequency(long frequency)
+esp_err_t SX1278_LoRa::SetFrequency(long frequency)
 {
   mFrequency = frequency;
 
   uint64_t frf = ((uint64_t)frequency << 19) / 32000000;
   esp_err_t ret;
-  ret = lora_write_reg(Registers::REG_FRF_MSB, (uint8_t)(frf >> 16));
+  ret = WriteReg(Registers::REG_FRF_MSB, (uint8_t)(frf >> 16));
   if (ret != ESP_OK)
     return ret;
-  ret = lora_write_reg(Registers::REG_FRF_MID, (uint8_t)(frf >> 8));
+  ret = WriteReg(Registers::REG_FRF_MID, (uint8_t)(frf >> 8));
   if (ret != ESP_OK)
     return ret;
-  return lora_write_reg(Registers::REG_FRF_LSB, (uint8_t)(frf >> 0));
+  return WriteReg(Registers::REG_FRF_LSB, (uint8_t)(frf >> 0));
 }
 
 /**
  * Set spreading factor.
  * @param sf 6-12, Spreading factor to use.
  */
-esp_err_t SX1278_LoRa::lora_set_spreading_factor(uint8_t sf)
+esp_err_t SX1278_LoRa::SetSpreadingFactor(uint8_t sf)
 {
   esp_err_t ret;
   if (sf < 6)
@@ -234,34 +237,34 @@ esp_err_t SX1278_LoRa::lora_set_spreading_factor(uint8_t sf)
 
   if (sf == 6)
   {
-    ret = lora_write_reg(Registers::REG_DETECTION_OPTIMIZE, 0xc5);
+    ret = WriteReg(Registers::REG_DETECTION_OPTIMIZE, 0xc5);
     if (ret != ESP_OK)
       return ret;
-    ret = lora_write_reg(Registers::REG_DETECTION_THRESHOLD, 0x0c);
+    ret = WriteReg(Registers::REG_DETECTION_THRESHOLD, 0x0c);
     if (ret != ESP_OK)
       return ret;
   }
   else
   {
-    ret = lora_write_reg(Registers::REG_DETECTION_OPTIMIZE, 0xc3);
+    ret = WriteReg(Registers::REG_DETECTION_OPTIMIZE, 0xc3);
     if (ret != ESP_OK)
       return ret;
-    ret = lora_write_reg(Registers::REG_DETECTION_THRESHOLD, 0x0a);
+    ret = WriteReg(Registers::REG_DETECTION_THRESHOLD, 0x0a);
     if (ret != ESP_OK)
       return ret;
   }
   uint8_t reg;
-  ret = lora_read_reg(Registers::REG_MODEM_CONFIG_2, &reg);
+  ret = ReadReg(Registers::REG_MODEM_CONFIG_2, &reg);
   if (ret != ESP_OK)
     return ret;
-  return lora_write_reg(Registers::REG_MODEM_CONFIG_2, (reg & 0x0f) | ((sf << 4) & 0xf0));
+  return WriteReg(Registers::REG_MODEM_CONFIG_2, (reg & 0x0f) | ((sf << 4) & 0xf0));
 }
 
 /**
  * Set bandwidth (bit rate)
  * @param sbw Bandwidth in Hz (up to 500000)
  */
-esp_err_t SX1278_LoRa::lora_set_bandwidth(long sbw)
+esp_err_t SX1278_LoRa::SetBandwidth(long sbw)
 {
   uint8_t bw;
 
@@ -288,17 +291,17 @@ esp_err_t SX1278_LoRa::lora_set_bandwidth(long sbw)
 
   esp_err_t ret;
   uint8_t reg;
-  ret = lora_read_reg(Registers::REG_MODEM_CONFIG_1, &reg);
+  ret = ReadReg(Registers::REG_MODEM_CONFIG_1, &reg);
   if (ret != ESP_OK)
     return ret;
-  return lora_write_reg(Registers::REG_MODEM_CONFIG_1, (reg & 0x0f) | (bw << 4));
+  return WriteReg(Registers::REG_MODEM_CONFIG_1, (reg & 0x0f) | (bw << 4));
 }
 
 /**
  * Set coding rate 
  * @param denominator 5-8, Denominator for the coding rate 4/x
  */
-esp_err_t SX1278_LoRa::lora_set_coding_rate(uint8_t denominator)
+esp_err_t SX1278_LoRa::SetCodingRate(uint8_t denominator)
 {
   if (denominator < 5)
     denominator = 5;
@@ -309,64 +312,64 @@ esp_err_t SX1278_LoRa::lora_set_coding_rate(uint8_t denominator)
 
   esp_err_t ret;
   uint8_t reg;
-  ret = lora_read_reg(Registers::REG_MODEM_CONFIG_1, &reg);
+  ret = ReadReg(Registers::REG_MODEM_CONFIG_1, &reg);
   if (ret != ESP_OK)
     return ret;
-  return lora_write_reg(Registers::REG_MODEM_CONFIG_1, (reg & 0xf1) | (cr << 1));
+  return WriteReg(Registers::REG_MODEM_CONFIG_1, (reg & 0xf1) | (cr << 1));
 }
 
 /**
  * Set the size of preamble.
  * @param length Preamble length in symbols.
  */
-esp_err_t SX1278_LoRa::lora_set_preamble_length(uint16_t length)
+esp_err_t SX1278_LoRa::SetPreambleLength(uint16_t length)
 {
   esp_err_t ret;
-  ret = lora_write_reg(Registers::REG_PREAMBLE_MSB, (uint8_t)(length >> 8));
+  ret = WriteReg(Registers::REG_PREAMBLE_MSB, (uint8_t)(length >> 8));
   if (ret != ESP_OK)
     return ret;
-  return lora_write_reg(Registers::REG_PREAMBLE_LSB, (uint8_t)(length >> 0));
+  return WriteReg(Registers::REG_PREAMBLE_LSB, (uint8_t)(length >> 0));
 }
 
 /**
  * Change radio sync word.
  * @param sw New sync word to use.
  */
-esp_err_t SX1278_LoRa::lora_set_sync_word(uint8_t sw)
+esp_err_t SX1278_LoRa::SetSyncWord(uint8_t sw)
 {
-  return lora_write_reg(Registers::REG_SYNC_WORD, sw);
+  return WriteReg(Registers::REG_SYNC_WORD, sw);
 }
 
 /**
  * Enable appending/verifying packet CRC.
  */
-esp_err_t SX1278_LoRa::lora_enable_crc(void)
+esp_err_t SX1278_LoRa::EnableCrc(void)
 {
   esp_err_t ret;
   uint8_t reg;
-  ret = lora_read_reg(Registers::REG_MODEM_CONFIG_2, &reg);
+  ret = ReadReg(Registers::REG_MODEM_CONFIG_2, &reg);
   if (ret != ESP_OK)
     return ret;
-  return lora_write_reg(Registers::REG_MODEM_CONFIG_2, reg | 0x04);
+  return WriteReg(Registers::REG_MODEM_CONFIG_2, reg | 0x04);
 }
 
 /**
  * Disable appending/verifying packet CRC.
  */
-esp_err_t SX1278_LoRa::lora_disable_crc(void)
+esp_err_t SX1278_LoRa::DisableCrc(void)
 {
   esp_err_t ret;
   uint8_t reg;
-  ret = lora_read_reg(Registers::REG_MODEM_CONFIG_2, &reg);
+  ret = ReadReg(Registers::REG_MODEM_CONFIG_2, &reg);
   if (ret != ESP_OK)
     return ret;
-  return lora_write_reg(Registers::REG_MODEM_CONFIG_2, reg & 0xfb);
+  return WriteReg(Registers::REG_MODEM_CONFIG_2, reg & 0xfb);
 }
 
 /**
  * Perform hardware initialization.
  */
-esp_err_t SX1278_LoRa::lora_init(void)
+esp_err_t SX1278_LoRa::Init(void)
 {
   esp_err_t ret;
 
@@ -403,7 +406,7 @@ esp_err_t SX1278_LoRa::lora_init(void)
   /*
     * Perform hardware reset.
     */
-  lora_reset();
+  Reset();
 
   /*
     * Check version.
@@ -412,7 +415,7 @@ esp_err_t SX1278_LoRa::lora_init(void)
   int i;
   for (i = 0; i < Misc::TIMEOUT_RESET; i++)
   {
-    ret = lora_read_reg(Registers::REG_VERSION, &version);
+    ret = ReadReg(Registers::REG_VERSION, &version);
     if (ret != ESP_OK)
       return ret;
     if (version == 0x12)
@@ -425,31 +428,31 @@ esp_err_t SX1278_LoRa::lora_init(void)
   /*
     * Default configuration.
     */
-  ret = lora_sleep();
+  ret = Sleep();
   if (ret != ESP_OK)
     return ret;
-  ret = lora_write_reg(Registers::REG_FIFO_RX_BASE_ADDR, 0);
+  ret = WriteReg(Registers::REG_FIFO_RX_BASE_ADDR, 0);
   if (ret != ESP_OK)
     return ret;
-  ret = lora_write_reg(Registers::REG_FIFO_TX_BASE_ADDR, 0);
+  ret = WriteReg(Registers::REG_FIFO_TX_BASE_ADDR, 0);
   if (ret != ESP_OK)
     return ret;
-  ret = lora_read_reg(Registers::REG_LNA, &reg);
+  ret = ReadReg(Registers::REG_LNA, &reg);
   if (ret != ESP_OK)
     return ret;
-  ret = lora_write_reg(Registers::REG_LNA, reg | 0x03);
+  ret = WriteReg(Registers::REG_LNA, reg | 0x03);
   if (ret != ESP_OK)
     return ret;
-  ret = lora_write_reg(Registers::REG_MODEM_CONFIG_3, 0x04);
+  ret = WriteReg(Registers::REG_MODEM_CONFIG_3, 0x04);
   if (ret != ESP_OK)
     return ret;
-  ret = lora_set_tx_power(10);
+  ret = SetTxPower(10);
   if (ret != ESP_OK)
     return ret;
-  ret = lora_write_reg(Registers::REG_IRQ_MASK_FLAGS, 0);
+  ret = WriteReg(Registers::REG_IRQ_MASK_FLAGS, 0);
   if (ret != ESP_OK)
     return ret;
-  return lora_idle();
+  return Idle();
 }
 
 /**
@@ -458,29 +461,29 @@ esp_err_t SX1278_LoRa::lora_init(void)
  * @param size Size of data.
  * @return Error status.
  */
-esp_err_t SX1278_LoRa::lora_send_packet(uint8_t *buf, uint8_t size)
+esp_err_t SX1278_LoRa::SendPacket(uint8_t *buf, uint8_t size)
 {
   uint8_t reg;
   esp_err_t ret;
   /*
     * Transfer data to radio.
     */
-  ret = lora_idle();
+  ret = Idle();
   if (ret != ESP_OK)
     return ret;
   //ESP_LOGI("lora","lora is idle");
-  ret = lora_write_reg(Registers::REG_FIFO_ADDR_PTR, 0);
+  ret = WriteReg(Registers::REG_FIFO_ADDR_PTR, 0);
   if (ret != ESP_OK)
     return ret;
   //ESP_LOGI("lora","filling FIFO");
   for (int i = 0; i < size; i++)
   {
-    ret = lora_write_reg(Registers::REG_FIFO, *buf++);
+    ret = WriteReg(Registers::REG_FIFO, *buf++);
     if (ret != ESP_OK)
       return ret;
   }
   //ESP_LOGI("lora","FIFO is idle");
-  ret = lora_write_reg(Registers::REG_PAYLOAD_LENGTH, size);
+  ret = WriteReg(Registers::REG_PAYLOAD_LENGTH, size);
   if (ret != ESP_OK)
     return ret;
 
@@ -489,12 +492,12 @@ esp_err_t SX1278_LoRa::lora_send_packet(uint8_t *buf, uint8_t size)
     */
   //ESP_LOGI("lora","starting transmission");
 
-  ret = lora_write_reg(Registers::REG_OP_MODE, TransceiverMode::MODE_LONG_RANGE_MODE | TransceiverMode::MODE_TX);
+  ret = WriteReg(Registers::REG_OP_MODE, TransceiverMode::MODE_LONG_RANGE_MODE | TransceiverMode::MODE_TX);
   if (ret != ESP_OK)
     return ret;
   vTaskDelay(1);
   // Überprüfen, ob der Chip wirklich in den Modus gewechselt hat
-  ret = lora_read_reg(Registers::REG_OP_MODE, &reg);
+  ret = ReadReg(Registers::REG_OP_MODE, &reg);
   if (ret != ESP_OK)
     return ret;
   if (reg != (TransceiverMode::MODE_LONG_RANGE_MODE | TransceiverMode::MODE_TX))
@@ -504,14 +507,14 @@ esp_err_t SX1278_LoRa::lora_send_packet(uint8_t *buf, uint8_t size)
   }
   //
 
-  ret = lora_read_reg(Registers::REG_IRQ_FLAGS, &reg);
+  ret = ReadReg(Registers::REG_IRQ_FLAGS, &reg);
   if (ret != ESP_OK)
     return ret;
   //ESP_LOGI("lora","Reg: %d",reg);
   //ESP_LOGI("lora","waiting for end of transmission");
   while ((reg & IrqMask::IRQ_TX_DONE_MASK) == 0)
   {
-    ret = lora_read_reg(Registers::REG_IRQ_FLAGS, &reg);
+    ret = ReadReg(Registers::REG_IRQ_FLAGS, &reg);
     if (reg & IrqMask::IRQ_TX_DONE_MASK)
       break;
     //ESP_LOGI("lora","Reg: %d",reg);
@@ -520,7 +523,7 @@ esp_err_t SX1278_LoRa::lora_send_packet(uint8_t *buf, uint8_t size)
     vTaskDelay(2);
   };
   //ESP_LOGI("lora","Sending done");
-  return lora_write_reg(Registers::REG_IRQ_FLAGS, IrqMask::IRQ_TX_DONE_MASK);
+  return WriteReg(Registers::REG_IRQ_FLAGS, IrqMask::IRQ_TX_DONE_MASK);
 }
 
 /**
@@ -530,7 +533,7 @@ esp_err_t SX1278_LoRa::lora_send_packet(uint8_t *buf, uint8_t size)
  * @return BytesRead Number of bytes received (zero if no packet available).
  * @return Error status.
  */
-esp_err_t SX1278_LoRa::lora_receive_packet(uint8_t *buf, uint8_t size, uint8_t *BytesRead)
+esp_err_t SX1278_LoRa::ReceivePacket(uint8_t *buf, uint8_t size, uint8_t *BytesRead)
 {
   esp_err_t ret;
   uint8_t len = 0;
@@ -540,10 +543,10 @@ esp_err_t SX1278_LoRa::lora_receive_packet(uint8_t *buf, uint8_t size, uint8_t *
     * Check interrupts.
     */
   uint8_t irq;
-  ret = lora_read_reg(Registers::REG_IRQ_FLAGS, &irq);
+  ret = ReadReg(Registers::REG_IRQ_FLAGS, &irq);
   if (ret != ESP_OK)
     return ret;
-  ret = lora_write_reg(Registers::REG_IRQ_FLAGS, irq);
+  ret = WriteReg(Registers::REG_IRQ_FLAGS, irq);
   if (ret != ESP_OK)
     return ret;
   if ((irq & IrqMask::IRQ_RX_DONE_MASK) == 0) // nichts zu lesen
@@ -556,7 +559,7 @@ esp_err_t SX1278_LoRa::lora_receive_packet(uint8_t *buf, uint8_t size, uint8_t *
 
   // Kein CRC im Header aktiviert? Das wird nicht akzeptiert
   uint8_t hop;
-  ret = lora_read_reg(Registers::REG_HOP_CHANNEL, &hop);
+  ret = ReadReg(Registers::REG_HOP_CHANNEL, &hop);
   if (ret != ESP_OK)
     return ret;
   if (!(hop & 0x40))
@@ -565,7 +568,7 @@ esp_err_t SX1278_LoRa::lora_receive_packet(uint8_t *buf, uint8_t size, uint8_t *
   /*
     * Find packet size.
     */
-  ret = lora_read_reg(mImplicit ? Registers::REG_PAYLOAD_LENGTH : Registers::REG_RX_NB_BYTES, &len);
+  ret = ReadReg(mImplicit ? Registers::REG_PAYLOAD_LENGTH : Registers::REG_RX_NB_BYTES, &len);
   if (ret != ESP_OK)
     return ret;
 
@@ -575,17 +578,17 @@ esp_err_t SX1278_LoRa::lora_receive_packet(uint8_t *buf, uint8_t size, uint8_t *
   //ret = lora_idle();
   //if (ret != ESP_OK)
     //return ret;
-  ret = lora_read_reg(Registers::REG_FIFO_RX_CURRENT_ADDR, &reg);
+  ret = ReadReg(Registers::REG_FIFO_RX_CURRENT_ADDR, &reg);
   if (ret != ESP_OK)
     return ret;
-  ret = lora_write_reg(Registers::REG_FIFO_ADDR_PTR, reg);
+  ret = WriteReg(Registers::REG_FIFO_ADDR_PTR, reg);
   if (ret != ESP_OK)
     return ret;
   if (len > size)
     len = size;
   for (int i = 0; i < len; i++)
   {
-    ret = lora_read_reg(Registers::REG_FIFO, &reg);
+    ret = ReadReg(Registers::REG_FIFO, &reg);
     if (ret != ESP_OK)
       return ret;
     *buf++ = reg;
@@ -598,10 +601,10 @@ esp_err_t SX1278_LoRa::lora_receive_packet(uint8_t *buf, uint8_t size, uint8_t *
 /**
  * Returns non-zero if there is data to read (packet received).
  */
-uint8_t SX1278_LoRa::lora_received(void)
+uint8_t SX1278_LoRa::Received(void)
 {
   uint8_t reg;
-  lora_read_reg(Registers::REG_IRQ_FLAGS, &reg);
+  ReadReg(Registers::REG_IRQ_FLAGS, &reg);
   if (reg & IrqMask::IRQ_RX_DONE_MASK)
     return 1;
   return 0;
@@ -610,29 +613,29 @@ uint8_t SX1278_LoRa::lora_received(void)
 /**
  * Return last packet's RSSI.
  */
-uint8_t SX1278_LoRa::lora_packet_rssi(void)
+uint8_t SX1278_LoRa::PacketRssi(void)
 {
   uint8_t reg;
-  lora_read_reg(Registers::REG_PKT_RSSI_VALUE, &reg);
+  ReadReg(Registers::REG_PKT_RSSI_VALUE, &reg);
   return (reg - (mFrequency < 868E6 ? 164 : 157));
 }
 
 /**
  * Return last packet's SNR (signal to noise ratio).
  */
-float SX1278_LoRa::lora_packet_snr(void)
+float SX1278_LoRa::PacketSnr(void)
 {
   uint8_t reg;
-  lora_read_reg(Registers::REG_PKT_SNR_VALUE, &reg);
+  ReadReg(Registers::REG_PKT_SNR_VALUE, &reg);
   return ((int8_t)reg) * 0.25;
 }
 
 /**
  * Shutdown hardware.
  */
-void SX1278_LoRa::lora_close(void)
+void SX1278_LoRa::Close(void)
 {
-  lora_sleep();
+  Sleep();
   if (mhSpi!=NULL)
   {
     spi_bus_remove_device(mhSpi);
@@ -641,14 +644,14 @@ void SX1278_LoRa::lora_close(void)
   }
 }
 
-esp_err_t SX1278_LoRa::lora_dump_registers(void)
+esp_err_t SX1278_LoRa::DumpRegisters(void)
 {
   esp_err_t ret;
   uint8_t i, reg;
   printf("00 01 02 03 04 05 06 07 08 09 0A 0B 0C 0D 0E 0F\n");
   for (i = 0; i < 0x40; i++)
   {
-    ret = lora_read_reg(i, &reg);
+    ret = ReadReg(i, &reg);
     if (ret != ESP_OK)
       return ret;
     printf("%02X ", reg);
@@ -656,6 +659,36 @@ esp_err_t SX1278_LoRa::lora_dump_registers(void)
       printf("\n");
   }
   printf("\n");
+  return ESP_OK;
+}
+
+esp_err_t SX1278_LoRa::SendLoraMsg(LoraCommand aCmd, uint8_t *aBuf, uint16_t aSize, uint32_t aTag)
+{
+  uint8_t MaxPayloadPerPaketSize = 255 - sizeof(LoraPacketHeader);
+  uint8_t NumPackets = aSize / MaxPayloadPerPaketSize + 1;
+  uint8_t LastPacketSize = aSize - (NumPackets - 1) * MaxPayloadPerPaketSize;
+  LoraPacketHeader ph;
+  ph.Address = mAddress;
+  ph.Cmd = (uint8_t)aCmd;
+  ph.NumPackets = NumPackets;
+  ph.Tag=aTag;
+  int BytesWritten = 0;
+  esp_err_t ret;
+  for (int i = 0; i < NumPackets; i++)
+  {
+    ph.PacketNumber = i;
+    ph.PacketPayloadSize = i == (NumPackets - 1) ? LastPacketSize : MaxPayloadPerPaketSize;
+    ph.TotalTransmissionSize = aSize;
+    ph.PayloadCRC = Crc16(aBuf + BytesWritten, ph.PacketPayloadSize);
+    memcpy(mLoraBuf, &ph, sizeof(ph)); // Header kopieren
+    memcpy(mLoraBuf + sizeof(ph), aBuf + BytesWritten, ph.PacketPayloadSize);
+    //ESP_LOGI(TAG, "Sending LoRa packet %d/%d, %d bytes", i + 1, NumPackets, sizeof(ph) + ph.PacketPayloadSize);
+    ret = SendPacket(mLoraBuf, sizeof(ph) + ph.PacketPayloadSize);
+    if (ret != ESP_OK)
+      return ret;
+    
+    BytesWritten += ph.PacketPayloadSize;
+  }
   return ESP_OK;
 }
 

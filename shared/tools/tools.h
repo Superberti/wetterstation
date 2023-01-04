@@ -93,7 +93,7 @@ void ReplaceAll(std::string & aString, const std::string & aToReplace, const std
 unsigned int SwapEndian(const unsigned int x);
 
 /// CCITT-CRC16 berechnen
-unsigned short compute_crc(unsigned char *data_ptr, unsigned short data_len);
+unsigned short Crc16(unsigned char *data_ptr, unsigned short data_len);
 
 
 #endif

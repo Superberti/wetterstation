@@ -65,5 +65,11 @@ struct LoraPacketHeader
 #define ORT_GARTENHAUS "E"
 #define ORT_GEWAECHSHAUS "F"
 
+// Adressen der einzelnen Lora-Module
+#define LORA_ADDR_RASPI 0				// Raspi-Zentrale
+#define LORA_ADDR_GWHS 1				// Gewächshaus (Temperatur)
+#define LORA_ADDR_CARPORT 2			// Carport-Wetterstation
+#define LORA_ADDR_BIKEPORT 3		// Fahrradschuppen
+
 
 #endif

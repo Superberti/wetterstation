@@ -166,7 +166,6 @@ esp_err_t SendLoraMsg(SX1278_LoRa &aLoRa, LoraCommand aCmd, uint8_t *aBuf, uint1
   esp_err_t ret;
   for (int i = 0; i < NumPackets; i++)
   {
-
     ph.PacketNumber = i;
     ph.PacketPayloadSize = i == (NumPackets - 1) ? LastPacketSize : MaxPayloadPerPaketSize;
     ph.TotalTransmissionSize = aSize;

@@ -151,7 +151,9 @@ bool HexToBin(const std::string aHex, unsigned char *aBuffer)
 		if (!((aHex[i] >= 0x30 && aHex[i] <= 0x39) || (aHex[i] >= 0x41 && aHex[i] <= 0x46) || (aHex[i] >= 0x61 && aHex[i] <= 0x66)))
 			return false;
 
-		unsigned char offset = (aHex[i] >= 0x30 && aHex[i] <= 0x39) ? 0x30 : (aHex[i] >= 0x41 && aHex[i] <= 0x46) ? 0x37 : (aHex[i] >= 0x61 && aHex[i] <= 0x66) ? 0x57 : 0;
+		unsigned char offset = (aHex[i] >= 0x30 && aHex[i] <= 0x39) ? 0x30 : (aHex[i] >= 0x41 && aHex[i] <= 0x46) ? 0x37
+																		 : (aHex[i] >= 0x61 && aHex[i] <= 0x66)	  ? 0x57
+																												  : 0;
 		if (i % 2) // ungerade
 		{
 			LowNibble = (unsigned char)(aHex[i]) - offset;
@@ -263,8 +265,8 @@ int strvprintf(std::string &aStr, const char *format, va_list paramList)
 //----------------------------------------------------------------------------
 
 void ReplaceAll(std::string &aString,
-								const std::string &aToReplace,
-								const std::string &aReplaceWith)
+				const std::string &aToReplace,
+				const std::string &aReplaceWith)
 {
 	if ((aToReplace.size() == 0) || (aToReplace == aReplaceWith))
 		return;
@@ -286,26 +288,26 @@ unsigned int SwapEndian(const unsigned int x)
 //----------------------------------------------------------------------------
 
 /// CCITT-CRC16 berechnen
-unsigned short compute_crc(unsigned char *data_ptr, unsigned short data_len)
+unsigned short Crc16(unsigned char *data_ptr, unsigned short data_len)
 {
-  unsigned short x16;
-  int i;
-  unsigned short crc_buf(0);
-  for (unsigned short it=0; it<data_len;it++)
-  {
-    unsigned char input=data_ptr[it];
-    for (i=0;i<8;i++)
-    {
-      if ((crc_buf & 0x0001) ^ (input & 0x01))
-        x16=0x8408;
-      else
-        x16=0x0000;
-      crc_buf=crc_buf >> 1;
-      crc_buf ^=x16;
-      input=input>>1;
-    }
-  }
-  return crc_buf;
+	unsigned short x16;
+	int i;
+	unsigned short crc_buf(0);
+	for (unsigned short it = 0; it < data_len; it++)
+	{
+		unsigned char input = data_ptr[it];
+		for (i = 0; i < 8; i++)
+		{
+			if ((crc_buf & 0x0001) ^ (input & 0x01))
+				x16 = 0x8408;
+			else
+				x16 = 0x0000;
+			crc_buf = crc_buf >> 1;
+			crc_buf ^= x16;
+			input = input >> 1;
+		}
+	}
+	return crc_buf;
 }
 
 //----------------------------------------------------------------------------

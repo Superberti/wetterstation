@@ -66,14 +66,25 @@ class SX1278_LoRa
 
   struct PinConfiguration
   {
+	  // Pin definitions für Lilygo T3-LoRa
+    static const uint8_t CONFIG_CS_GPIO = 18;
+    static const uint8_t CONFIG_RST_GPIO = 23;
+    static const uint8_t CONFIG_MISO_GPIO = 19;
+    static const uint8_t CONFIG_MOSI_GPIO = 27;
+    static const uint8_t CONFIG_SCK_GPIO = 5;
+    static const uint8_t CONFIG_DIO0_GPIO = 26;
+		static const uint8_t CONFIG_DIO1_GPIO = 33;
+		static const uint8_t CONFIG_BUSY_GPIO = 32;
+		
+	/*
     // Pin definitions für Heltec-ESP-LoRa
-    
     static const uint8_t CONFIG_CS_GPIO = 18;
     static const uint8_t CONFIG_RST_GPIO = 14;
     static const uint8_t CONFIG_MISO_GPIO = 19;
     static const uint8_t CONFIG_MOSI_GPIO = 27;
     static const uint8_t CONFIG_SCK_GPIO = 5;
     static const uint8_t CONFIG_DIO0_GPIO = 33;
+	*/
 
 /*
     // Pin definitions für ESP-DevKit mit externem LoRa-Modul
@@ -89,39 +100,43 @@ class SX1278_LoRa
   bool mInitialized;
   bool mImplicit;
   long mFrequency;
-
+  uint8_t mAddress;
+  static const uint16_t mLoraBufSize=256;
+  uint8_t mLoraBuf[mLoraBufSize];
   
-  esp_err_t lora_explicit_header_mode(void);
-  esp_err_t lora_implicit_header_mode(uint8_t size);
-  esp_err_t lora_idle(void);
-  esp_err_t lora_write_reg(uint8_t reg, uint8_t val);
-  esp_err_t lora_read_reg(uint8_t reg, uint8_t *aInVal);
+  esp_err_t ExplicitHeaderMode(void);
+  esp_err_t ImplicitHeaderMode(uint8_t size);
+  esp_err_t Idle(void);
+  esp_err_t WriteReg(uint8_t reg, uint8_t val);
+  esp_err_t ReadReg(uint8_t reg, uint8_t *aInVal);
 
-  esp_err_t lora_set_tx_power(uint8_t level);
-  esp_err_t lora_set_frequency(long frequency);
-  esp_err_t lora_set_spreading_factor(uint8_t sf);
-  esp_err_t lora_set_bandwidth(long sbw);
-  esp_err_t lora_set_coding_rate(uint8_t denominator);
-  esp_err_t lora_set_preamble_length(uint16_t length);
-  esp_err_t lora_set_sync_word(uint8_t sw);
-  esp_err_t lora_init(void);
-  esp_err_t lora_enable_crc(void);
-  esp_err_t lora_disable_crc(void);
-  void lora_close(void);
-  bool lora_initialized(){return mInitialized;}
+  esp_err_t SetTxPower(uint8_t level);
+  esp_err_t SetFrequency(long frequency);
+  esp_err_t SetSpreadingFactor(uint8_t sf);
+  esp_err_t SetBandwidth(long sbw);
+  esp_err_t SetCodingRate(uint8_t denominator);
+  esp_err_t SetPreambleLength(uint16_t length);
+  esp_err_t SetSyncWord(uint8_t sw);
+  esp_err_t Init(void);
+  esp_err_t EnableCrc(void);
+  esp_err_t DisableCrc(void);
+  
+  bool Initialized(){return mInitialized;}
 
 public:
-  void lora_reset(void);
-  esp_err_t lora_receive(void);
-  esp_err_t lora_sleep(void);
-  esp_err_t lora_send_packet(uint8_t *buf, uint8_t size);
-  esp_err_t lora_receive_packet(uint8_t *buf, uint8_t size, uint8_t *BytesRead);
-  uint8_t lora_received(void);
-  uint8_t lora_packet_rssi(void);
-  float lora_packet_snr(void);
+  void Reset(void);
+  void Close(void);
+  esp_err_t Receive(void);
+  esp_err_t Sleep(void);
+  esp_err_t SendPacket(uint8_t *buf, uint8_t size);
+  esp_err_t ReceivePacket(uint8_t *buf, uint8_t size, uint8_t *BytesRead);
+  uint8_t Received(void);
+  uint8_t PacketRssi(void);
+  float PacketSnr(void);
   
-  esp_err_t lora_dump_registers(void);
-  esp_err_t SetupModule();
+  esp_err_t DumpRegisters(void);
+  esp_err_t SetupModule(uint8_t aAddress, long aFrq, uint16_t aPreambleLength, long aBandwidth, uint8_t aSyncByte);
+  esp_err_t SendLoraMsg(LoraCommand aCmd, uint8_t* aBuf, uint16_t aSize, uint32_t aTag);
 
   SX1278_LoRa();
   ~SX1278_LoRa();
