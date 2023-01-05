@@ -6,13 +6,6 @@
 #include <stdint.h>
 #include "status.h"
 
-// Chip Select Loramodul
-#define NSS_LORA_PIN            25
-// Reset LORA
-#define RESET_LORA_PIN          17
-// LORA-IRQ-Pin
-#define DI0_LORA_PIN            4
-
 class SX1278_LoRa
 {
   struct Registers
@@ -75,12 +68,15 @@ class SX1278_LoRa
 
   struct PinConfiguration
   {
-    // Pin definitions für Heltec-ESP-LoRa
-    static const uint8_t CONFIG_CS_GPIO = 18;
-    static const uint8_t CONFIG_RST_GPIO = 14;
-    static const uint8_t CONFIG_MISO_GPIO = 19;
-    static const uint8_t CONFIG_MOSI_GPIO = 27;
-    static const uint8_t CONFIG_SCK_GPIO = 5;
+    // Pin definitions für Adafruit LoRa-Bonnet für den Raspberry
+    static const uint8_t CONFIG_CS_GPIO = 7;			// CE1
+    static const uint8_t CONFIG_RST_GPIO = 25;	
+    static const uint8_t CONFIG_MISO_GPIO = 10;		// MOSI
+    static const uint8_t CONFIG_MOSI_GPIO = 9;		// MISO
+    static const uint8_t CONFIG_SCK_GPIO = 11;		// SCLK
+		static const uint8_t CONFIG_DIO0=22;
+		static const uint8_t CONFIG_DIO1=23;
+		static const uint8_t CONFIG_DIO2=24;
   };
 
 

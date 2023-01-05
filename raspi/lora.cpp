@@ -51,9 +51,9 @@ ReturnStatus SX1278_LoRa::Init(void)
     return RT_GPIO_SETUP_ERR;
   }
   // GPIO-Setup
-  gpioSetMode(NSS_LORA_PIN, PI_OUTPUT);
-  gpioSetMode(RESET_LORA_PIN, PI_OUTPUT);
-  gpioSetMode(DI0_LORA_PIN, PI_INPUT);
+  gpioSetMode(CONFIG_CS_GPIO, PI_OUTPUT);
+  gpioSetMode(CONFIG_RST_GPIO, PI_OUTPUT);
+  gpioSetMode(CONFIG_DIO0, PI_INPUT);
   
   // SPI-Setup
   mSPIHandle=spiOpen(0,500000,0);
@@ -166,9 +166,9 @@ ReturnStatus SX1278_LoRa::lora_write_reg(uint8_t reg, uint8_t val)
 {
   uint8_t out[2] = {(uint8_t)(0x80 | reg), val};
 
-  gpioWrite(NSS_LORA_PIN, 0);
+  gpioWrite(CONFIG_CS_GPIO, 0);
   int ret=spiWrite(mSPIHandle, (char*)out, sizeof(out));
-  gpioWrite(NSS_LORA_PIN, 1);
+  gpioWrite(CONFIG_CS_GPIO, 1);
 
   return ret<0 ? RT_SPI_WRITE_FAILED : RT_OK;
 }
@@ -183,9 +183,9 @@ ReturnStatus SX1278_LoRa::lora_read_reg(uint8_t reg, uint8_t *aInVal)
   uint8_t out[2] = {reg, 0xff};
   uint8_t in[2];
 
-  gpioWrite(NSS_LORA_PIN, 0);
+  gpioWrite(CONFIG_CS_GPIO, 0);
   int ret = spiXfer(mSPIHandle, (char*)out, (char*)in, sizeof(out));
-  gpioWrite(NSS_LORA_PIN, 1);
+  gpioWrite(CONFIG_CS_GPIO, 1);
   *aInVal = in[1];
   
   return ret<0 ? RT_SPI_READ_FAILED : RT_OK;
@@ -196,9 +196,9 @@ ReturnStatus SX1278_LoRa::lora_read_reg(uint8_t reg, uint8_t *aInVal)
  */
 void SX1278_LoRa::lora_reset(void)
 {
-  gpioWrite(RESET_LORA_PIN,0);
+  gpioWrite(CONFIG_RST_GPIO,0);
   delay(10);
-  gpioWrite(RESET_LORA_PIN,1);
+  gpioWrite(CONFIG_RST_GPIO,1);
   delay(10);
 }
 
@@ -618,7 +618,7 @@ bool SX1278_LoRa::lora_received(bool aUseDI0Pin)
   if (aUseDI0Pin)
   {
     // GPIO-Pin vom Raspberry lesen, falls DI0-Pin vom SX1276/8 verbunden ist
-    return gpioRead(DI0_LORA_PIN);
+    return gpioRead(CONFIG_DIO0);
   }
   else
   {
