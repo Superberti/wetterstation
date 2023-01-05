@@ -13,7 +13,7 @@ SX1278_LoRa::SX1278_LoRa()
   , mImplicit(false)
   , mSPIHandle(-1)
 {
-  
+
 }
 
 SX1278_LoRa::~SX1278_LoRa()
@@ -44,17 +44,17 @@ ReturnStatus SX1278_LoRa::Init(void)
 {
   mInitialized=false;
   ReturnStatus ret;
-  
+
   if (gpioInitialise() < 0)
   {
     fprintf(stderr,"gpioInitialise failed!");
     return RT_GPIO_SETUP_ERR;
   }
   // GPIO-Setup
-  gpioSetMode(CONFIG_CS_GPIO, PI_OUTPUT);
-  gpioSetMode(CONFIG_RST_GPIO, PI_OUTPUT);
-  gpioSetMode(CONFIG_DIO0, PI_INPUT);
-  
+  gpioSetMode(PinConfiguration::CONFIG_CS_GPIO, PI_OUTPUT);
+  gpioSetMode(PinConfiguration::CONFIG_RST_GPIO, PI_OUTPUT);
+  gpioSetMode(PinConfiguration::CONFIG_DIO0, PI_INPUT);
+
   // SPI-Setup
   mSPIHandle=spiOpen(0,500000,0);
   if (mSPIHandle<0)
@@ -166,9 +166,9 @@ ReturnStatus SX1278_LoRa::lora_write_reg(uint8_t reg, uint8_t val)
 {
   uint8_t out[2] = {(uint8_t)(0x80 | reg), val};
 
-  gpioWrite(CONFIG_CS_GPIO, 0);
+  gpioWrite(PinConfiguration::CONFIG_CS_GPIO, 0);
   int ret=spiWrite(mSPIHandle, (char*)out, sizeof(out));
-  gpioWrite(CONFIG_CS_GPIO, 1);
+  gpioWrite(PinConfiguration::CONFIG_CS_GPIO, 1);
 
   return ret<0 ? RT_SPI_WRITE_FAILED : RT_OK;
 }
@@ -183,11 +183,11 @@ ReturnStatus SX1278_LoRa::lora_read_reg(uint8_t reg, uint8_t *aInVal)
   uint8_t out[2] = {reg, 0xff};
   uint8_t in[2];
 
-  gpioWrite(CONFIG_CS_GPIO, 0);
+  gpioWrite(PinConfiguration::CONFIG_CS_GPIO, 0);
   int ret = spiXfer(mSPIHandle, (char*)out, (char*)in, sizeof(out));
-  gpioWrite(CONFIG_CS_GPIO, 1);
+  gpioWrite(PinConfiguration::CONFIG_CS_GPIO, 1);
   *aInVal = in[1];
-  
+
   return ret<0 ? RT_SPI_READ_FAILED : RT_OK;
 }
 
@@ -196,9 +196,9 @@ ReturnStatus SX1278_LoRa::lora_read_reg(uint8_t reg, uint8_t *aInVal)
  */
 void SX1278_LoRa::lora_reset(void)
 {
-  gpioWrite(CONFIG_RST_GPIO,0);
+  gpioWrite(PinConfiguration::CONFIG_RST_GPIO,0);
   delay(10);
-  gpioWrite(CONFIG_RST_GPIO,1);
+  gpioWrite(PinConfiguration::CONFIG_RST_GPIO,1);
   delay(10);
 }
 
@@ -570,7 +570,7 @@ ReturnStatus SX1278_LoRa::lora_receive_packet(uint8_t *buf, uint16_t size, uint1
   }
   if (irq & IrqMask::IRQ_PAYLOAD_CRC_ERROR_MASK)
     return RT_LORA_CRC_ERR;
-    
+
   // Kein CRC im Header aktiviert? Das wird nicht akzeptiert
   uint8_t hop;
   ret = lora_read_reg(Registers::REG_HOP_CHANNEL, &hop);
@@ -618,7 +618,7 @@ bool SX1278_LoRa::lora_received(bool aUseDI0Pin)
   if (aUseDI0Pin)
   {
     // GPIO-Pin vom Raspberry lesen, falls DI0-Pin vom SX1276/8 verbunden ist
-    return gpioRead(CONFIG_DIO0);
+    return gpioRead(PinConfiguration::CONFIG_DIO0);
   }
   else
   {
@@ -675,61 +675,61 @@ int SX1278_LoRa::delay(long milliseconds)
 {
    struct timespec rem;
    struct timespec req= {
-       (int)(milliseconds / 1000),     /* secs (Must be Non-Negative) */ 
-       (milliseconds % 1000) * 1000000 /* nano (Must be in range of 0 to 999999999) */ 
+       (int)(milliseconds / 1000),     /* secs (Must be Non-Negative) */
+       (milliseconds % 1000) * 1000000 /* nano (Must be in range of 0 to 999999999) */
    };
 
    return nanosleep(&req , &rem);
 }
 
-// CRC types 
-#define CRC_TYPE_CCITT                        0 
-#define CRC_TYPE_IBM                          1 
-// Polynomial = X^16 + X^12 + X^5 + 1 
-#define POLYNOMIAL_CCITT                      0x1021 
-// Polynomial = X^16 + X^15 + X^2 + 1 
-#define POLYNOMIAL_IBM                        0x8005 
-// Seeds 
-#define CRC_IBM_SEED                          0xFFFF 
+// CRC types
+#define CRC_TYPE_CCITT                        0
+#define CRC_TYPE_IBM                          1
+// Polynomial = X^16 + X^12 + X^5 + 1
+#define POLYNOMIAL_CCITT                      0x1021
+// Polynomial = X^16 + X^15 + X^2 + 1
+#define POLYNOMIAL_IBM                        0x8005
+// Seeds
+#define CRC_IBM_SEED                          0xFFFF
 #define CRC_CCITT_SEED                        0x1D0F
- 
-uint16_t SX1278_LoRa::RadioComputeCRC( uint8_t *buffer, uint8_t length, uint8_t crcType ) 
-{ 
-  uint8_t i = 0; 
-  uint16_t crc = 0; 
-  uint16_t polynomial = 0; 
-  polynomial = ( crcType == CRC_TYPE_IBM ) ? POLYNOMIAL_IBM : POLYNOMIAL_CCITT;  
-  crc = ( crcType == CRC_TYPE_IBM ) ? CRC_IBM_SEED : CRC_CCITT_SEED;  
-  for( i = 0; i < length; i++ ) 
-  { 
-    crc = ComputeCrc( crc, buffer[i], polynomial ); 
-  } 
-  if( crcType == CRC_TYPE_IBM ) 
-  { 
-    return crc; 
-  } 
-  else 
-  {     
-    return( ( uint16_t ) ( ~crc )); 
-  } 
-} 
+
+uint16_t SX1278_LoRa::RadioComputeCRC( uint8_t *buffer, uint8_t length, uint8_t crcType )
+{
+  uint8_t i = 0;
+  uint16_t crc = 0;
+  uint16_t polynomial = 0;
+  polynomial = ( crcType == CRC_TYPE_IBM ) ? POLYNOMIAL_IBM : POLYNOMIAL_CCITT;
+  crc = ( crcType == CRC_TYPE_IBM ) ? CRC_IBM_SEED : CRC_CCITT_SEED;
+  for( i = 0; i < length; i++ )
+  {
+    crc = ComputeCrc( crc, buffer[i], polynomial );
+  }
+  if( crcType == CRC_TYPE_IBM )
+  {
+    return crc;
+  }
+  else
+  {
+    return( ( uint16_t ) ( ~crc ));
+  }
+}
 
 
-uint16_t SX1278_LoRa::ComputeCrc( uint16_t crc, uint8_t dataByte, uint16_t polynomial ) 
-{ 
-  uint8_t i; 
-  for( i = 0; i < 8; i++ ) 
-  { 
-    if( ( ( ( crc & 0x8000 ) >> 8 ) ^ ( dataByte & 0x80 ) ) != 0 ) 
-    { 
-      crc <<= 1;              // shift left once 
-      crc ^= polynomial;      // XOR with polynomial 
-    } 
-    else 
-    { 
-      crc <<= 1;              // shift left once 
-    } 
-    dataByte <<= 1;             // Next data bit 
-  } 
-  return crc; 
-} 
+uint16_t SX1278_LoRa::ComputeCrc( uint16_t crc, uint8_t dataByte, uint16_t polynomial )
+{
+  uint8_t i;
+  for( i = 0; i < 8; i++ )
+  {
+    if( ( ( ( crc & 0x8000 ) >> 8 ) ^ ( dataByte & 0x80 ) ) != 0 )
+    {
+      crc <<= 1;              // shift left once
+      crc ^= polynomial;      // XOR with polynomial
+    }
+    else
+    {
+      crc <<= 1;              // shift left once
+    }
+    dataByte <<= 1;             // Next data bit
+  }
+  return crc;
+}

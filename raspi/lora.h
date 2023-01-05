@@ -70,13 +70,13 @@ class SX1278_LoRa
   {
     // Pin definitions für Adafruit LoRa-Bonnet für den Raspberry
     static const uint8_t CONFIG_CS_GPIO = 7;			// CE1
-    static const uint8_t CONFIG_RST_GPIO = 25;	
+    static const uint8_t CONFIG_RST_GPIO = 25;
     static const uint8_t CONFIG_MISO_GPIO = 10;		// MOSI
     static const uint8_t CONFIG_MOSI_GPIO = 9;		// MISO
     static const uint8_t CONFIG_SCK_GPIO = 11;		// SCLK
-		static const uint8_t CONFIG_DIO0=22;
-		static const uint8_t CONFIG_DIO1=23;
-		static const uint8_t CONFIG_DIO2=24;
+    static const uint8_t CONFIG_DIO0=22;
+	static const uint8_t CONFIG_DIO1=23;
+	static const uint8_t CONFIG_DIO2=24;
   };
 
 
@@ -85,7 +85,7 @@ class SX1278_LoRa
   long mFrequency;
   int mSPIHandle;
 
-  
+
   ReturnStatus lora_explicit_header_mode(void);
   ReturnStatus lora_implicit_header_mode(uint8_t size);
   ReturnStatus lora_idle(void);

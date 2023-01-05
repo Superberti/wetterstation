@@ -15,7 +15,7 @@
 #include <unistd.h>
 #include <atomic>
 #include <sys/time.h>
-#include "../shared/lorastructs.h"
+#include "../shared/lora/lorastructs.h"
 
 /* Private typedef -----------------------------------------------------------*/
 /* Private define ------------------------------------------------------------*/
@@ -68,7 +68,7 @@ void install_sighandler()
 
 int main(int argc, char* argv[])
 {
-  if (argc < 2) 
+  if (argc < 2)
   {
 		fprintf (stdout,"Usage: %s send|rec\n",argv[0]);
 		exit(1);
@@ -81,9 +81,9 @@ int main(int argc, char* argv[])
   bool SendMode=!strcmp("send", argv[1]);
   SX1278_LoRa Transmitter;
   ReturnStatus stat=Transmitter.Init();
-  
+
   install_sighandler();
-  
+
   if (stat!=RT_OK)
   {
     fprintf(stderr,"Lora init failed!\n");
@@ -124,13 +124,13 @@ int main(int argc, char* argv[])
         fprintf(stderr,"IsReceiving() failed.\n");
         IsReceiving=false;
       }
-      
+
       if ((GetTime_s()-StartTime)>Timeout || !IsReceiving)
       {
         if (IsReceiving)
-          fprintf(stderr,"Resetting receiver due to read timeout...\n"); 
+          fprintf(stderr,"Resetting receiver due to read timeout...\n");
         else
-          fprintf(stderr,"Resetting receiver due to IsReceiving=false...\n"); 
+          fprintf(stderr,"Resetting receiver due to IsReceiving=false...\n");
         Transmitter.Close();
         Transmitter.Init();
         install_sighandler();
@@ -138,14 +138,14 @@ int main(int argc, char* argv[])
         Transmitter.lora_receive();
         StartTime=GetTime_s();
       }
-      
+
       //Transmitter.lora_receive();
       if(Transmitter.lora_received(true))
       {
         StartTime=GetTime_s();
         ReturnStatus stat=Transmitter.lora_receive_packet(lora_buf, LoraBufSize, BytesRead);
         if (stat==RT_LORA_CRC_ERR)
-        { 
+        {
           fprintf(stderr,"Discarding packet: CRC-error.\n");
         }
         else if (stat==RT_HEADER_WITHOUT_CRC)
@@ -157,7 +157,7 @@ int main(int argc, char* argv[])
           if (BytesRead>0)
           {
             // Paket empfangen
-			
+
             //lora_buf[LoraBufSize-1]=0;
             //if (BytesRead<LoraBufSize-1)
               //lora_buf[BytesRead]=0;
@@ -165,7 +165,7 @@ int main(int argc, char* argv[])
 			LoraPacketHeader ph;
 			memcpy(&ph,lora_buf,sizeof(ph));
 			fprintf(stdout,"Lora Tag (Lfd. Nummer remote: %d \n",ph.Tag);
-			
+
 			RecCounter++;
           }
           else
@@ -177,7 +177,7 @@ int main(int argc, char* argv[])
       else
         Transmitter.delay(100);
     }
-    if( quit.load() ) 
+    if( quit.load() )
       break;    // exit normally after SIGINT
     i++;
   }
