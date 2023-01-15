@@ -1,31 +1,70 @@
 /*!
- * Ansteuerung eines SHT35 Temperatur und Luftfeuchtigkeitssensor.
+ * Ansteuerung eines SHT40 Temperatur und Luftfeuchtigkeitssensor.
  * Umgesetzt auf ESP32, I2C-Interface
  */
-#ifndef __SHT35_H__
-#define __SHT35_H__
+#ifndef __SHT40_H__
+#define __SHT40_H__
 
 
 /*!
  *  I2C ADDRESS/BITS/SETTINGS
  */
-#define SHT35_ADDR (0x44) /**< The default I2C address for the sensor. */
-// Kein Clock-Stretching, hohe Genauigkeit. S. Datenblatt Seite 10
-#define SHT35_CMD_START_MSB 0x24
-#define SHT35_CMD_START_LSB 0x00
+#define SHT40_ADDR (0x44) // Standard I2C-Adresse
 
-class SHT35
+#define DELAY_LPM_MS 2
+#define DELAY_MPM_MS 5
+#define DELAY_HPM_MS 10
+
+// Kommandos s. Datenblatt Seite 12
+enum SHT40_COMMAND
+{
+  // Hohe Präzision, 20 mW Heater, 100 ms on-time
+  SHT40_CMD_HPM_H_20_100=0x15,
+
+  // Hohe Präzision, 20 mW Heater, 1000 ms on-time
+  SHT40_CMD_HPM_H_20_1000=0x1E,
+
+  // Hohe Präzision, 110 mW Heater, 100 ms on-time
+  SHT40_CMD_HPM_H_110_100=0x24,
+
+  // Hohe Präzision, 110 mW Heater, 1000 ms on-time
+  SHT40_CMD_HPM_H_110_1000=0x2F,
+
+  // Hohe Präzision, 200 mW Heater, 100 ms on-time
+  SHT40_CMD_HPM_H_200_100=0x32,
+
+  // Hohe Präzision, 200 mW Heater, 1000 ms on-time
+  SHT40_CMD_HPM_H_200_1000=0x39,
+
+  // Seriennummer auslesen
+  SHT40_CMD_READ_SERIAL=0x89,
+
+  // Reset
+  SHT40_CMD_SOFT_RESET=0x95,
+
+  // Niedrige Präzision, kein Heater, Messzeit=1,6 ms
+  SHT40_CMD_LPM=0xE0,
+
+  // Mittlere Präzision, kein Heater, Messzeit=4,5 ms
+  SHT40_CMD_MPM=0xF6,
+  
+  // Hohe Präzision, kein Heater, Messzeit=8,3 ms
+  SHT40_CMD_HPM=0xFD,
+
+};
+
+class SHT40
 {
 public:
 
-  SHT35(int aPort);
+  SHT40(int aPort, SHT40_COMMAND aReadMode=SHT40_CMD_HPM);
 
-  ~SHT35(void);
+  ~SHT40(void);
 
-  bool init();
-  esp_err_t ReadSHT35(double & aTemp, double & aHum, bool & rCRC_Err);
+  esp_err_t Read(double & aTemp, double & aHum, bool & rCRC_Err);
 
 private:
+  SHT40_COMMAND mReadMode;
   int mPort;
   // CRC8-Berechnung
   const uint8_t poly = 0x31; // x8 + x5 + x4 + 1
