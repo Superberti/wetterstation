@@ -48,16 +48,26 @@ struct LoraPacketHeader
   uint16_t PayloadCRC;
 } __attribute__((packed));
 
+// Temperatur in Grad Celsius
 #define TEMP_TAG "TE"
+// Luftfeuchtigkeit in Prozent
 #define HUM_TAG "LF"
+// Luftdruck in mbar
 #define PRESS_TAG "LD"
+// Beleuchtungsstärke in Lux
 #define ILLU_TAG "BS"
+// Lüfterumdrehungen in UpM
 #define COOL_TAG "LU"
+// Ort
 #define POS_TAG "Ort"
+// Wert
 #define VAL_TAG "W"
+// Batteriespannung
+#define VOL_TAG "V"
 // Paket-Zähler
 #define PC_TAG "PC"
 
+// Orte
 #define ORT_SCHUPPEN_SCHATTEN "A"
 #define ORT_SCHUPPEN_SONNE "B"
 #define ORT_SCHUPPEN_INNEN "C"

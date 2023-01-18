@@ -13,6 +13,9 @@
 #include "driver/rtc_io.h"
 #include "soc/rtc.h"
 #include "sht40.h"
+#include "esp_adc/adc_oneshot.h"
+#include "esp_adc/adc_cali.h"
+#include "esp_adc/adc_cali_scheme.h"
 
 extern "C"
 {
@@ -73,7 +76,22 @@ extern "C"
 
 void app_main_cpp()
 {
-  
+  // ADC
+  //-------------ADC1 Init---------------//
+  adc_oneshot_unit_handle_t adc1_handle;
+  adc_oneshot_unit_init_cfg_t init_config1;
+  init_config1.unit_id = ADC_UNIT_1;
+  init_config1.ulp_mode = ADC_ULP_MODE_DISABLE;
+
+      ESP_ERROR_CHECK(adc_oneshot_new_unit(&init_config1, &adc1_handle));
+
+  //-------------ADC1 Config---------------//
+  adc_oneshot_chan_cfg_t config;
+  config.bitwidth = ADC_BITWIDTH_DEFAULT;
+  config.atten = ADC_ATTEN_DB_6;
+
+  ESP_ERROR_CHECK(adc_oneshot_config_channel(adc1_handle, ADC_CHANNEL_7, &config));
+
   esp_err_t ret;
   float iTemp_deg, iHum_per, iPress_mBar;
   bool iCRCErr;
@@ -108,7 +126,7 @@ void app_main_cpp()
   gpio_set_level(LED_PIN, 1);
 
   // Init Temperatursensor
-  uint32_t iSerial=0;
+  uint32_t iSerial = 0;
   SHT40 iTempSensor(I2C_NUM_0, PIN_SDA_TEMP, PIN_SCL_TEMP);
   ret = iTempSensor.Init();
   if (ret != ESP_OK)
@@ -138,77 +156,98 @@ void app_main_cpp()
   uint16_t iCBORBuildSize;
   // uint32_t iPC = 0;
 
-  ret = iTempSensor.Read(iTemp_deg, iHum_per, iCRCErr);
-  ESP_LOGI(TAG, "Temp.: %.2f LF: %.2f %%", iTemp_deg, iHum_per);
-  if (ret != ESP_OK)
-    ESP_LOGE(TAG, "Fehler beim Lesen der Temperatur/Luftfeuchtigkeit des SHT40: %d", ret);
-  if (iCRCErr)
-    ESP_LOGE(TAG, "Fehler beim Lesen des SHT40 CRC (T/L)");
-
-  // iTemp_deg = 20 + 20 * sin(3.141592 * (SleepCounter / 360.0));
-  // iHum_per = 60 + 30 * sin(0.8 + 3.141592 * (SleepCounter / 360.0));
-  iPress_mBar = 1000 + 30 * cos(3.141592 * (SleepCounter / 360.0));
-  iCBORBuildSize = 0;
-  BuildCBORBuf(LoraBuf, sizeof(LoraBuf), iCBORBuildSize, SleepCounter, iTemp_deg, iHum_per, iPress_mBar);
-  if (iCBORBuildSize > sizeof(LoraBuf))
-    ESP_LOGE(TAG, "LoRa Buffer overflow...:%d", iCBORBuildSize);
-
-  // LoRa-Paket senden
-  int RetryCounter = 0;
-  bool SendOK = false;
-  const int MaxRetries = 5;
-  char DisplayBuf[256] = {};
-  while (!SendOK && RetryCounter < MaxRetries)
+  while (true)
   {
-    RetryCounter = 0;
-    gpio_set_level(LED_PIN, 1);
-    int64_t ts = GetTime_us();
-    ret = LoRa.SendLoraMsg(CMD_CBORDATA, LoraBuf, iCBORBuildSize, SleepCounter);
-    SendOK = ret == ESP_OK;
-    int64_t te = GetTime_us();
-    gpio_set_level(LED_PIN, 0);
-    ESP_LOGI(TAG, "Zeit fuer LoRa: %.1f ms. Paketgroesse: %u", double(te - ts) / 1000.0, iCBORBuildSize);
-    if (!SendOK)
+    ret = iTempSensor.Read(iTemp_deg, iHum_per, iCRCErr);
+    ESP_LOGI(TAG, "Temp.: %.2f LF: %.2f %%", iTemp_deg, iHum_per);
+    if (ret != ESP_OK)
+      ESP_LOGE(TAG, "Fehler beim Lesen der Temperatur/Luftfeuchtigkeit des SHT40: %d", ret);
+    if (iCRCErr)
+      ESP_LOGE(TAG, "Fehler beim Lesen des SHT40 CRC (T/L)");
+
+    double AdcMean = 0;
+    int AdcValue = 0;
+    // Batteriespannung
+    for (int i = 0; i < 64; i++)
     {
-      RetryCounter++;
-      ESP_LOGE(TAG, "Fehler beim Senden eines LoRa-Paketes: %d Versuch: %d", ret, RetryCounter);
-      ESP_LOGE(TAG, "Resette LORA-Modul...");
-      LoRa.Reset();
-      vTaskDelay(pdMS_TO_TICKS(100));
-      ret = LoRa.SetupModule(LORA_ADDR_GWHS, 434.54e6, 14, 500E3, 0x3d);
-      if (ret != ESP_OK)
-        error(TAG, "Fehler beim Initialisieren des LoRa Moduls: %d", ret);
-      else
-        ESP_LOGI(TAG, "Re-Init LORA erfolgreich");
+      ESP_ERROR_CHECK(adc_oneshot_read(adc1_handle, ADC_CHANNEL_7, &AdcValue));
+      AdcMean += AdcValue;
     }
+    AdcMean /= 64.0;
+    // Referenzspannung 1.1V, Spannungsteiler 100K/100K, Abschwächung 6dB (Faktor 2) = 4.4 V bei Vollausschlag (4095)
+    double V=AdcMean/4095*4.4;
+    ESP_LOGI(TAG, "ADC raw value: %.0f = %.2f V", AdcMean,V);
+
+    // iTemp_deg = 20 + 20 * sin(3.141592 * (SleepCounter / 360.0));
+    // iHum_per = 60 + 30 * sin(0.8 + 3.141592 * (SleepCounter / 360.0));
+    iPress_mBar = 1000 + 30 * cos(3.141592 * (SleepCounter / 360.0));
+    iCBORBuildSize = 0;
+    BuildCBORBuf(LoraBuf, sizeof(LoraBuf), iCBORBuildSize, SleepCounter, iTemp_deg, iHum_per, iPress_mBar);
+    if (iCBORBuildSize > sizeof(LoraBuf))
+      ESP_LOGE(TAG, "LoRa Buffer overflow...:%d", iCBORBuildSize);
+
+    // LoRa-Paket senden
+    int RetryCounter = 0;
+    bool SendOK = false;
+    const int MaxRetries = 5;
+    char DisplayBuf[256] = {};
+    while (!SendOK && RetryCounter < MaxRetries)
+    {
+      RetryCounter = 0;
+      gpio_set_level(LED_PIN, 1);
+      int64_t ts = GetTime_us();
+      ret = LoRa.SendLoraMsg(CMD_CBORDATA, LoraBuf, iCBORBuildSize, SleepCounter);
+      SendOK = ret == ESP_OK;
+      int64_t te = GetTime_us();
+      gpio_set_level(LED_PIN, 0);
+      ESP_LOGI(TAG, "Zeit fuer LoRa: %.1f ms. Paketgroesse: %u", double(te - ts) / 1000.0, iCBORBuildSize);
+      if (!SendOK)
+      {
+        RetryCounter++;
+        ESP_LOGE(TAG, "Fehler beim Senden eines LoRa-Paketes: %d Versuch: %d", ret, RetryCounter);
+        ESP_LOGE(TAG, "Resette LORA-Modul...");
+        LoRa.Reset();
+        vTaskDelay(pdMS_TO_TICKS(100));
+        ret = LoRa.SetupModule(LORA_ADDR_GWHS, 434.54e6, 14, 500E3, 0x3d);
+        if (ret != ESP_OK)
+          error(TAG, "Fehler beim Initialisieren des LoRa Moduls: %d", ret);
+        else
+          ESP_LOGI(TAG, "Re-Init LORA erfolgreich");
+      }
+    }
+    if (!SendOK)
+      ESP_LOGE(TAG, "Wiederholtes Senden fehlgeschlagen!");
+
+    EndTime = GetTime_us();
+    ESP_LOGI(TAG, "LoRa gesendet nach %.1f ms", (EndTime - StartTime) / 1000.0);
+
+    u8g2_ClearBuffer(&u8g2);
+    sprintf(DisplayBuf, "Paket Nr.: %lu", SleepCounter);
+    u8g2_DrawStr(&u8g2, 2, 14, DisplayBuf);
+
+    sprintf(DisplayBuf, "Temp: %.2f%cC", iTemp_deg, 176);
+    u8g2_DrawStr(&u8g2, 2, 28, DisplayBuf);
+
+    //sprintf(DisplayBuf, "Wach: %.1f ms", (EndTime - StartTime) / 1000.0);
+    //u8g2_DrawStr(&u8g2, 2, 42, DisplayBuf);
+
+    sprintf(DisplayBuf, "Feuchte: %.2f %%", iHum_per);
+    u8g2_DrawStr(&u8g2, 2, 42, DisplayBuf);
+
+    // sprintf(DisplayBuf, "Druck: %.2f mBar", iPress_mBar);
+    // u8g2_DrawStr(&u8g2, 2, 56, DisplayBuf);
+
+    // sprintf(DisplayBuf, "Sleep: %.3f s", sleep_time_ms / 1000.0);
+    // u8g2_DrawStr(&u8g2, 2, 56, DisplayBuf);
+
+    sprintf(DisplayBuf, "Vbatt: %.2f V", V);
+    u8g2_DrawStr(&u8g2, 2, 56, DisplayBuf);
+
+    u8g2_SendBuffer(&u8g2);
+    vTaskDelay(5000 / portTICK_PERIOD_MS);
+    SleepCounter++;
   }
-  if (!SendOK)
-    ESP_LOGE(TAG, "Wiederholtes Senden fehlgeschlagen!");
 
-  EndTime = GetTime_us();
-  ESP_LOGI(TAG, "LoRa gesendet nach %.1f ms", (EndTime - StartTime) / 1000.0);
-
-  u8g2_ClearBuffer(&u8g2);
-  sprintf(DisplayBuf, "Paket Nr.: %lu", SleepCounter);
-  u8g2_DrawStr(&u8g2, 2, 14, DisplayBuf);
-
-  sprintf(DisplayBuf, "Temp: %.2f%cC", iTemp_deg, 176);
-  u8g2_DrawStr(&u8g2, 2, 28, DisplayBuf);
-
-  sprintf(DisplayBuf, "Wach: %.1f ms", (EndTime - StartTime) / 1000.0);
-  u8g2_DrawStr(&u8g2, 2, 42, DisplayBuf);
-
-  // sprintf(DisplayBuf, "Feuchte: %.2f %%", iHum_per);
-  // u8g2_DrawStr(&u8g2, 2, 42, DisplayBuf);
-
-  // sprintf(DisplayBuf, "Druck: %.2f mBar", iPress_mBar);
-  // u8g2_DrawStr(&u8g2, 2, 56, DisplayBuf);
-
-  sprintf(DisplayBuf, "Sleep: %.3f s", sleep_time_ms / 1000.0);
-  u8g2_DrawStr(&u8g2, 2, 56, DisplayBuf);
-
-  u8g2_SendBuffer(&u8g2);
-  SleepCounter++;
   vTaskDelay(2000 / portTICK_PERIOD_MS);
 
   u8g2_SetPowerSave(&u8g2, 1);
