@@ -12,6 +12,7 @@
 #include "esp_sleep.h"
 #include "driver/rtc_io.h"
 #include "soc/rtc.h"
+#include "sht40.h"
 
 extern "C"
 {
@@ -29,15 +30,15 @@ extern "C"
 #define LED_PIN GPIO_NUM_25
 #define TAG "LORA_TEMP"
 
-// SDA - GPIO21
-#define PIN_SDA GPIO_NUM_21
+// SDA - GPIO21 (DISPLAY)
+#define PIN_SDA_DISPL GPIO_NUM_21
 
-// SCL - GPIO22
-#define PIN_SCL GPIO_NUM_22
+// SCL - GPIO22 (DISPLAY)
+#define PIN_SCL_DISPL GPIO_NUM_22
 
-// aus Lilygo-Beispielen
-#define I2C_SDA GPIO_NUM_21
-#define I2C_SCL GPIO_NUM_22
+// Temperatursensor SHT40
+#define PIN_SDA_TEMP GPIO_NUM_13
+#define PIN_SCL_TEMP GPIO_NUM_14
 /*
 #define RADIO_SCLK_PIN GPIO_NUM_5
 #define RADIO_MISO_PIN GPIO_NUM_19
@@ -62,7 +63,6 @@ static RTC_DATA_ATTR struct timeval sleep_enter_time;
 static RTC_DATA_ATTR uint32_t SleepCounter;
 u8g2_t u8g2; // a structure which will contain all the data for one display
 
-
 extern "C"
 {
   void app_main()
@@ -73,55 +73,80 @@ extern "C"
 
 void app_main_cpp()
 {
-  int64_t StartTime=GetTime_us();
+  
+  esp_err_t ret;
+  float iTemp_deg, iHum_per, iPress_mBar;
+  bool iCRCErr;
+  int64_t StartTime = GetTime_us();
   // Strom-Reset oder Wakeup-Timer?
   switch (esp_sleep_get_wakeup_cause())
   {
   case ESP_SLEEP_WAKEUP_TIMER:
   {
-    //ESP_LOGI(TAG, "Wake up from timer. Time spent in deep sleep: %dms\n", sleep_time_ms);
+    // ESP_LOGI(TAG, "Wake up from timer. Time spent in deep sleep: %dms\n", sleep_time_ms);
     ESP_LOGI(TAG, "Wake up from timer.");
     break;
   }
   default:
   {
     ESP_LOGI(TAG, "Not a deep sleep reset\n");
+
     // Init RTC-Variablen beim ersten Boot
     gettimeofday(&sleep_enter_time, NULL);
-    SleepCounter=0;
+    SleepCounter = 0;
   }
   }
 
   struct timeval now;
   gettimeofday(&now, NULL);
   int sleep_time_ms = (now.tv_sec - sleep_enter_time.tv_sec) * 1000 + (now.tv_usec - sleep_enter_time.tv_usec) / 1000;
-  
+
   rtc_gpio_hold_dis(LED_PIN);
   gpio_reset_pin(LED_PIN);
   /* Set the GPIO as a push/pull output */
   gpio_set_direction(LED_PIN, GPIO_MODE_OUTPUT);
   gpio_set_level(LED_PIN, 1);
+
+  // Init Temperatursensor
+  uint32_t iSerial=0;
+  SHT40 iTempSensor(I2C_NUM_0, PIN_SDA_TEMP, PIN_SCL_TEMP);
+  ret = iTempSensor.Init();
+  if (ret != ESP_OK)
+    ESP_LOGE(TAG, "Fehler beim Initialisieren des SHT40: %d", ret);
+  ret = iTempSensor.ReadSerial(iSerial, iCRCErr);
+  ESP_LOGI(TAG, "SHT40 Seriennummer: %lu", iSerial);
+  if (ret != ESP_OK)
+    ESP_LOGE(TAG, "Fehler beim Lesen der Seriennummer des SHT40: %d", ret);
+  if (iCRCErr)
+    ESP_LOGE(TAG, "Fehler beim Lesen des SHT40 CRC (Seriennummer)");
+
   InitSSD1306_u8g2();
-  int64_t EndTime=GetTime_us();
-  ESP_LOGI(TAG,"SSD1306 Init fertig nach %.1f ms",(EndTime-StartTime)/1000.0); 
+  int64_t EndTime = GetTime_us();
+  ESP_LOGI(TAG, "SSD1306 Init fertig nach %.1f ms", (EndTime - StartTime) / 1000.0);
   gpio_set_level(LED_PIN, 0);
   SX1278_LoRa LoRa;
-  esp_err_t ret = LoRa.SetupModule(LORA_ADDR_GWHS, 434.54e6, 14, 500E3, 0x3d);
+  ret = LoRa.SetupModule(LORA_ADDR_GWHS, 434.54e6, 14, 500E3, 0x3d);
   if (ret != ESP_OK)
     ESP_LOGE(TAG, "Fehler beim Initialisieren des LoRa Moduls: %d", ret);
-  EndTime=GetTime_us();
-  ESP_LOGI(TAG,"LoRa Init fertig nach %.1f ms",(EndTime-StartTime)/1000.0); 
+  EndTime = GetTime_us();
+  ESP_LOGI(TAG, "LoRa Init fertig nach %.1f ms", (EndTime - StartTime) / 1000.0);
 
-  //vTaskDelay(2000 / portTICK_PERIOD_MS);
+  // vTaskDelay(2000 / portTICK_PERIOD_MS);
   u8g2_ClearDisplay(&u8g2);
   u8g2_SetFont(&u8g2, u8g2_font_crox1h_tf);
   uint8_t LoraBuf[255];
   uint16_t iCBORBuildSize;
-  //uint32_t iPC = 0;
-  float iTemp_deg, iHum_per, iPress_mBar;
+  // uint32_t iPC = 0;
 
-  iTemp_deg = 20 + 20 * sin(3.141592 * (SleepCounter / 360.0));
-  iHum_per = 60 + 30 * sin(0.8 + 3.141592 * (SleepCounter / 360.0));
+  ret = iTempSensor.Read(iTemp_deg, iHum_per, iCRCErr);
+  ESP_LOGI(TAG, "Temp.: %.2f LF: %.2f %%", iTemp_deg, iHum_per);
+  if (ret != ESP_OK)
+    ESP_LOGE(TAG, "Fehler beim Lesen der Temperatur/Luftfeuchtigkeit des SHT40: %d", ret);
+  if (iCRCErr)
+    ESP_LOGE(TAG, "Fehler beim Lesen des SHT40 CRC (T/L)");
+
+  // iTemp_deg = 20 + 20 * sin(3.141592 * (SleepCounter / 360.0));
+  // iHum_per = 60 + 30 * sin(0.8 + 3.141592 * (SleepCounter / 360.0));
   iPress_mBar = 1000 + 30 * cos(3.141592 * (SleepCounter / 360.0));
   iCBORBuildSize = 0;
   BuildCBORBuf(LoraBuf, sizeof(LoraBuf), iCBORBuildSize, SleepCounter, iTemp_deg, iHum_per, iPress_mBar);
@@ -160,8 +185,8 @@ void app_main_cpp()
   if (!SendOK)
     ESP_LOGE(TAG, "Wiederholtes Senden fehlgeschlagen!");
 
-  EndTime=GetTime_us();
-  ESP_LOGI(TAG,"LoRa gesendet nach %.1f ms",(EndTime-StartTime)/1000.0); 
+  EndTime = GetTime_us();
+  ESP_LOGI(TAG, "LoRa gesendet nach %.1f ms", (EndTime - StartTime) / 1000.0);
 
   u8g2_ClearBuffer(&u8g2);
   sprintf(DisplayBuf, "Paket Nr.: %lu", SleepCounter);
@@ -170,11 +195,11 @@ void app_main_cpp()
   sprintf(DisplayBuf, "Temp: %.2f%cC", iTemp_deg, 176);
   u8g2_DrawStr(&u8g2, 2, 28, DisplayBuf);
 
-  sprintf(DisplayBuf, "Wach: %.1f ms", (EndTime-StartTime)/1000.0);
+  sprintf(DisplayBuf, "Wach: %.1f ms", (EndTime - StartTime) / 1000.0);
   u8g2_DrawStr(&u8g2, 2, 42, DisplayBuf);
 
-  //sprintf(DisplayBuf, "Feuchte: %.2f %%", iHum_per);
-  //u8g2_DrawStr(&u8g2, 2, 42, DisplayBuf);
+  // sprintf(DisplayBuf, "Feuchte: %.2f %%", iHum_per);
+  // u8g2_DrawStr(&u8g2, 2, 42, DisplayBuf);
 
   // sprintf(DisplayBuf, "Druck: %.2f mBar", iPress_mBar);
   // u8g2_DrawStr(&u8g2, 2, 56, DisplayBuf);
@@ -316,8 +341,8 @@ esp_err_t BuildCBORBuf(uint8_t *aBuf, uint16_t aMaxBufSize, uint16_t &aCBORBuild
 void InitSSD1306_u8g2()
 {
   u8g2_esp32_hal_t u8g2_esp32_hal = U8G2_ESP32_HAL_DEFAULT;
-  u8g2_esp32_hal.sda = PIN_SDA;
-  u8g2_esp32_hal.scl = PIN_SCL;
+  u8g2_esp32_hal.sda = PIN_SDA_DISPL;
+  u8g2_esp32_hal.scl = PIN_SCL_DISPL;
   u8g2_esp32_hal_init(u8g2_esp32_hal);
 
   /*
@@ -341,17 +366,17 @@ void InitSSD1306_u8g2()
   ESP_LOGI(TAG, "u8g2_ClearBuffer");
   u8g2_ClearBuffer(&u8g2);
   u8g2_SendBuffer(&u8g2);
-/*
-  ESP_LOGI(TAG, "u8g2_DrawBox");
-  u8g2_DrawBox(&u8g2, 0, 26, 80, 6);
-  u8g2_DrawFrame(&u8g2, 0, 26, 100, 6);
+  /*
+    ESP_LOGI(TAG, "u8g2_DrawBox");
+    u8g2_DrawBox(&u8g2, 0, 26, 80, 6);
+    u8g2_DrawFrame(&u8g2, 0, 26, 100, 6);
 
-  ESP_LOGI(TAG, "u8g2_SetFont");
-  u8g2_SetFont(&u8g2, u8g2_font_ncenB10_tr);
-  ESP_LOGI(TAG, "u8g2_DrawStr");
-  u8g2_DrawStr(&u8g2, 2, 17, "Hi Oliver!");
-  ESP_LOGI(TAG, "u8g2_SendBuffer");
-  u8g2_SendBuffer(&u8g2);
-*/
+    ESP_LOGI(TAG, "u8g2_SetFont");
+    u8g2_SetFont(&u8g2, u8g2_font_ncenB10_tr);
+    ESP_LOGI(TAG, "u8g2_DrawStr");
+    u8g2_DrawStr(&u8g2, 2, 17, "Hi Oliver!");
+    ESP_LOGI(TAG, "u8g2_SendBuffer");
+    u8g2_SendBuffer(&u8g2);
+  */
   ESP_LOGI(TAG, "SSD 1306 display initialized!");
 }

@@ -55,14 +55,6 @@ enum SHT40_COMMAND
 
 class SHT40
 {
-public:
-
-  SHT40(int aPort, SHT40_COMMAND aReadMode=SHT40_CMD_HPM);
-
-  ~SHT40(void);
-
-  esp_err_t Read(double & aTemp, double & aHum, bool & rCRC_Err);
-
 private:
   SHT40_COMMAND mReadMode;
   int mPort;
@@ -70,6 +62,18 @@ private:
   const uint8_t poly = 0x31; // x8 + x5 + x4 + 1
   uint8_t ComputeChecksum(uint8_t* bytes, int len);
   uint8_t Crc8b(uint8_t aData);
+  int mSDA_Pin ;
+  int mSCL_Pin;
+public:
+
+  SHT40(int aPort, int aSDA_Pin, int aSCL_Pin, SHT40_COMMAND aReadMode=SHT40_CMD_HPM);
+  ~SHT40(void);
+
+  esp_err_t Init();
+  void Close();
+  esp_err_t Read(float & aTemp, float & aHum, bool & rCRC_Err);
+  esp_err_t ReadSerial(uint32_t & aSerialNo, bool &rCRC_Err);
+
 };
 
 #endif
