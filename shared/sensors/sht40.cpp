@@ -41,7 +41,7 @@ esp_err_t SHT40::Init()
   return i2c_driver_install(mPort, conf.mode, 0, 0, 0);
 }
 
-// SHT340-Sensor auslesen
+// SHT40-Sensor auslesen
 esp_err_t SHT40::Read(float &aTemp, float &aHum, bool &rCRC_Err)
 {
   int ret;

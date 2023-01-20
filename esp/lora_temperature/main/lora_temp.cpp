@@ -88,7 +88,7 @@ void app_main_cpp()
   //-------------ADC1 Config---------------//
   adc_oneshot_chan_cfg_t config;
   config.bitwidth = ADC_BITWIDTH_DEFAULT;
-  config.atten = ADC_ATTEN_DB_6;
+  config.atten = ADC_ATTEN_DB_11;
 
   ESP_ERROR_CHECK(adc_oneshot_config_channel(adc1_handle, ADC_CHANNEL_7, &config));
 
@@ -174,15 +174,15 @@ void app_main_cpp()
       AdcMean += AdcValue;
     }
     AdcMean /= 64.0;
-    // Referenzspannung 1.1V, Spannungsteiler 100K/100K, Abschwächung 6dB (Faktor 2) = 4.4 V bei Vollausschlag (4095)
-    double V=AdcMean/4095*4.4;
-    ESP_LOGI(TAG, "ADC raw value: %.0f = %.2f V", AdcMean,V);
+    // Referenzspannung 1.1V, Spannungsteiler 100K/100K, Abschwächung 11dB (Faktor 3.55) = 7.81 V bei Vollausschlag (4095)
+    double iVBatt_V=AdcMean/4095*7.81;
+    ESP_LOGI(TAG, "ADC raw value: %.0f = %.2f V", AdcMean,iVBatt_V);
 
     // iTemp_deg = 20 + 20 * sin(3.141592 * (SleepCounter / 360.0));
     // iHum_per = 60 + 30 * sin(0.8 + 3.141592 * (SleepCounter / 360.0));
     iPress_mBar = 1000 + 30 * cos(3.141592 * (SleepCounter / 360.0));
     iCBORBuildSize = 0;
-    BuildCBORBuf(LoraBuf, sizeof(LoraBuf), iCBORBuildSize, SleepCounter, iTemp_deg, iHum_per, iPress_mBar);
+    BuildCBORBuf(LoraBuf, sizeof(LoraBuf), iCBORBuildSize, SleepCounter, iTemp_deg, iHum_per, iPress_mBar, iVBatt_V);
     if (iCBORBuildSize > sizeof(LoraBuf))
       ESP_LOGE(TAG, "LoRa Buffer overflow...:%d", iCBORBuildSize);
 
@@ -240,7 +240,7 @@ void app_main_cpp()
     // sprintf(DisplayBuf, "Sleep: %.3f s", sleep_time_ms / 1000.0);
     // u8g2_DrawStr(&u8g2, 2, 56, DisplayBuf);
 
-    sprintf(DisplayBuf, "Vbatt: %.2f V", V);
+    sprintf(DisplayBuf, "Vbatt: %.2f V", iVBatt_V);
     u8g2_DrawStr(&u8g2, 2, 56, DisplayBuf);
 
     u8g2_SendBuffer(&u8g2);
@@ -288,7 +288,7 @@ void error(const char *format, ...)
   }
 }
 
-esp_err_t BuildCBORBuf(uint8_t *aBuf, uint16_t aMaxBufSize, uint16_t &aCBORBuildSize, uint32_t aPC, float aTemp_deg, float aHum_per, float aPress_mBar)
+esp_err_t BuildCBORBuf(uint8_t *aBuf, uint16_t aMaxBufSize, uint16_t &aCBORBuildSize, uint32_t aPC, float aTemp_deg, float aHum_per, float aPress_mBar, float iVBatt_V)
 {
   // Achtung: In einer Map müssesn stets zwei Einträge paarweise stehen, sonst
   // schlägt der Encoder fehl!
@@ -350,6 +350,15 @@ esp_err_t BuildCBORBuf(uint8_t *aBuf, uint16_t aMaxBufSize, uint16_t &aCBORBuild
   cbor_encode_text_stringz(&me1, ORT_GEWAECHSHAUS);
   cbor_encode_text_stringz(&me1, VAL_TAG);
   cbor_encode_float(&me1, aPress_mBar);
+  cbor_encoder_close_container(&me0, &me1);
+
+  // Batteriespannung
+  cbor_encode_text_stringz(&me0, VOL_TAG);
+  cbor_encoder_create_map(&me0, &me1, CborIndefiniteLength);
+  cbor_encode_text_stringz(&me1, POS_TAG);
+  cbor_encode_text_stringz(&me1, ORT_GEWAECHSHAUS);
+  cbor_encode_text_stringz(&me1, VAL_TAG);
+  cbor_encode_float(&me1, iVBatt_V);
   cbor_encoder_close_container(&me0, &me1);
   /*
       // Beleuchtungsstaerke
