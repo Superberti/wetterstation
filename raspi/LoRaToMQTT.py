@@ -57,57 +57,55 @@ class LoRaRcvCont(LoRa):
             print(f'\n{now}: LoRa-Paket empfangen mit {llen:d} bytes')
             Header=LoraPacketHeader()
             HeaderSize = sizeof(Header)
-            
+            LoraError=False
             if flags['crc_error']==1:
+                LoraError=True
                 self.clear_irq_flags(PayloadCrcError=0)
-                raise Exception("CRC-Fehler in Lora-Paket!")
-            if flags['valid_header']==0:
+                logging.error("CRC-Fehler in Lora-Paket!")
+            elif flags['valid_header']==0:
+                LoraError=True
                 self.clear_irq_flags(ValidHeader=1)
-                raise Exception("Ungültiger LoRa-Paket-Header!")
-            if flags['rx_timeout']==1:
+                logging.error("Ungültiger LoRa-Paket-Header!")
+            elif flags['rx_timeout']==1:
+                LoraError=True
                 self.clear_irq_flags(RxTimeout=0)
-                raise Exception("Timeout in LoRa-Paket!")
-            if llen<sizeof(Header):
-                raise Exception("LoRa-Paket kleiner als LoRa-Header!")
-            bs=bytearray(payload)           
-            memmove(addressof(Header), bytes(bs), HeaderSize)
-            
-            #print('---LoRaHEADER---')
-            #print(f'Magic: {Header.Magic:d}')
-            #print(f'Address: {Header.Address:d}')
-            #print(f'TotalTransmissionSize: {Header.TotalTransmissionSize:d}')
-            #print(f'PacketNumber: {Header.PacketNumber:d}')
-            #print(f'NumPackets: {Header.NumPackets:d}')
-            #print(f'PacketPayloadSize: {Header.PacketPayloadSize:d}')
-            #print(f'Cmd: {Header.Cmd:d}')
-            #print(f'Tag: {Header.Tag:d}')
-            
-            # Die ersten 16 bytes des Paketes ist nur der
-            # Protokollheader, den strippen wir ab
-            bs=bs[HeaderSize:]
-            
-            if len(bs) != Header.PacketPayloadSize:
-                raise Exception(f"Ungültiges LoRa-Paket empfangen. Größe: {len(bs):d} / {Header.PacketPayloadSize:d}")
-            #print(f'Header CRC: {Header.PayloadCRC:x}\n')
-            #print(f'Calculated CRC: {crc16(bs):x}\n')
-            if Header.PayloadCRC != crc16(bs):
-                raise Exception(f"CRC-Payload-Fehler in Lora-Paket! Header:{Header.PayloadCRC:x} Calc:{crc16(bs):x}")
-            gwhs=loads(bs)
-            #with open('gwhs_temp.cbor', 'wb') as fp:
-                #fp.write(bs)
-            print(f'Paketnummer: {gwhs["PC"]:d}')
-            gwhs_temp=f'{gwhs["TE"][0]["W"]:.2f}'
-            gwhs_hum=f'{gwhs["LF"][0]["W"]:.1f}'
-            print(f'Temperatur: {gwhs_temp}°C')
-            print(f'Luftfeuchtigkeit: {gwhs_hum}%')
-            #print(f'Temperatur: {gwhs["TE"][0]["W"]:.2f}°C')
-            #print(f'Luftfeuchtigkeit: {gwhs["LF"][0]["W"]:.1f}%')
+                logging.error("Timeout in LoRa-Paket!")
+            elif llen<sizeof(Header):
+                LoraError=True
+                logging.error("LoRa-Paket kleiner als LoRa-Header!")
+                
+            else:
+                bs=bytearray(payload)           
+                memmove(addressof(Header), bytes(bs), HeaderSize)      
+                # Die ersten 16 bytes des Paketes ist nur der
+                # Protokollheader, den strippen wir ab
+                bs=bs[HeaderSize:]
+                
+                if len(bs) != Header.PacketPayloadSize:
+                    LoraError=True
+                    logging.error(f"Ungültiges LoRa-Paket empfangen. Größe: {len(bs):d} / {Header.PacketPayloadSize:u}")
+                elif Header.PayloadCRC != crc16(bs):
+                    LoraError=True
+                    logging.error(f"CRC-Payload-Fehler in Lora-Paket! Header:{Header.PayloadCRC:x} Calc:{crc16(bs):x}")
+                
             self.set_mode(MODE.SLEEP)
             self.reset_ptr_rx()
             self.set_mode(MODE.RXCONT)
-            msgs = [(TopicTemp, gwhs_temp),(TopicHum, gwhs_hum, 0, False)]
-            pwd = {'username':"rutsch", 'password':"super_mqtt"}
-            publish.multiple(msgs, auth=pwd, hostname="localhost")
+            if LoraError == False:
+                gwhs=loads(bs)
+                print(f'Paketnummer: {gwhs["PC"]:d}')
+                gwhs_temp=f'{gwhs["TE"][0]["W"]:.2f}'
+                gwhs_hum=f'{gwhs["LF"][0]["W"]:.1f}'
+                print(f'Temperatur: {gwhs_temp}°C')
+                print(f'Luftfeuchtigkeit: {gwhs_hum}%')
+                #print(f'Temperatur: {gwhs["TE"][0]["W"]:.2f}°C')
+                #print(f'Luftfeuchtigkeit: {gwhs["LF"][0]["W"]:.1f}%')
+                msgs = [(TopicTemp, gwhs_temp),(TopicHum, gwhs_hum, 0, False)]
+                pwd = {'username':"rutsch", 'password':"super_mqtt"}
+                publish.multiple(msgs, auth=pwd, hostname="localhost")
+            else:
+                print(f'\n{now}: Lora-Paketfehler (s. Log)')
+                
         except Exception as e:
             print(e)
             logging.exception(e)
