@@ -10,10 +10,15 @@ from ctypes import *
 import logging
 from datetime import datetime
 import time
+import threading
+import paho.mqtt.client as mqtt
+import paho.mqtt.publish as publish
 
 FORMAT = '%(asctime)s %(message)s'
 logging.basicConfig(format=FORMAT, filename='LoRa_receiver.log', encoding='utf-8', level=logging.INFO)
 LastReceivedTime = time.time()
+TopicTemp="/wetterstation/gwhs/temperatur"
+TopicHum="/wetterstation/gwhs/luftfeuchtigkeit"
 
 # Lora-Paketheader, 16 Bytes
 class LoraPacketHeader(Structure):
@@ -82,7 +87,7 @@ class LoRaRcvCont(LoRa):
             bs=bs[HeaderSize:]
             
             if len(bs) != Header.PacketPayloadSize:
-                raise Exception(f"Ungültiges LoRa-Paket empfangen. Größe: {len(bs):d}")
+                raise Exception(f"Ungültiges LoRa-Paket empfangen. Größe: {len(bs):d} / {Header.PacketPayloadSize:d}")
             #print(f'Header CRC: {Header.PayloadCRC:x}\n')
             #print(f'Calculated CRC: {crc16(bs):x}\n')
             if Header.PayloadCRC != crc16(bs):
@@ -91,11 +96,18 @@ class LoRaRcvCont(LoRa):
             #with open('gwhs_temp.cbor', 'wb') as fp:
                 #fp.write(bs)
             print(f'Paketnummer: {gwhs["PC"]:d}')
-            print(f'Temperatur: {gwhs["TE"][0]["W"]:.2f}°C')
-            print(f'Luftfeuchtigkeit: {gwhs["LF"][0]["W"]:.1f}%')
+            gwhs_temp=f'{gwhs["TE"][0]["W"]:.2f}'
+            gwhs_hum=f'{gwhs["LF"][0]["W"]:.1f}'
+            print(f'Temperatur: {gwhs_temp}°C')
+            print(f'Luftfeuchtigkeit: {gwhs_hum}%')
+            #print(f'Temperatur: {gwhs["TE"][0]["W"]:.2f}°C')
+            #print(f'Luftfeuchtigkeit: {gwhs["LF"][0]["W"]:.1f}%')
             self.set_mode(MODE.SLEEP)
             self.reset_ptr_rx()
             self.set_mode(MODE.RXCONT)
+            msgs = [(TopicTemp, gwhs_temp),(TopicHum, gwhs_hum, 0, False)]
+            pwd = {'username':"rutsch", 'password':"super_mqtt"}
+            publish.multiple(msgs, auth=pwd, hostname="localhost")
         except Exception as e:
             print(e)
             logging.exception(e)
