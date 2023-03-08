@@ -58,7 +58,11 @@ class LoRaRcvCont(LoRa):
             Header=LoraPacketHeader()
             HeaderSize = sizeof(Header)
             LoraError=False
-            if flags['crc_error']==1:
+            channel_flags=self.get_hop_channel()
+            if channel_flags['crc_on_payload']==0:
+                LoraError=True
+                logging.error("Paket ohne CRC empfangen. Phantom-Paket?")
+            elif flags['crc_error']==1:
                 LoraError=True
                 self.clear_irq_flags(PayloadCrcError=0)
                 logging.error("CRC-Fehler in Lora-Paket!")
