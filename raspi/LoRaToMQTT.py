@@ -26,10 +26,10 @@ class LoraPacketHeader(Structure):
     _fields_ = [('Magic', c_ushort),
                 ('Address', c_ushort),
                 ('TotalTransmissionSize', c_ushort),
-                ('PacketNumber', c_byte),
-                ('NumPackets', c_byte),
-                ('PacketPayloadSize', c_byte),
-                ('Cmd', c_byte),
+                ('PacketNumber', c_ubyte),
+                ('NumPackets', c_ubyte),
+                ('PacketPayloadSize', c_ubyte),
+                ('Cmd', c_ubyte),
                 ('Tag', c_uint, 32),
                 ('PayloadCRC', c_ushort)]
 
@@ -83,7 +83,7 @@ class LoRaRcvCont(LoRa):
                 
                 if len(bs) != Header.PacketPayloadSize:
                     LoraError=True
-                    logging.error(f"Ungültiges LoRa-Paket empfangen. Größe: {len(bs):d} / {Header.PacketPayloadSize:u}")
+                    logging.error(f"Ungültiges LoRa-Paket empfangen. Größe: {len(bs):d} / {Header.PacketPayloadSize:d}")
                 elif Header.PayloadCRC != crc16(bs):
                     LoraError=True
                     logging.error(f"CRC-Payload-Fehler in Lora-Paket! Header:{Header.PayloadCRC:x} Calc:{crc16(bs):x}")
