@@ -26,7 +26,7 @@ Für die Python3-Skripte sind folgende Pakete zu installieren:
     sudo pip3 install paho-mqtt RPi.GPIO spidev pyLoRa cbor2
 Das LoRa-Modul wird an folgende Pins des Raspberrys angeschlossen:
 |LoRa-Modul|Raspberry|
-|----------|--------:|
+|----------|--------|
 |RST|GPIO25|
 |CS/NSS|CE1|
 |DI/MOSI|MOSI|
@@ -34,4 +34,5 @@ Das LoRa-Modul wird an folgende Pins des Raspberrys angeschlossen:
 |DIO0|GPIO22|
 |DIO1|GPIO23|
 |DIO2|GPIO24|
+
 Das ist die Pinbelegung des Adafruits-Funk-Bonnets, die man auch nicht ändern kann. Beim Einsatz von Ra02-Modulen können auch DIO1 und DIO2 weggelassen werden.
