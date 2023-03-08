@@ -20,11 +20,16 @@ Ansonsten kann man mit einer Wetterstation heutzutage niemanden mehr hinter'm Of
 | BMP280 | Luftdruck und Temperatur | 1 |
 # Installation
 Auf dem Raspberry sind folgende Befehle auszuführen:
+
     sudo raspi-config nonint do_spi 0
     sudo apt-get install python3-dev
+    
 Für die Python3-Skripte sind folgende Pakete zu installieren:
+
     sudo pip3 install paho-mqtt RPi.GPIO spidev pyLoRa cbor2
+    
 Das LoRa-Modul wird an folgende Pins des Raspberrys angeschlossen:
+
 |LoRa-Modul|Raspberry|
 |----------|--------|
 |RST|GPIO25|
