@@ -19,7 +19,9 @@ logging.basicConfig(format=FORMAT, filename='LoRa_receiver.log', encoding='utf-8
 LastReceivedTime = time.time()
 TopicTemp="/wetterstation/gwhs/temperatur"
 TopicHum="/wetterstation/gwhs/luftfeuchtigkeit"
-
+PacketLostCounter=0
+CurrentPacketCounter=0
+FirstPacketCounter=0
 # Lora-Paketheader, 16 Bytes
 class LoraPacketHeader(Structure):
     _pack_ = 1
@@ -45,6 +47,9 @@ class LoRaRcvCont(LoRa):
     def on_rx_done(self):
         try:
             global LastReceivedTime
+            global PacketLostCounter
+            global CurrentPacketCounter
+            global FirstPacketCounter
             LastReceivedTime=time.time()
             #print("\nRxDone")
             flags = self.get_irq_flags()
@@ -97,13 +102,26 @@ class LoRaRcvCont(LoRa):
             self.set_mode(MODE.RXCONT)
             if LoraError == False:
                 gwhs=loads(bs)
-                print(f'Paketnummer: {gwhs["PC"]:d}')
+                if CurrentPacketCounter==0:
+                    CurrentPacketCounter=gwhs["PC"] # Initialisierung!
+                    FirstPacketCounter=CurrentPacketCounter
+                    
+                LastCounter=CurrentPacketCounter
+                CurrentPacketCounter=gwhs["PC"]
+                if LastCounter<CurrentPacketCounter-1:
+                    lost_msg=f'LoRa-Paket verloren. Alt: {LastCounter} Neu: {CurrentPacketCounter}'
+                    print(lost_msg)
+                    logging.error(lost_msg)
+                    PacketLostCounter+=1
+                    LastCounter=CurrentPacketCounter
+                
+                TotalCount=CurrentPacketCounter-FirstPacketCounter+1
                 gwhs_temp=f'{gwhs["TE"][0]["W"]:.2f}'
                 gwhs_hum=f'{gwhs["LF"][0]["W"]:.1f}'
-                print(f'Temperatur: {gwhs_temp}°C')
-                print(f'Luftfeuchtigkeit: {gwhs_hum}%')
-                #print(f'Temperatur: {gwhs["TE"][0]["W"]:.2f}°C')
-                #print(f'Luftfeuchtigkeit: {gwhs["LF"][0]["W"]:.1f}%')
+                PacketLossPer=(PacketLostCounter/TotalCount)*100.0
+                print(f'PC: {CurrentPacketCounter}({TotalCount-PacketLostCounter}/{TotalCount}) LOSS: {PacketLossPer:.1f}% TE: {gwhs_temp}°C LF: {gwhs_hum}%')
+                #print(f'Temperatur: {gwhs_temp}°C')
+                #print(f'Luftfeuchtigkeit: {gwhs_hum}%')
                 msgs = [(TopicTemp, gwhs_temp),(TopicHum, gwhs_hum, 0, False)]
                 pwd = {'username':"rutsch", 'password':"super_mqtt"}
                 publish.multiple(msgs, auth=pwd, hostname="localhost")
@@ -142,7 +160,7 @@ class LoRaRcvCont(LoRa):
         print(self.get_irq_flags())
 
     def start(self):
-        
+        global PacketLostCounter
         global LastReceivedTime
         self.reset_ptr_rx()
         self.set_mode(MODE.RXCONT)
