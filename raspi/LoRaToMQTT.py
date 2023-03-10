@@ -19,6 +19,7 @@ logging.basicConfig(format=FORMAT, filename='LoRa_receiver.log', encoding='utf-8
 LastReceivedTime = time.time()
 TopicTemp="/wetterstation/gwhs/temperatur"
 TopicHum="/wetterstation/gwhs/luftfeuchtigkeit"
+TopicVBatt="/wetterstation/gwhs/vbatt"
 PacketLostCounter=0
 CurrentPacketCounter=0
 FirstPacketCounter=0
@@ -118,11 +119,12 @@ class LoRaRcvCont(LoRa):
                 TotalCount=CurrentPacketCounter-FirstPacketCounter+1
                 gwhs_temp=f'{gwhs["TE"][0]["W"]:.2f}'
                 gwhs_hum=f'{gwhs["LF"][0]["W"]:.1f}'
+                gwhs_v=f'{gwhs["V"]["W"]:.2f}'
                 PacketLossPer=(PacketLostCounter/TotalCount)*100.0
-                print(f'PC: {CurrentPacketCounter}({TotalCount-PacketLostCounter}/{TotalCount}) LOSS: {PacketLossPer:.1f}% TE: {gwhs_temp}°C LF: {gwhs_hum}%')
+                print(f'PC: {CurrentPacketCounter}({TotalCount-PacketLostCounter}/{TotalCount}) LOSS: {PacketLossPer:.1f}% TE: {gwhs_temp}°C LF: {gwhs_hum}% VB: {gwhs_v} V')
                 #print(f'Temperatur: {gwhs_temp}°C')
                 #print(f'Luftfeuchtigkeit: {gwhs_hum}%')
-                msgs = [(TopicTemp, gwhs_temp),(TopicHum, gwhs_hum, 0, False)]
+                msgs = [(TopicTemp, gwhs_temp),(TopicHum, gwhs_hum, 0, False),(TopicVBatt,gwhs_v)]
                 pwd = {'username':"rutsch", 'password':"super_mqtt"}
                 publish.multiple(msgs, auth=pwd, hostname="localhost")
             else:
@@ -177,10 +179,10 @@ class LoRaRcvCont(LoRa):
                     self.reset_ptr_rx()
                     self.set_mode(MODE.RXCONT)
                 sleep(.5)
-                rssi_value = self.get_rssi_value()
-                status = self.get_modem_status()
-                sys.stdout.flush()
-                sys.stdout.write("\r%d %d %d" % (rssi_value, status['rx_ongoing'], status['modem_clear']))
+                #rssi_value = self.get_rssi_value()
+                #status = self.get_modem_status()
+                #sys.stdout.flush()
+                #sys.stdout.write("\r%d %d %d" % (rssi_value, status['rx_ongoing'], status['modem_clear']))
             except Exception as e:
                 print(e)
                 logging.exception(e)

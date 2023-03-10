@@ -19,18 +19,24 @@ MQTT_REGEX = '/wetterstation/([^/]+)/([^/]+)'
 MQTT_CLIENT_ID = 'MQTTtoWeathercloud'
 
 TopicTemp1="/wetterstation/aussen/temperatur"
-TopicTemp2="/wetterstation/schuppen/temperatur"
+#TopicTemp2="/wetterstation/schuppen/temperatur"
 TopicPress1="/wetterstation/aussen/luftdruck"
 TopicHum1="/wetterstation/aussen/luftfeuchtigkeit"
-TopicHum2="/wetterstation/schuppen/luftfeuchtigkeit"
-TopicLight="/wetterstation/aussen/beleuchtungsstaerke"
-TopicStatus="/wetterstation/aussen/status"
-TopicLuefter="/wetterstation/aussen/luefterdrehzahl"
+#TopicHum2="/wetterstation/schuppen/luftfeuchtigkeit"
+#TopicLight="/wetterstation/aussen/beleuchtungsstaerke"
+#TopicStatus="/wetterstation/aussen/status"
+#TopicLuefter="/wetterstation/aussen/luefterdrehzahl"
+TopicTemp_gwhs="/wetterstation/gwhs/temperatur"
+TopicHum_gwhs="/wetterstation/gwhs/luftfeuchtigkeit"
+#TopicVBatt_gwhs="/wetterstation/gwhs/vbatt"
 
 CloudCounter=0
 Temperatur=0
 Luftfeuchtigkeit=0
 Luftdruck=0
+Temp_gwhs=0
+Luft_gwhs=0
+StartTime = time.time()
 
 class SensorData(NamedTuple):
     location: str
@@ -48,6 +54,8 @@ def on_connect(client, userdata, flags, rc):
     #client.subscribe(TopicLight)
     #client.subscribe(TopicStatus)
     #client.subscribe(TopicLuefter)
+    client.subscribe(TopicTemp_gwhs)
+    client.subscribe(TopicHum_gwhs)
     
 def _parse_mqtt_message(topic, payload):
     match = re.match(MQTT_REGEX, topic)
@@ -82,6 +90,9 @@ def _send_sensor_data_to_weathercloud(sensor_data):
     global Luftdruck
     global Luftfeuchtigkeit
     global CloudCounter
+    global Temp_gwhs
+    global Luft_gwhs
+    global StartTime
     # compose url for uplad
 
 #http://api.weathercloud.net/set/wid/xxxxxxx/key/xxxxxxxxxxxxx/temp/210/tempin/233/chill/214/heat/247/hum/33/humin/29/wspd/30/wspdhi/30/wspdavg/21/wdir/271/wdiravg/256/bar/10175/rain/0/solarrad/1630/uvi/ 5/ver/1.2/type/201
@@ -94,33 +105,51 @@ def _send_sensor_data_to_weathercloud(sensor_data):
     # Gleitender Mittelwert wird mit 0.9*alt+0.1*neu berechnet
     SmoothFactor=0.1;
     
-    if sensor_data.measurement == "temperatur":
+    if sensor_data.location == "aussen" and sensor_data.measurement == "temperatur":
         if Temperatur==0:
             Temperatur=sensor_data.value
         else:
             Temperatur=(1-SmoothFactor)*Temperatur+SmoothFactor*sensor_data.value
             
-    if sensor_data.measurement == "luftfeuchtigkeit":
+    if sensor_data.location == "aussen" and sensor_data.measurement == "luftfeuchtigkeit":
         if Luftfeuchtigkeit==0:
             Luftfeuchtigkeit=sensor_data.value
         else:
             Luftfeuchtigkeit=(1-SmoothFactor)*Luftfeuchtigkeit+SmoothFactor*sensor_data.value
+            
+    if sensor_data.location == "gwhs" and sensor_data.measurement == "temperatur":
+        if Temp_gwhs==0:
+            Temp_gwhs=sensor_data.value
+        else:
+            Temp_gwhs=(1-SmoothFactor)*Temp_gwhs+SmoothFactor*sensor_data.value
+            
+    if sensor_data.location == "gwhs" and sensor_data.measurement == "luftfeuchtigkeit":
+        if Luft_gwhs==0:
+            Luft_gwhs=sensor_data.value
+        else:
+            Luft_gwhs=(1-SmoothFactor)*Luft_gwhs+SmoothFactor*sensor_data.value
         
-    if sensor_data.measurement == "luftdruck":
+    if sensor_data.location == "aussen" and sensor_data.measurement == "luftdruck":
         if Luftdruck==0:
             Luftdruck=sensor_data.value
         else:
             Luftdruck=(1-SmoothFactor)*Luftdruck+SmoothFactor*sensor_data.value
             
-        # Luftdruck wird immer zuletzt gesendet. Dann sind alle Werte aktuell      
-        if CloudCounter % 10 == 0: #nicht zu oft senden, dass mag weathercloud nicht
-            
+        # Luftdruck wird immer zuletzt gesendet. Dann sind alle Werte aktuell
+        TimePast=time.time()-StartTime
+        if TimePast > 600: #nur alle 600s senden, mehr mag weathercloud nicht
+            StartTime=time.time()
             req_line=(WCurl + WC_Id + "/key" + WC_key + "/temp/" + str(int(Temperatur * 10+0.5)) +
                          "/bar/" + str(int(Luftdruck*10+0.5)) +
-                         "/hum/" + str(int(Luftfeuchtigkeit+0.5)) + last)
+                         "/hum/" + str(int(Luftfeuchtigkeit+0.5)) +
+                         "/tempin/" + str(int(Temp_gwhs * 10+0.5)) +
+                         "/humin/" + str(int(Luft_gwhs+0.5)) + last)
             print("Sending to weathercloud:"+req_line)
             p = requests.get(req_line)        
             print("Received " + str(p.status_code) + " " + str(p.text))
+        else:
+            print(f'Noch {600-int(TimePast)} s bis zum Senden an weathercloud...')
+            
         CloudCounter+=1  
         
 def main():

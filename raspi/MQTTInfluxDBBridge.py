@@ -29,6 +29,9 @@ TopicLight="/wetterstation/aussen/beleuchtungsstaerke"
 TopicStatus="/wetterstation/aussen/status"
 TopicLuefter="/wetterstation/aussen/luefterdrehzahl"
 TopicError="/wetterstation/error/status"
+TopicTemp_gwhs="/wetterstation/gwhs/temperatur"
+TopicHum_gwhs="/wetterstation/gwhs/luftfeuchtigkeit"
+TopicVBatt_gwhs="/wetterstation/gwhs/vbatt"
 
 TopicCounter=0
 
@@ -51,6 +54,9 @@ def on_connect(client, userdata, flags, rc):
     client.subscribe(TopicStatus)
     client.subscribe(TopicLuefter)
     client.subscribe(TopicError)
+    client.subscribe(TopicTemp_gwhs)
+    client.subscribe(TopicHum_gwhs)
+    client.subscribe(TopicVBatt_gwhs)
  
 def _parse_mqtt_message(topic, payload):
     match = re.match(MQTT_REGEX, topic)
