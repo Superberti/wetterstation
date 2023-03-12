@@ -65,6 +65,7 @@ extern "C"
 static RTC_DATA_ATTR struct timeval sleep_enter_time;
 static RTC_DATA_ATTR uint32_t SleepCounter;
 u8g2_t u8g2; // a structure which will contain all the data for one display
+static bool FirstBoot=true;
 
 extern "C"
 {
@@ -101,12 +102,14 @@ void app_main_cpp()
   {
   case ESP_SLEEP_WAKEUP_TIMER:
   {
+    FirstBoot=false;
     // ESP_LOGI(TAG, "Wake up from timer. Time spent in deep sleep: %dms\n", sleep_time_ms);
     ESP_LOGI(TAG, "Wake up from timer.");
     break;
   }
   default:
   {
+    FirstBoot=true;
     ESP_LOGI(TAG, "Not a deep sleep reset\n");
 
     // Init RTC-Variablen beim ersten Boot
@@ -115,6 +118,8 @@ void app_main_cpp()
   }
   }
 
+  bool UseDisplay=FirstBoot;
+  ESP_LOGI(TAG, "Using display %d", UseDisplay);
   struct timeval now;
   gettimeofday(&now, NULL);
   int sleep_time_ms = (now.tv_sec - sleep_enter_time.tv_sec) * 1000 + (now.tv_usec - sleep_enter_time.tv_usec) / 1000;
@@ -137,8 +142,8 @@ void app_main_cpp()
     ESP_LOGE(TAG, "Fehler beim Lesen der Seriennummer des SHT40: %d", ret);
   if (iCRCErr)
     ESP_LOGE(TAG, "Fehler beim Lesen des SHT40 CRC (Seriennummer)");
-
-  InitSSD1306_u8g2();
+  if (UseDisplay)
+    InitSSD1306_u8g2();
   int64_t EndTime = GetTime_us();
   ESP_LOGI(TAG, "SSD1306 Init fertig nach %.1f ms", (EndTime - StartTime) / 1000.0);
   gpio_set_level(LED_PIN, 0);
@@ -150,13 +155,18 @@ void app_main_cpp()
   ESP_LOGI(TAG, "LoRa Init fertig nach %.1f ms", (EndTime - StartTime) / 1000.0);
 
   // vTaskDelay(2000 / portTICK_PERIOD_MS);
-  u8g2_ClearDisplay(&u8g2);
-  u8g2_SetFont(&u8g2, u8g2_font_crox1h_tf);
+  if (UseDisplay)
+  {
+    u8g2_ClearDisplay(&u8g2);
+    u8g2_SetFont(&u8g2, u8g2_font_crox1h_tf);
+  }
   uint8_t LoraBuf[255];
   uint16_t iCBORBuildSize;
   // uint32_t iPC = 0;
-
-  while (true)
+  // Beim ersten booten 30s lang das Dispay anzeigen, dann in den Deep-Sleep
+  // und nur alle 30s aufwachen...
+  int Loops=FirstBoot ? 6 : 1;
+  for (int i=0;i<Loops;i++)
   {
     ret = iTempSensor.Read(iTemp_deg, iHum_per, iCRCErr);
     ESP_LOGI(TAG, "Temp.: %.2f LF: %.2f %%", iTemp_deg, iHum_per);
@@ -175,7 +185,9 @@ void app_main_cpp()
     }
     AdcMean /= 64.0;
     // Referenzspannung 1.1V, Spannungsteiler 100K/100K, Abschwächung 11dB (Faktor 3.55) = 7.81 V bei Vollausschlag (4095)
-    double iVBatt_V=AdcMean/4095*7.81;
+    // Der Kalibrierwert -0.448 muss für jedes Board neu nachgemessen werden, da die Referenzspannung des ESP32-ADCs einfach
+    // nur grottig ist...
+    double iVBatt_V=AdcMean/4095*7.81-0.448;
     ESP_LOGI(TAG, "ADC raw value: %.0f = %.2f V", AdcMean,iVBatt_V);
 
     // iTemp_deg = 20 + 20 * sin(3.141592 * (SleepCounter / 360.0));
@@ -221,18 +233,20 @@ void app_main_cpp()
     EndTime = GetTime_us();
     ESP_LOGI(TAG, "LoRa gesendet nach %.1f ms", (EndTime - StartTime) / 1000.0);
 
-    u8g2_ClearBuffer(&u8g2);
-    sprintf(DisplayBuf, "Paket Nr.: %lu", SleepCounter);
-    u8g2_DrawStr(&u8g2, 2, 14, DisplayBuf);
+    if (UseDisplay)
+    {
+      u8g2_ClearBuffer(&u8g2);
+      sprintf(DisplayBuf, "Paket Nr.: %lu", SleepCounter);
+      u8g2_DrawStr(&u8g2, 2, 14, DisplayBuf);
 
-    sprintf(DisplayBuf, "Temp: %.2f%cC", iTemp_deg, 176);
-    u8g2_DrawStr(&u8g2, 2, 28, DisplayBuf);
+      sprintf(DisplayBuf, "Temp: %.2f%cC", iTemp_deg, 176);
+      u8g2_DrawStr(&u8g2, 2, 28, DisplayBuf);
 
     //sprintf(DisplayBuf, "Wach: %.1f ms", (EndTime - StartTime) / 1000.0);
     //u8g2_DrawStr(&u8g2, 2, 42, DisplayBuf);
 
-    sprintf(DisplayBuf, "Feuchte: %.2f %%", iHum_per);
-    u8g2_DrawStr(&u8g2, 2, 42, DisplayBuf);
+      sprintf(DisplayBuf, "Feuchte: %.2f %%", iHum_per);
+      u8g2_DrawStr(&u8g2, 2, 42, DisplayBuf);
 
     // sprintf(DisplayBuf, "Druck: %.2f mBar", iPress_mBar);
     // u8g2_DrawStr(&u8g2, 2, 56, DisplayBuf);
@@ -240,20 +254,23 @@ void app_main_cpp()
     // sprintf(DisplayBuf, "Sleep: %.3f s", sleep_time_ms / 1000.0);
     // u8g2_DrawStr(&u8g2, 2, 56, DisplayBuf);
 
-    sprintf(DisplayBuf, "Vbatt: %.2f V", iVBatt_V);
-    u8g2_DrawStr(&u8g2, 2, 56, DisplayBuf);
+      sprintf(DisplayBuf, "Vbatt: %.2f V", iVBatt_V);
+      u8g2_DrawStr(&u8g2, 2, 56, DisplayBuf);
 
-    u8g2_SendBuffer(&u8g2);
-    vTaskDelay(5000 / portTICK_PERIOD_MS);
+      u8g2_SendBuffer(&u8g2);
+    }
+    if (FirstBoot)
+      vTaskDelay(5000 / portTICK_PERIOD_MS);
     SleepCounter++;
   }
 
-  vTaskDelay(2000 / portTICK_PERIOD_MS);
-
-  u8g2_SetPowerSave(&u8g2, 1);
+  //vTaskDelay(2000 / portTICK_PERIOD_MS);
+  if (UseDisplay)
+    u8g2_SetPowerSave(&u8g2, 1);
   LoRa.Close();
 
-  const int wakeup_time_sec = 30;
+  ESP_LOGI(TAG, "Going deep sleep...");
+  const int wakeup_time_sec = 60;
   // printf("Enabling timer wakeup, %ds\n", wakeup_time_sec);
   esp_sleep_enable_timer_wakeup(wakeup_time_sec * 1000000);
   rtc_gpio_isolate(LED_PIN);
