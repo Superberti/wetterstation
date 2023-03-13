@@ -120,7 +120,9 @@ class LoRaRcvCont(LoRa):
                 gwhs_temp=f'{gwhs["TE"][0]["W"]:.2f}'
                 gwhs_hum=f'{gwhs["LF"][0]["W"]:.1f}'
                 gwhs_v=f'{gwhs["V"]["W"]:.2f}'
-                PacketLossPer=(PacketLostCounter/TotalCount)*100.0
+                PacketLossPer=0
+                if TotalCount>0:
+                    PacketLossPer=(PacketLostCounter/TotalCount)*100.0
                 print(f'PC: {CurrentPacketCounter}({TotalCount-PacketLostCounter}/{TotalCount}) LOSS: {PacketLossPer:.1f}% TE: {gwhs_temp}°C LF: {gwhs_hum}% VB: {gwhs_v} V')
                 #print(f'Temperatur: {gwhs_temp}°C')
                 #print(f'Luftfeuchtigkeit: {gwhs_hum}%')
@@ -171,7 +173,7 @@ class LoRaRcvCont(LoRa):
                 # Receive-Timeout aufgetreten? Manchmal geht der LoRa-Receiver in einen
                 # Zustand, wo er nichts mehr empfängt. Dann resetten!
                 now=time.time()
-                if now-LastReceivedTime > 15:
+                if now-LastReceivedTime > 120:
                     LastReceivedTime=now
                     print("\nTimeout beim Empfangen. Resette LoRa-Empfänger")
                     logging.error("Timeout beim Empfangen. Resette LoRa-Empfänger")
