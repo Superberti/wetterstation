@@ -32,6 +32,7 @@ extern "C"
 
 #define LED_PIN GPIO_NUM_25
 #define TAG "LORA_TEMP"
+#define LORA_RESET (gpio_num_t)(SX1278_LoRa::PinConfiguration::CONFIG_RST_GPIO)
 
 // SDA - GPIO21 (DISPLAY)
 #define PIN_SDA_DISPL GPIO_NUM_21
@@ -122,9 +123,10 @@ void app_main_cpp()
   ESP_LOGI(TAG, "Using display %d", UseDisplay);
   struct timeval now;
   gettimeofday(&now, NULL);
-  int sleep_time_ms = (now.tv_sec - sleep_enter_time.tv_sec) * 1000 + (now.tv_usec - sleep_enter_time.tv_usec) / 1000;
+  //int sleep_time_ms = (now.tv_sec - sleep_enter_time.tv_sec) * 1000 + (now.tv_usec - sleep_enter_time.tv_usec) / 1000;
 
   rtc_gpio_hold_dis(LED_PIN);
+  rtc_gpio_hold_dis(LORA_RESET);
   gpio_reset_pin(LED_PIN);
   /* Set the GPIO as a push/pull output */
   gpio_set_direction(LED_PIN, GPIO_MODE_OUTPUT);
@@ -205,7 +207,6 @@ void app_main_cpp()
     char DisplayBuf[256] = {};
     while (!SendOK && RetryCounter < MaxRetries)
     {
-      RetryCounter = 0;
       gpio_set_level(LED_PIN, 1);
       int64_t ts = GetTime_us();
       ret = LoRa.SendLoraMsg(CMD_CBORDATA, LoraBuf, iCBORBuildSize, SleepCounter);
@@ -219,16 +220,19 @@ void app_main_cpp()
         ESP_LOGE(TAG, "Fehler beim Senden eines LoRa-Paketes: %d Versuch: %d", ret, RetryCounter);
         ESP_LOGE(TAG, "Resette LORA-Modul...");
         LoRa.Reset();
-        vTaskDelay(pdMS_TO_TICKS(100));
+        vTaskDelay(pdMS_TO_TICKS(1000));
         ret = LoRa.SetupModule(LORA_ADDR_GWHS, 434.54e6, 14, 500E3, 0x3d);
         if (ret != ESP_OK)
-          error(TAG, "Fehler beim Initialisieren des LoRa Moduls: %d", ret);
+          ESP_LOGI(TAG, "Fehler beim Initialisieren des LoRa Moduls: %d", ret);
         else
           ESP_LOGI(TAG, "Re-Init LORA erfolgreich");
       }
     }
     if (!SendOK)
+    {
       ESP_LOGE(TAG, "Wiederholtes Senden fehlgeschlagen!");
+      continue; // schlafen legen, vielleicht klappt es ja beim nächsten mal...
+    }
 
     EndTime = GetTime_us();
     ESP_LOGI(TAG, "LoRa gesendet nach %.1f ms", (EndTime - StartTime) / 1000.0);
@@ -273,7 +277,10 @@ void app_main_cpp()
   const int wakeup_time_sec = 60;
   // printf("Enabling timer wakeup, %ds\n", wakeup_time_sec);
   esp_sleep_enable_timer_wakeup(wakeup_time_sec * 1000000);
+  // LoRa-Modul während des Sleeps in den Reset schicken.
+  gpio_set_level(LORA_RESET, 0);
   rtc_gpio_isolate(LED_PIN);
+  rtc_gpio_isolate(LORA_RESET);
   gettimeofday(&sleep_enter_time, NULL);
   esp_deep_sleep_start();
 }

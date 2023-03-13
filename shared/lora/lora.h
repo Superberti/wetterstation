@@ -64,6 +64,37 @@ class SX1278_LoRa
     static const uint8_t TIMEOUT_RESET = 100;
   };
 
+
+  
+
+  spi_device_handle_t mhSpi;
+  bool mInitialized;
+  bool mImplicit;
+  long mFrequency;
+  uint8_t mAddress;
+  static const uint16_t mLoraBufSize=256;
+  uint8_t mLoraBuf[mLoraBufSize];
+  
+  esp_err_t ExplicitHeaderMode(void);
+  esp_err_t ImplicitHeaderMode(uint8_t size);
+  esp_err_t Idle(void);
+  esp_err_t WriteReg(uint8_t reg, uint8_t val);
+  esp_err_t ReadReg(uint8_t reg, uint8_t *aInVal);
+
+  esp_err_t SetTxPower(uint8_t level);
+  esp_err_t SetFrequency(long frequency);
+  esp_err_t SetSpreadingFactor(uint8_t sf);
+  esp_err_t SetBandwidth(long sbw);
+  esp_err_t SetCodingRate(uint8_t denominator);
+  esp_err_t SetPreambleLength(uint16_t length);
+  esp_err_t SetSyncWord(uint8_t sw);
+  esp_err_t Init(void);
+  esp_err_t EnableCrc(void);
+  esp_err_t DisableCrc(void);
+  
+  bool Initialized(){return mInitialized;}
+
+public:
   struct PinConfiguration
   {
 	  // Pin definitions für Lilygo T3-LoRa
@@ -95,35 +126,6 @@ class SX1278_LoRa
     static const uint8_t CONFIG_SCK_GPIO = 2;
     */
   };
-
-  spi_device_handle_t mhSpi;
-  bool mInitialized;
-  bool mImplicit;
-  long mFrequency;
-  uint8_t mAddress;
-  static const uint16_t mLoraBufSize=256;
-  uint8_t mLoraBuf[mLoraBufSize];
-  
-  esp_err_t ExplicitHeaderMode(void);
-  esp_err_t ImplicitHeaderMode(uint8_t size);
-  esp_err_t Idle(void);
-  esp_err_t WriteReg(uint8_t reg, uint8_t val);
-  esp_err_t ReadReg(uint8_t reg, uint8_t *aInVal);
-
-  esp_err_t SetTxPower(uint8_t level);
-  esp_err_t SetFrequency(long frequency);
-  esp_err_t SetSpreadingFactor(uint8_t sf);
-  esp_err_t SetBandwidth(long sbw);
-  esp_err_t SetCodingRate(uint8_t denominator);
-  esp_err_t SetPreambleLength(uint16_t length);
-  esp_err_t SetSyncWord(uint8_t sw);
-  esp_err_t Init(void);
-  esp_err_t EnableCrc(void);
-  esp_err_t DisableCrc(void);
-  
-  bool Initialized(){return mInitialized;}
-
-public:
   void Reset(void);
   void Close(void);
   esp_err_t Receive(void);
