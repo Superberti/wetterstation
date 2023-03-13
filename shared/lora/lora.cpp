@@ -380,6 +380,7 @@ esp_err_t SX1278_LoRa::Init(void)
   gpio_set_direction((gpio_num_t)PinConfiguration::CONFIG_RST_GPIO, GPIO_MODE_OUTPUT);
   gpio_reset_pin((gpio_num_t)PinConfiguration::CONFIG_CS_GPIO);
   gpio_set_direction((gpio_num_t)PinConfiguration::CONFIG_CS_GPIO, GPIO_MODE_OUTPUT);
+  Reset();
 
   spi_bus_config_t bus = {};
   bus.miso_io_num = PinConfiguration::CONFIG_MISO_GPIO;

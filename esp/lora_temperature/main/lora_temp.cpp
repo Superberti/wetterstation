@@ -32,6 +32,7 @@ extern "C"
 
 #define LED_PIN GPIO_NUM_25
 #define TAG "LORA_TEMP"
+#define LORA_RESET (gpio_num_t)(SX1278_LoRa::PinConfiguration::CONFIG_RST_GPIO)
 
 // SDA - GPIO21 (DISPLAY)
 #define PIN_SDA_DISPL GPIO_NUM_21
@@ -122,9 +123,10 @@ void app_main_cpp()
   ESP_LOGI(TAG, "Using display %d", UseDisplay);
   struct timeval now;
   gettimeofday(&now, NULL);
-  int sleep_time_ms = (now.tv_sec - sleep_enter_time.tv_sec) * 1000 + (now.tv_usec - sleep_enter_time.tv_usec) / 1000;
+  //int sleep_time_ms = (now.tv_sec - sleep_enter_time.tv_sec) * 1000 + (now.tv_usec - sleep_enter_time.tv_usec) / 1000;
 
   rtc_gpio_hold_dis(LED_PIN);
+  rtc_gpio_hold_dis(LORA_RESET);
   gpio_reset_pin(LED_PIN);
   /* Set the GPIO as a push/pull output */
   gpio_set_direction(LED_PIN, GPIO_MODE_OUTPUT);
@@ -275,7 +277,10 @@ void app_main_cpp()
   const int wakeup_time_sec = 60;
   // printf("Enabling timer wakeup, %ds\n", wakeup_time_sec);
   esp_sleep_enable_timer_wakeup(wakeup_time_sec * 1000000);
+  // LoRa-Modul während des Sleeps in den Reset schicken.
+  gpio_set_level(LORA_RESET, 0);
   rtc_gpio_isolate(LED_PIN);
+  rtc_gpio_isolate(LORA_RESET);
   gettimeofday(&sleep_enter_time, NULL);
   esp_deep_sleep_start();
 }
