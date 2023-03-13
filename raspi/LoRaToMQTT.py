@@ -15,7 +15,7 @@ import paho.mqtt.client as mqtt
 import paho.mqtt.publish as publish
 
 FORMAT = '%(asctime)s %(message)s'
-logging.basicConfig(format=FORMAT, filename='LoRa_receiver.log', encoding='utf-8', level=logging.INFO)
+logging.basicConfig(format=FORMAT, filename='/var/log/LoRa_receiver.log', encoding='utf-8', level=logging.INFO)
 LastReceivedTime = time.time()
 TopicTemp="/wetterstation/gwhs/temperatur"
 TopicHum="/wetterstation/gwhs/luftfeuchtigkeit"

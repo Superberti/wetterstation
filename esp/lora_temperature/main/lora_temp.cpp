@@ -126,7 +126,7 @@ void app_main_cpp()
   //int sleep_time_ms = (now.tv_sec - sleep_enter_time.tv_sec) * 1000 + (now.tv_usec - sleep_enter_time.tv_usec) / 1000;
 
   rtc_gpio_hold_dis(LED_PIN);
-  rtc_gpio_hold_dis(LORA_RESET);
+  //rtc_gpio_hold_dis(LORA_RESET);
   gpio_reset_pin(LED_PIN);
   /* Set the GPIO as a push/pull output */
   gpio_set_direction(LED_PIN, GPIO_MODE_OUTPUT);
@@ -280,7 +280,7 @@ void app_main_cpp()
   // LoRa-Modul während des Sleeps in den Reset schicken.
   gpio_set_level(LORA_RESET, 0);
   rtc_gpio_isolate(LED_PIN);
-  rtc_gpio_isolate(LORA_RESET);
+  //rtc_gpio_isolate(LORA_RESET);
   gettimeofday(&sleep_enter_time, NULL);
   esp_deep_sleep_start();
 }
