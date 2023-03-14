@@ -113,6 +113,7 @@ class LoRaRcvCont(LoRa):
                     lost_msg=f'LoRa-Paket verloren. Alt: {LastCounter} Neu: {CurrentPacketCounter}'
                     print(lost_msg)
                     logging.error(lost_msg)
+                    logging.error(f'PC: {CurrentPacketCounter}({TotalCount-PacketLostCounter}/{TotalCount}) LOSS: {PacketLossPer:.1f}%')
                     PacketLostCounter+=1
                     LastCounter=CurrentPacketCounter
                 
