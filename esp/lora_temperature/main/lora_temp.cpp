@@ -17,6 +17,20 @@
 #include "esp_adc/adc_cali.h"
 #include "esp_adc/adc_cali_scheme.h"
 
+/*
+ * Boardauswahl: Ich verwende bisher mit diesem Code 3 verschiedene Boards. Bitte hier definieren
+ *
+ * LILYGO_T3  // SX1276 mit OLED-Display und ESP32
+ * HELTEC_ESP_LORA
+ * HELTEC_STICK_V3  // SX1262 mit (ESP32-S3FN8) (erst mal nicht funktionsfähig, da neuer LoRa-Treiber notwendig!)
+ */
+
+// Welches Board wird verwendet?
+#define LILYGO_T3
+
+// Nur definieren, falls der SHT40 nicht angeschlossen ist, man aber trotzdem ein paar Daten haben möchte
+//#define FAKE_SHT40
+
 extern "C"
 {
 #include <u8g2.h>
@@ -30,9 +44,7 @@ extern "C"
 #include "esp_wifi.h"
 #include "lora_temp.h"
 
-#define LED_PIN GPIO_NUM_25
 #define TAG "LORA_TEMP"
-#define LORA_RESET (gpio_num_t)(SX1278_LoRa::PinConfiguration::CONFIG_RST_GPIO)
 
 // SDA - GPIO21 (DISPLAY)
 #define PIN_SDA_DISPL GPIO_NUM_21
@@ -43,16 +55,7 @@ extern "C"
 // Temperatursensor SHT40
 #define PIN_SDA_TEMP GPIO_NUM_13
 #define PIN_SCL_TEMP GPIO_NUM_14
-/*
-#define RADIO_SCLK_PIN GPIO_NUM_5
-#define RADIO_MISO_PIN GPIO_NUM_19
-#define RADIO_MOSI_PIN GPIO_NUM_27
-#define RADIO_CS_PIN GPIO_NUM_18
-#define RADIO_DIO0_PIN GPIO_NUM_26
-#define RADIO_RST_PIN GPIO_NUM_23
-#define RADIO_DIO1_PIN GPIO_NUM_33
-#define RADIO_BUSY_PIN GPIO_NUM_32
-*/
+
 #define SDCARD_MOSI GPIO_NUM_15
 #define SDCARD_MISO GPIO_NUM_2
 #define SDCARD_SCLK GPIO_NUM_14
@@ -61,12 +64,10 @@ extern "C"
 #define BOARD_LED GPIO_NUM_25
 #define LED_ON HIGH
 
-#define ADC_PIN GPIO_NUM_35
-
 static RTC_DATA_ATTR struct timeval sleep_enter_time;
 static RTC_DATA_ATTR uint32_t SleepCounter;
 u8g2_t u8g2; // a structure which will contain all the data for one display
-static bool FirstBoot=true;
+static bool FirstBoot = true;
 
 extern "C"
 {
@@ -85,14 +86,7 @@ void app_main_cpp()
   init_config1.unit_id = ADC_UNIT_1;
   init_config1.ulp_mode = ADC_ULP_MODE_DISABLE;
 
-      ESP_ERROR_CHECK(adc_oneshot_new_unit(&init_config1, &adc1_handle));
-
-  //-------------ADC1 Config---------------//
-  adc_oneshot_chan_cfg_t config;
-  config.bitwidth = ADC_BITWIDTH_DEFAULT;
-  config.atten = ADC_ATTEN_DB_11;
-
-  ESP_ERROR_CHECK(adc_oneshot_config_channel(adc1_handle, ADC_CHANNEL_7, &config));
+  ESP_ERROR_CHECK(adc_oneshot_new_unit(&init_config1, &adc1_handle));
 
   esp_err_t ret;
   float iTemp_deg, iHum_per, iPress_mBar;
@@ -103,14 +97,14 @@ void app_main_cpp()
   {
   case ESP_SLEEP_WAKEUP_TIMER:
   {
-    FirstBoot=false;
+    FirstBoot = false;
     // ESP_LOGI(TAG, "Wake up from timer. Time spent in deep sleep: %dms\n", sleep_time_ms);
     ESP_LOGI(TAG, "Wake up from timer.");
     break;
   }
   default:
   {
-    FirstBoot=true;
+    FirstBoot = true;
     ESP_LOGI(TAG, "Not a deep sleep reset\n");
 
     // Init RTC-Variablen beim ersten Boot
@@ -118,22 +112,48 @@ void app_main_cpp()
     SleepCounter = 0;
   }
   }
-
-  bool UseDisplay=FirstBoot;
+#ifdef LILYGO_T3
+  bool UseDisplay = FirstBoot;
+#else
+  bool UseDisplay = false;
+#endif
   ESP_LOGI(TAG, "Using display %d", UseDisplay);
   struct timeval now;
   gettimeofday(&now, NULL);
-  //int sleep_time_ms = (now.tv_sec - sleep_enter_time.tv_sec) * 1000 + (now.tv_usec - sleep_enter_time.tv_usec) / 1000;
+  // int sleep_time_ms = (now.tv_sec - sleep_enter_time.tv_sec) * 1000 + (now.tv_usec - sleep_enter_time.tv_usec) / 1000;
 
-  rtc_gpio_hold_dis(LED_PIN);
-  //rtc_gpio_hold_dis(LORA_RESET);
-  gpio_reset_pin(LED_PIN);
+  adc_oneshot_chan_cfg_t AdcConfig;
+
+#if defined(LILYGO_T3)
+  SX1278_LoRa LoRa(LilygoT3);
+  AdcConfig.atten = ADC_ATTEN_DB_11;
+#elif defined(HELTEC_ESP_LORA) // Nur die beiden Heltec-Boards haben die Reset-Leitung an einem RTC-Pin des ESP32!
+  SX1278_LoRa LoRa(HeltecESPLoRa);
+  rtc_gpio_hold_dis((gpio_num_t)LoRa.PinConfig->Reset);
+  AdcConfig.atten = ADC_ATTEN_DB_0;
+#elif defined(HELTEC_STICK_V3)
+  SX1278_LoRa LoRa(HeltecWirelessStick_V3);
+  rtc_gpio_hold_dis((gpio_num_t)LoRa.PinConfig->Reset);
+  AdcConfig.atten = ADC_ATTEN_DB_0;
+#endif
+
+  gpio_num_t LoraReset = (gpio_num_t)LoRa.PinConfig->Reset;
+  gpio_num_t LoraLed = (gpio_num_t)LoRa.PinConfig->Led;
+  adc_channel_t AdcChannel = (adc_channel_t)LoRa.PinConfig->AdcChannel;
+  
+  //-------------ADC1 Config---------------//
+  AdcConfig.bitwidth = ADC_BITWIDTH_DEFAULT;
+  ESP_ERROR_CHECK(adc_oneshot_config_channel(adc1_handle, AdcChannel, &AdcConfig));
+
+  rtc_gpio_hold_dis(LoraLed);
+  gpio_reset_pin(LoraLed);
   /* Set the GPIO as a push/pull output */
-  gpio_set_direction(LED_PIN, GPIO_MODE_OUTPUT);
-  gpio_set_level(LED_PIN, 1);
+  gpio_set_direction(LoraLed, GPIO_MODE_OUTPUT);
+  gpio_set_level(LoraLed, 1);
 
   // Init Temperatursensor
   uint32_t iSerial = 0;
+#ifndef FAKE_SHT40
   SHT40 iTempSensor(I2C_NUM_0, PIN_SDA_TEMP, PIN_SCL_TEMP);
   ret = iTempSensor.Init();
   if (ret != ESP_OK)
@@ -144,12 +164,13 @@ void app_main_cpp()
     ESP_LOGE(TAG, "Fehler beim Lesen der Seriennummer des SHT40: %d", ret);
   if (iCRCErr)
     ESP_LOGE(TAG, "Fehler beim Lesen des SHT40 CRC (Seriennummer)");
+#endif
   if (UseDisplay)
     InitSSD1306_u8g2();
   int64_t EndTime = GetTime_us();
   ESP_LOGI(TAG, "SSD1306 Init fertig nach %.1f ms", (EndTime - StartTime) / 1000.0);
-  gpio_set_level(LED_PIN, 0);
-  SX1278_LoRa LoRa;
+  gpio_set_level(LoraLed, 0);
+
   ret = LoRa.SetupModule(LORA_ADDR_GWHS, 434.54e6, 14, 500E3, 0x3d);
   if (ret != ESP_OK)
     ESP_LOGE(TAG, "Fehler beim Initialisieren des LoRa Moduls: %d", ret);
@@ -167,30 +188,40 @@ void app_main_cpp()
   // uint32_t iPC = 0;
   // Beim ersten booten 30s lang das Dispay anzeigen, dann in den Deep-Sleep
   // und nur alle 30s aufwachen...
-  int Loops=FirstBoot ? 6 : 1;
-  for (int i=0;i<Loops;i++)
+  int Loops = FirstBoot ? 6 : 1;
+  for (int i = 0; i < Loops; i++)
   {
+#ifndef FAKE_SHT40
     ret = iTempSensor.Read(iTemp_deg, iHum_per, iCRCErr);
     ESP_LOGI(TAG, "Temp.: %.2f LF: %.2f %%", iTemp_deg, iHum_per);
     if (ret != ESP_OK)
       ESP_LOGE(TAG, "Fehler beim Lesen der Temperatur/Luftfeuchtigkeit des SHT40: %d", ret);
     if (iCRCErr)
       ESP_LOGE(TAG, "Fehler beim Lesen des SHT40 CRC (T/L)");
-
+#else
+  iTemp_deg=20+sin((SleepCounter*6) / 360.0 * 2 * 3.141592)*15;
+  iHum_per=50+cos((SleepCounter*3) / 360.0 * 2 * 3.141592)*30;
+#endif
     double AdcMean = 0;
     int AdcValue = 0;
     // Batteriespannung
     for (int i = 0; i < 64; i++)
     {
-      ESP_ERROR_CHECK(adc_oneshot_read(adc1_handle, ADC_CHANNEL_7, &AdcValue));
+      ESP_ERROR_CHECK(adc_oneshot_read(adc1_handle, AdcChannel, &AdcValue));
       AdcMean += AdcValue;
     }
     AdcMean /= 64.0;
+
+#ifdef LILYGO_T3
     // Referenzspannung 1.1V, Spannungsteiler 100K/100K, Abschwächung 11dB (Faktor 3.55) = 7.81 V bei Vollausschlag (4095)
     // Der Kalibrierwert -0.448 muss für jedes Board neu nachgemessen werden, da die Referenzspannung des ESP32-ADCs einfach
     // nur grottig ist...
-    double iVBatt_V=AdcMean/4095*7.81-0.448;
-    ESP_LOGI(TAG, "ADC raw value: %.0f = %.2f V", AdcMean,iVBatt_V);
+    double iVBatt_V = AdcMean / 4095 * 7.81 - 0.448;
+#else
+    double iVBatt_V = AdcMean / 4095 * 7.81 - 0.448;
+#endif
+
+    ESP_LOGI(TAG, "ADC raw value: %.0f = %.2f V", AdcMean, iVBatt_V);
 
     // iTemp_deg = 20 + 20 * sin(3.141592 * (SleepCounter / 360.0));
     // iHum_per = 60 + 30 * sin(0.8 + 3.141592 * (SleepCounter / 360.0));
@@ -207,12 +238,12 @@ void app_main_cpp()
     char DisplayBuf[256] = {};
     while (!SendOK && RetryCounter < MaxRetries)
     {
-      gpio_set_level(LED_PIN, 1);
+      gpio_set_level(LoraLed, 1);
       int64_t ts = GetTime_us();
       ret = LoRa.SendLoraMsg(CMD_CBORDATA, LoraBuf, iCBORBuildSize, SleepCounter);
       SendOK = ret == ESP_OK;
       int64_t te = GetTime_us();
-      gpio_set_level(LED_PIN, 0);
+      gpio_set_level(LoraLed, 0);
       ESP_LOGI(TAG, "Zeit fuer LoRa: %.1f ms. Paketgroesse: %u", double(te - ts) / 1000.0, iCBORBuildSize);
       if (!SendOK)
       {
@@ -246,17 +277,17 @@ void app_main_cpp()
       sprintf(DisplayBuf, "Temp: %.2f%cC", iTemp_deg, 176);
       u8g2_DrawStr(&u8g2, 2, 28, DisplayBuf);
 
-    //sprintf(DisplayBuf, "Wach: %.1f ms", (EndTime - StartTime) / 1000.0);
-    //u8g2_DrawStr(&u8g2, 2, 42, DisplayBuf);
+      // sprintf(DisplayBuf, "Wach: %.1f ms", (EndTime - StartTime) / 1000.0);
+      // u8g2_DrawStr(&u8g2, 2, 42, DisplayBuf);
 
       sprintf(DisplayBuf, "Feuchte: %.2f %%", iHum_per);
       u8g2_DrawStr(&u8g2, 2, 42, DisplayBuf);
 
-    // sprintf(DisplayBuf, "Druck: %.2f mBar", iPress_mBar);
-    // u8g2_DrawStr(&u8g2, 2, 56, DisplayBuf);
+      // sprintf(DisplayBuf, "Druck: %.2f mBar", iPress_mBar);
+      // u8g2_DrawStr(&u8g2, 2, 56, DisplayBuf);
 
-    // sprintf(DisplayBuf, "Sleep: %.3f s", sleep_time_ms / 1000.0);
-    // u8g2_DrawStr(&u8g2, 2, 56, DisplayBuf);
+      // sprintf(DisplayBuf, "Sleep: %.3f s", sleep_time_ms / 1000.0);
+      // u8g2_DrawStr(&u8g2, 2, 56, DisplayBuf);
 
       sprintf(DisplayBuf, "Vbatt: %.2f V", iVBatt_V);
       u8g2_DrawStr(&u8g2, 2, 56, DisplayBuf);
@@ -268,7 +299,7 @@ void app_main_cpp()
     SleepCounter++;
   }
 
-  //vTaskDelay(2000 / portTICK_PERIOD_MS);
+  // vTaskDelay(2000 / portTICK_PERIOD_MS);
   if (UseDisplay)
     u8g2_SetPowerSave(&u8g2, 1);
   LoRa.Close();
@@ -277,10 +308,20 @@ void app_main_cpp()
   const int wakeup_time_sec = 60;
   // printf("Enabling timer wakeup, %ds\n", wakeup_time_sec);
   esp_sleep_enable_timer_wakeup(wakeup_time_sec * 1000000);
+
   // LoRa-Modul während des Sleeps in den Reset schicken.
-  gpio_set_level(LORA_RESET, 0);
-  rtc_gpio_isolate(LED_PIN);
-  //rtc_gpio_isolate(LORA_RESET);
+  gpio_set_level(LoraReset, 0);
+
+  // RTC-GPIO-Pins isolieren, damit die während des Deep-Sleeps nicht in der Gegen rumfloaten
+  rtc_gpio_isolate(LoraLed);
+
+// Der LoRa-Reset-Pin ist nur bei den Heltec-Modulen an einen RTC-GPIO angeschlossen!
+#if defined(HELTEC_ESP_LORA)
+  rtc_gpio_isolate((gpio_num_t)LoRa.PinConfig->Reset);
+#elif defined(HELTEC_STICK_V3)
+  rtc_gpio_isolate((gpio_num_t)LoRa.PinConfig->Reset);
+#endif
+
   gettimeofday(&sleep_enter_time, NULL);
   esp_deep_sleep_start();
 }
@@ -307,7 +348,7 @@ void error(const char *format, ...)
   for (;;)
   {
     toggle = 1 - toggle;
-    gpio_set_level(LED_PIN, toggle);
+    gpio_set_level(GPIO_NUM_25, toggle);
     vTaskDelay(pdMS_TO_TICKS(100));
   }
 }

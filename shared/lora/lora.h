@@ -4,6 +4,30 @@
 
 #include "driver/spi_master.h"
 
+enum LoRaBoardTypes
+{
+  LilygoT3,
+  HeltecESPLoRa,
+  HeltecWirelessStick_V3
+};
+
+class LoRa_PinConfiguration
+{
+public:
+  uint8_t ChipSelect;
+  uint8_t Reset;
+  uint8_t Miso;
+  uint8_t Mosi;
+  uint8_t Clock;
+  uint8_t DIO0;
+	uint8_t DIO1;
+	uint8_t Busy;
+  uint8_t Led;
+  uint8_t AdcChannel;
+  LoRa_PinConfiguration(LoRaBoardTypes aBoard);
+};
+
+
 class SX1278_LoRa
 {
   struct Registers
@@ -64,9 +88,6 @@ class SX1278_LoRa
     static const uint8_t TIMEOUT_RESET = 100;
   };
 
-
-  
-
   spi_device_handle_t mhSpi;
   bool mInitialized;
   bool mImplicit;
@@ -95,37 +116,7 @@ class SX1278_LoRa
   bool Initialized(){return mInitialized;}
 
 public:
-  struct PinConfiguration
-  {
-	  // Pin definitions für Lilygo T3-LoRa
-    static const uint8_t CONFIG_CS_GPIO = 18;
-    static const uint8_t CONFIG_RST_GPIO = 23;
-    static const uint8_t CONFIG_MISO_GPIO = 19;
-    static const uint8_t CONFIG_MOSI_GPIO = 27;
-    static const uint8_t CONFIG_SCK_GPIO = 5;
-    static const uint8_t CONFIG_DIO0_GPIO = 26;
-		static const uint8_t CONFIG_DIO1_GPIO = 33;
-		static const uint8_t CONFIG_BUSY_GPIO = 32;
-		
-	/*
-    // Pin definitions für Heltec-ESP-LoRa
-    static const uint8_t CONFIG_CS_GPIO = 18;
-    static const uint8_t CONFIG_RST_GPIO = 14;
-    static const uint8_t CONFIG_MISO_GPIO = 19;
-    static const uint8_t CONFIG_MOSI_GPIO = 27;
-    static const uint8_t CONFIG_SCK_GPIO = 5;
-    static const uint8_t CONFIG_DIO0_GPIO = 33;
-	*/
-
-/*
-    // Pin definitions für ESP-DevKit mit externem LoRa-Modul
-    static const uint8_t CONFIG_CS_GPIO = 12;
-    static const uint8_t CONFIG_RST_GPIO = 13;
-    static const uint8_t CONFIG_MISO_GPIO = 15;
-    static const uint8_t CONFIG_MOSI_GPIO = 16;
-    static const uint8_t CONFIG_SCK_GPIO = 2;
-    */
-  };
+  LoRa_PinConfiguration *PinConfig;
   void Reset(void);
   void Close(void);
   esp_err_t Receive(void);
@@ -140,7 +131,7 @@ public:
   esp_err_t SetupModule(uint8_t aAddress, long aFrq, uint16_t aPreambleLength, long aBandwidth, uint8_t aSyncByte);
   esp_err_t SendLoraMsg(LoraCommand aCmd, uint8_t* aBuf, uint16_t aSize, uint32_t aTag);
 
-  SX1278_LoRa();
+  SX1278_LoRa(LoRaBoardTypes aBoard);
   ~SX1278_LoRa();
 };
 #endif

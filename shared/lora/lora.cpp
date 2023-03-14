@@ -10,12 +10,56 @@
 #include "lora.h"
 #include "../tools/tools.h"
 
-SX1278_LoRa::SX1278_LoRa()
+LoRa_PinConfiguration::LoRa_PinConfiguration(LoRaBoardTypes aBoard)
+{
+  switch (aBoard)
+  {
+    case LilygoT3:
+      ChipSelect=18;
+      Reset=23;
+      Miso=19;
+      Mosi=27;
+      Clock=5;
+      DIO0=26;
+	    DIO1=33;
+	    Busy=32;
+      Led=25;
+      AdcChannel=7;
+    break;
+    case HeltecESPLoRa:
+      ChipSelect=18;
+      Reset=14;
+      Miso=19;
+      Mosi=27;
+      Clock=5;
+      DIO0=33;
+	    DIO1=34;
+	    Busy=0;
+      Led=25;
+      AdcChannel=0;
+    break;
+    case HeltecWirelessStick_V3:
+      ChipSelect=8;
+      Reset=12;
+      Miso=11;
+      Mosi=10;
+      Clock=9;
+      DIO0=26;
+	    DIO1=14;
+	    Busy=13;
+      Led=35;
+      AdcChannel=0;
+    break;
+  }
+}
+
+SX1278_LoRa::SX1278_LoRa(LoRaBoardTypes aBoard)
   : mhSpi(NULL)
   , mInitialized(false)
   , mImplicit(false)
   , mAddress(0)
 {
+  PinConfig=new LoRa_PinConfiguration(aBoard);
 }
 
 SX1278_LoRa::~SX1278_LoRa()
@@ -91,9 +135,9 @@ esp_err_t SX1278_LoRa::WriteReg(uint8_t reg, uint8_t val)
   t.tx_buffer = out;
   t.rx_buffer = in;
 
-  gpio_set_level((gpio_num_t)PinConfiguration::CONFIG_CS_GPIO, 0);
+  gpio_set_level((gpio_num_t)PinConfig->ChipSelect, 0);
   esp_err_t ret = spi_device_transmit(mhSpi, &t);
-  gpio_set_level((gpio_num_t)PinConfiguration::CONFIG_CS_GPIO, 1);
+  gpio_set_level((gpio_num_t)PinConfig->ChipSelect, 1);
   return ret;
 }
 
@@ -113,9 +157,9 @@ esp_err_t SX1278_LoRa::ReadReg(uint8_t reg, uint8_t *aInVal)
   t.tx_buffer = out;
   t.rx_buffer = in;
 
-  gpio_set_level((gpio_num_t)PinConfiguration::CONFIG_CS_GPIO, 0);
+  gpio_set_level((gpio_num_t)PinConfig->ChipSelect, 0);
   esp_err_t ret = spi_device_transmit(mhSpi, &t);
-  gpio_set_level((gpio_num_t)PinConfiguration::CONFIG_CS_GPIO, 1);
+  gpio_set_level((gpio_num_t)PinConfig->ChipSelect, 1);
   *aInVal = in[1];
   return ret;
 }
@@ -125,9 +169,9 @@ esp_err_t SX1278_LoRa::ReadReg(uint8_t reg, uint8_t *aInVal)
  */
 void SX1278_LoRa::Reset(void)
 {
-  gpio_set_level((gpio_num_t)PinConfiguration::CONFIG_RST_GPIO, 0);
+  gpio_set_level((gpio_num_t)PinConfig->Reset, 0);
   vTaskDelay(pdMS_TO_TICKS(1));
-  gpio_set_level((gpio_num_t)PinConfiguration::CONFIG_RST_GPIO, 1);
+  gpio_set_level((gpio_num_t)PinConfig->Reset, 1);
   vTaskDelay(pdMS_TO_TICKS(10));
 }
 
@@ -376,16 +420,16 @@ esp_err_t SX1278_LoRa::Init(void)
   /*
     * Configure CPU hardware to communicate with the radio chip
     */
-  gpio_reset_pin((gpio_num_t)PinConfiguration::CONFIG_RST_GPIO);
-  gpio_set_direction((gpio_num_t)PinConfiguration::CONFIG_RST_GPIO, GPIO_MODE_OUTPUT);
-  gpio_reset_pin((gpio_num_t)PinConfiguration::CONFIG_CS_GPIO);
-  gpio_set_direction((gpio_num_t)PinConfiguration::CONFIG_CS_GPIO, GPIO_MODE_OUTPUT);
+  gpio_reset_pin((gpio_num_t)PinConfig->Reset);
+  gpio_set_direction((gpio_num_t)PinConfig->Reset, GPIO_MODE_OUTPUT);
+  gpio_reset_pin((gpio_num_t)PinConfig->ChipSelect);
+  gpio_set_direction((gpio_num_t)PinConfig->ChipSelect, GPIO_MODE_OUTPUT);
   Reset();
 
   spi_bus_config_t bus = {};
-  bus.miso_io_num = PinConfiguration::CONFIG_MISO_GPIO;
-  bus.mosi_io_num = PinConfiguration::CONFIG_MOSI_GPIO;
-  bus.sclk_io_num = PinConfiguration::CONFIG_SCK_GPIO;
+  bus.miso_io_num = PinConfig->Miso;
+  bus.mosi_io_num = PinConfig->Mosi;
+  bus.sclk_io_num = PinConfig->Clock;
   bus.quadwp_io_num = -1;
   bus.quadhd_io_num = -1;
   bus.max_transfer_sz = 0;
