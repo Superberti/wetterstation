@@ -223,7 +223,7 @@ def lora_init():
     lora.set_rx_crc(True)
     lora.set_freq(434.54)
     lora.set_preamble(14)
-    lora.set_bw(8) # 8=250 kHz, 9=500 kHz
+    lora.set_bw(9) # 8=250 kHz, 9=500 kHz
     lora.set_sync_word(0x3d)
     lora.set_coding_rate(CODING_RATE.CR4_7)
     lora.set_spreading_factor(10)
