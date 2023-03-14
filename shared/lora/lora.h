@@ -128,7 +128,7 @@ public:
   float PacketSnr(void);
   
   esp_err_t DumpRegisters(void);
-  esp_err_t SetupModule(uint8_t aAddress, long aFrq, uint16_t aPreambleLength, long aBandwidth, uint8_t aSyncByte);
+  esp_err_t SetupModule(uint8_t aAddress, long aFrq, uint16_t aPreambleLength, long aBandwidth, uint8_t aSyncByte, uint8_t aSpreadingFactor, uint8_t aCodingRate);
   esp_err_t SendLoraMsg(LoraCommand aCmd, uint8_t* aBuf, uint16_t aSize, uint32_t aTag);
 
   SX1278_LoRa(LoRaBoardTypes aBoard);

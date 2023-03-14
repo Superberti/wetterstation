@@ -209,6 +209,12 @@ def crc16(data: bytes, poly=0x8408):
 
 lora = LoRaRcvCont(verbose=False)
 def lora_init():
+    # Sendefrequenz: 434,54 MHz
+    # Preambellänge: 14
+    # Bandbreite 500 kHz
+    # Sync-Byte: 0x3d
+    # Spreading-Factor: 10 = 1024 Chips/symbol
+    # Coding-Rate: 7 = 4/7 = 1,75-facher FEC-Overhead
     global lora
     lora.reset()
     lora.set_mode(MODE.STDBY)
@@ -216,15 +222,15 @@ def lora_init():
     lora.set_rx_crc(True)
     lora.set_freq(434.54)
     lora.set_preamble(14)
-    lora.set_bw(9)
+    lora.set_bw(8) # 8=250 kHz, 9=500 kHz
     lora.set_sync_word(0x3d)
-    #lora.set_coding_rate(CODING_RATE.CR4_6)
+    lora.set_coding_rate(CODING_RATE.CR4_7)
+    lora.set_spreading_factor(10)
     #lora.set_pa_config(max_power=0, output_power=0)
     #lora.set_lna_gain(GAIN.G1)
     lora.set_implicit_header_mode(False)
     #lora.set_low_data_rate_optim(True)
     #lora.set_pa_ramp(PA_RAMP.RAMP_50_us)
-    #lora.set_coding_rate(CODING_RATE.CR4_6)
     lora.set_agc_auto_on(True)
     #print(lora)
     assert(lora.get_agc_auto_on() == 1)

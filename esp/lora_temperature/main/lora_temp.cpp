@@ -171,7 +171,13 @@ void app_main_cpp()
   ESP_LOGI(TAG, "SSD1306 Init fertig nach %.1f ms", (EndTime - StartTime) / 1000.0);
   gpio_set_level(LoraLed, 0);
 
-  ret = LoRa.SetupModule(LORA_ADDR_GWHS, 434.54e6, 14, 500E3, 0x3d);
+  // Sendefrequenz: 434,54 MHz
+  // Preambellänge: 14
+  // Bandbreite 500 kHz
+  // Sync-Byte: 0x3d
+  // Spreading-Factor: 10 = 1024 Chips/symbol
+  // Coding-Rate: 7 = 4/7 = 1,75-facher FEC-Overhead
+  ret = LoRa.SetupModule(LORA_ADDR_GWHS, 434.54e6, 14, 500E3, 0x3d, 10, 7);
   if (ret != ESP_OK)
     ESP_LOGE(TAG, "Fehler beim Initialisieren des LoRa Moduls: %d", ret);
   EndTime = GetTime_us();
@@ -252,7 +258,7 @@ void app_main_cpp()
         ESP_LOGE(TAG, "Resette LORA-Modul...");
         LoRa.Reset();
         vTaskDelay(pdMS_TO_TICKS(1000));
-        ret = LoRa.SetupModule(LORA_ADDR_GWHS, 434.54e6, 14, 500E3, 0x3d);
+        ret = LoRa.SetupModule(LORA_ADDR_GWHS, 434.54e6, 14, 500E3, 0x3d, 10, 7);
         if (ret != ESP_OK)
           ESP_LOGI(TAG, "Fehler beim Initialisieren des LoRa Moduls: %d", ret);
         else

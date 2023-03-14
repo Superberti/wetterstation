@@ -67,7 +67,97 @@ SX1278_LoRa::~SX1278_LoRa()
   Close();
 }
 
-esp_err_t SX1278_LoRa::SetupModule(uint8_t aAddress, long aFrq, uint16_t aPreambleLength, long aBandwidth, uint8_t aSyncByte)
+/**
+ * Perform hardware initialization.
+ */
+esp_err_t SX1278_LoRa::Init(void)
+{
+  esp_err_t ret;
+
+  /*
+    * Configure CPU hardware to communicate with the radio chip
+    */
+  gpio_reset_pin((gpio_num_t)PinConfig->Reset);
+  gpio_set_direction((gpio_num_t)PinConfig->Reset, GPIO_MODE_OUTPUT);
+  gpio_reset_pin((gpio_num_t)PinConfig->ChipSelect);
+  gpio_set_direction((gpio_num_t)PinConfig->ChipSelect, GPIO_MODE_OUTPUT);
+  Reset();
+
+  spi_bus_config_t bus = {};
+  bus.miso_io_num = PinConfig->Miso;
+  bus.mosi_io_num = PinConfig->Mosi;
+  bus.sclk_io_num = PinConfig->Clock;
+  bus.quadwp_io_num = -1;
+  bus.quadhd_io_num = -1;
+  bus.max_transfer_sz = 0;
+  
+  ret = spi_bus_initialize(VSPI_HOST, &bus, 0);
+  if (ret != ESP_OK)
+    return ret;
+  spi_device_interface_config_t dev = {};
+  dev.clock_speed_hz = 9000000;
+  dev.mode = 0;
+  dev.spics_io_num = -1;
+  dev.queue_size = 1;
+  dev.flags = 0;
+  dev.pre_cb = NULL;
+  ret = spi_bus_add_device(VSPI_HOST, &dev, &mhSpi);
+  if (ret != ESP_OK)
+    return ret;
+
+  /*
+    * Perform hardware reset.
+    */
+  Reset();
+
+  /*
+    * Check version.
+    */
+  uint8_t version, reg;
+  int i;
+  for (i = 0; i < Misc::TIMEOUT_RESET; i++)
+  {
+    ret = ReadReg(Registers::REG_VERSION, &version);
+    if (ret != ESP_OK)
+      return ret;
+    if (version == 0x12)
+      break;
+    vTaskDelay(2);
+  }
+  if (i == Misc::TIMEOUT_RESET)
+    return ESP_ERR_TIMEOUT;
+
+  /*
+    * Default configuration.
+    */
+  ret = Sleep();
+  if (ret != ESP_OK)
+    return ret;
+  ret = WriteReg(Registers::REG_FIFO_RX_BASE_ADDR, 0);
+  if (ret != ESP_OK)
+    return ret;
+  ret = WriteReg(Registers::REG_FIFO_TX_BASE_ADDR, 0);
+  if (ret != ESP_OK)
+    return ret;
+  ret = ReadReg(Registers::REG_LNA, &reg);
+  if (ret != ESP_OK)
+    return ret;
+  ret = WriteReg(Registers::REG_LNA, reg | 0x03);
+  if (ret != ESP_OK)
+    return ret;
+  ret = WriteReg(Registers::REG_MODEM_CONFIG_3, 0x04);
+  if (ret != ESP_OK)
+    return ret;
+  ret = SetTxPower(10);
+  if (ret != ESP_OK)
+    return ret;
+  ret = WriteReg(Registers::REG_IRQ_MASK_FLAGS, 0);
+  if (ret != ESP_OK)
+    return ret;
+  return Idle();
+}
+
+esp_err_t SX1278_LoRa::SetupModule(uint8_t aAddress, long aFrq, uint16_t aPreambleLength, long aBandwidth, uint8_t aSyncByte, uint8_t aSpreadingFactor, uint8_t aCodingRate)
 {
   mAddress=aAddress;
   mInitialized = false;
@@ -75,44 +165,56 @@ esp_err_t SX1278_LoRa::SetupModule(uint8_t aAddress, long aFrq, uint16_t aPreamb
   ret = Init();
   if (ret != ESP_OK)
   {
-    ESP_LOGE("lora", "lora_init failed: %d", ret);
+    ESP_LOGE("lora", "Init failed: %d", ret);
     return ret;
   }
   ret = ExplicitHeaderMode();
   if (ret != ESP_OK)
   {
-    ESP_LOGE("lora", "lora_explicit_header_mode failed: %d", ret);
+    ESP_LOGE("lora", "ExplicitHeaderMode failed: %d", ret);
     return ret;
   }
   ret = SetFrequency(aFrq);
   if (ret != ESP_OK)
   {
-    ESP_LOGE("lora", "lora_set_frequency failed: %d", ret);
+    ESP_LOGE("lora", "SetFrequency failed: %d", ret);
     return ret;
   }
   ret = EnableCrc();
   if (ret != ESP_OK)
   {
-    ESP_LOGE("lora", "lora_enable_crc failed: %d", ret);
+    ESP_LOGE("lora", "EnableCrc failed: %d", ret);
     return ret;
   }
 
   ret = SetPreambleLength(aPreambleLength);
   if (ret != ESP_OK)
   {
-    ESP_LOGE("lora", "lora_set_preamble_length failed: %d", ret);
+    ESP_LOGE("lora", "SetPreambleLength failed: %d", ret);
     return ret;
   }
   ret = SetBandwidth(aBandwidth);
   if (ret != ESP_OK)
   {
-    ESP_LOGE("lora", "lora_set_bandwidth failed: %d", ret);
+    ESP_LOGE("lora", "SetBandwidth failed: %d", ret);
     return ret;
   }
   ret = SetSyncWord(aSyncByte);
   if (ret != ESP_OK)
   {
-    ESP_LOGE("lora", "lora_set_sync_word failed: %d", ret);
+    ESP_LOGE("lora", "SetSyncWord failed: %d", ret);
+    return ret;
+  }
+  ret = SetSpreadingFactor(aSpreadingFactor);
+  if (ret != ESP_OK)
+  {
+    ESP_LOGE("lora", "SetSpreadingFactor failed: %d", ret);
+    return ret;
+  }
+  ret = SetCodingRate(aCodingRate);
+  if (ret != ESP_OK)
+  {
+    ESP_LOGE("lora", "SetCodingRate failed: %d", ret);
     return ret;
   }
   mInitialized = true;
@@ -408,96 +510,6 @@ esp_err_t SX1278_LoRa::DisableCrc(void)
   if (ret != ESP_OK)
     return ret;
   return WriteReg(Registers::REG_MODEM_CONFIG_2, reg & 0xfb);
-}
-
-/**
- * Perform hardware initialization.
- */
-esp_err_t SX1278_LoRa::Init(void)
-{
-  esp_err_t ret;
-
-  /*
-    * Configure CPU hardware to communicate with the radio chip
-    */
-  gpio_reset_pin((gpio_num_t)PinConfig->Reset);
-  gpio_set_direction((gpio_num_t)PinConfig->Reset, GPIO_MODE_OUTPUT);
-  gpio_reset_pin((gpio_num_t)PinConfig->ChipSelect);
-  gpio_set_direction((gpio_num_t)PinConfig->ChipSelect, GPIO_MODE_OUTPUT);
-  Reset();
-
-  spi_bus_config_t bus = {};
-  bus.miso_io_num = PinConfig->Miso;
-  bus.mosi_io_num = PinConfig->Mosi;
-  bus.sclk_io_num = PinConfig->Clock;
-  bus.quadwp_io_num = -1;
-  bus.quadhd_io_num = -1;
-  bus.max_transfer_sz = 0;
-  
-  ret = spi_bus_initialize(VSPI_HOST, &bus, 0);
-  if (ret != ESP_OK)
-    return ret;
-  spi_device_interface_config_t dev = {};
-  dev.clock_speed_hz = 9000000;
-  dev.mode = 0;
-  dev.spics_io_num = -1;
-  dev.queue_size = 1;
-  dev.flags = 0;
-  dev.pre_cb = NULL;
-  ret = spi_bus_add_device(VSPI_HOST, &dev, &mhSpi);
-  if (ret != ESP_OK)
-    return ret;
-
-  /*
-    * Perform hardware reset.
-    */
-  Reset();
-
-  /*
-    * Check version.
-    */
-  uint8_t version, reg;
-  int i;
-  for (i = 0; i < Misc::TIMEOUT_RESET; i++)
-  {
-    ret = ReadReg(Registers::REG_VERSION, &version);
-    if (ret != ESP_OK)
-      return ret;
-    if (version == 0x12)
-      break;
-    vTaskDelay(2);
-  }
-  if (i == Misc::TIMEOUT_RESET)
-    return ESP_ERR_TIMEOUT;
-
-  /*
-    * Default configuration.
-    */
-  ret = Sleep();
-  if (ret != ESP_OK)
-    return ret;
-  ret = WriteReg(Registers::REG_FIFO_RX_BASE_ADDR, 0);
-  if (ret != ESP_OK)
-    return ret;
-  ret = WriteReg(Registers::REG_FIFO_TX_BASE_ADDR, 0);
-  if (ret != ESP_OK)
-    return ret;
-  ret = ReadReg(Registers::REG_LNA, &reg);
-  if (ret != ESP_OK)
-    return ret;
-  ret = WriteReg(Registers::REG_LNA, reg | 0x03);
-  if (ret != ESP_OK)
-    return ret;
-  ret = WriteReg(Registers::REG_MODEM_CONFIG_3, 0x04);
-  if (ret != ESP_OK)
-    return ret;
-  ret = SetTxPower(10);
-  if (ret != ESP_OK)
-    return ret;
-  ret = WriteReg(Registers::REG_IRQ_MASK_FLAGS, 0);
-  if (ret != ESP_OK)
-    return ret;
-  return Idle();
 }
 
 /**
