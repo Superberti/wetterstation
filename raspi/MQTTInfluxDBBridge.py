@@ -40,7 +40,7 @@ TopicCounter=0
 
 influxdb_client = InfluxDBClient(INFLUXDB_ADDRESS, 8086, INFLUXDB_USER, INFLUXDB_PASSWORD, None)
 # Virtueller Rechner im Netz
-NeelixClient = InfluxDBClient(host='neelix.ddnss.de', port=8086, username='mqtt', password='4m0a21gvc', ssl=True, verify_ssl=False)
+NeelixClient = InfluxDBClient(host='neelix.ddnss.de', port=8086, username='mqtt', password='', ssl=True, verify_ssl=False)
 
 class SensorData(NamedTuple):
     location: str
