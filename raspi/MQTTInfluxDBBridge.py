@@ -8,8 +8,10 @@ from influxdb import InfluxDBClient
 import time
 import logging
 import urllib3
+import argparse
+
 urllib3.disable_warnings()
-logging.basicConfig(format=FORMAT, filename='/var/log/MQTTInfluxBridge.log', encoding='utf-8', level=logging.INFO)
+logging.basicConfig(format='%(asctime)s %(message)s', filename='/var/log/MQTTInfluxBridge.log', encoding='utf-8', level=logging.INFO)
 #logging.basicConfig(format='%(asctime)s %(message)s', encoding='utf-8', level=logging.INFO)
 INFLUXDB_ADDRESS = 'localhost'
 INFLUXDB_USER = 'mqtt'
@@ -40,7 +42,7 @@ TopicCounter=0
 
 influxdb_client = InfluxDBClient(INFLUXDB_ADDRESS, 8086, INFLUXDB_USER, INFLUXDB_PASSWORD, None)
 # Virtueller Rechner im Netz
-NeelixClient = InfluxDBClient(host='neelix.ddnss.de', port=8086, username='mqtt', password='', ssl=True, verify_ssl=False)
+NeelixClient = None
 
 class SensorData(NamedTuple):
     location: str
@@ -78,6 +80,7 @@ def _parse_mqtt_message(topic, payload):
         return None
 
 def _send_sensor_data_to_influxdb(sensor_data):
+    global NeelixClient
     try:
         json_body = [
             {
@@ -95,8 +98,9 @@ def _send_sensor_data_to_influxdb(sensor_data):
         NeelixClient.write_points(json_body)
     except Exception as e:
         logging.info("Fehler", e.__class__, "occurred: ",e)
-def _send_error_log_to_influxdb(error_log):
 
+def _send_error_log_to_influxdb(error_log):
+    global NeelixClient
     json_body = [
         {
             'errorlog': error_log
@@ -118,35 +122,51 @@ def on_message(client, userdata, msg):
             status=msg.payload.decode('utf-8')
             _send_error_log_to_influxdb(status)     
     
-def _init_influxdb_database():
+def _init_influxdb_database(password, user):
+    global NeelixClient
+    NeelixClient = InfluxDBClient(host='neelix.ddnss.de', port=8086, username=user, password=password, ssl=True, verify_ssl=False)
+    databases = influxdb_client.get_list_database()
+    print(databases)
+    if len(list(filter(lambda x: x['name'] == INFLUXDB_DATABASE, databases))) == 0:
+        influxdb_client.create_database(INFLUXDB_DATABASE)
+    influxdb_client.switch_database(INFLUXDB_DATABASE)
+    
+    databases = NeelixClient.get_list_database()
+    print(databases)
+    if len(list(filter(lambda x: x['name'] == INFLUXDB_DATABASE, databases))) == 0:
+        NeelixClient.create_database(INFLUXDB_DATABASE)
+    NeelixClient.switch_database(INFLUXDB_DATABASE)
+    
+def main(password='test', user='test'):
     try:
-        databases = influxdb_client.get_list_database()
-        print(databases)
-        if len(list(filter(lambda x: x['name'] == INFLUXDB_DATABASE, databases))) == 0:
-            influxdb_client.create_database(INFLUXDB_DATABASE)
-        influxdb_client.switch_database(INFLUXDB_DATABASE)
-        
-        databases = NeelixClient.get_list_database()
-        print(databases)
-        if len(list(filter(lambda x: x['name'] == INFLUXDB_DATABASE, databases))) == 0:
-            NeelixClient.create_database(INFLUXDB_DATABASE)
-        NeelixClient.switch_database(INFLUXDB_DATABASE)
+        print("Warte 20 s auf den Start der Datenbank...")
+        time.sleep(20)
+        _init_influxdb_database(password, user)
+
+        mqtt_client = mqtt.Client(MQTT_CLIENT_ID)
+        #mqtt_client.username_pw_set(MQTT_USER, MQTT_PASSWORD)
+        mqtt_client.on_connect = on_connect
+        mqtt_client.on_message = on_message
+
+        mqtt_client.connect(MQTT_ADDRESS, 1883)
+        mqtt_client.loop_forever()
     except Exception as e:
         logging.info("Fehler", e.__class__, "occurred: ",e)    
-def main():
-    print("Warte 20 s auf den Start der Datenbank...")
-    time.sleep(20)
-    _init_influxdb_database()
 
-    mqtt_client = mqtt.Client(MQTT_CLIENT_ID)
-    #mqtt_client.username_pw_set(MQTT_USER, MQTT_PASSWORD)
-    mqtt_client.on_connect = on_connect
-    mqtt_client.on_message = on_message
-
-    mqtt_client.connect(MQTT_ADDRESS, 1883)
-    mqtt_client.loop_forever()
+def parse_args():
+    """Parse the args from main."""
+    parser = argparse.ArgumentParser(
+        description='MQTTToInfluxDB gateway')
+    parser.add_argument('--password', type=str, required=False,
+                        default='test',
+                        help='Password for InfluxDB.')
+    parser.add_argument('--user', type=str, required=False,
+                        default='test',
+                        help='InfluxDB username')
+    return parser.parse_args()
 
 
 if __name__ == '__main__':
     print('MQTT to InfluxDB bridge')
-    main()
+    args = parse_args()
+    main(password=args.password, user=args.user)
