@@ -23,6 +23,7 @@ TopicVBatt="/wetterstation/gwhs/vbatt"
 PacketLostCounter=0
 CurrentPacketCounter=0
 FirstPacketCounter=0
+TotalCount=0
 # Lora-Paketheader, 16 Bytes
 class LoraPacketHeader(Structure):
     _pack_ = 1
@@ -51,6 +52,7 @@ class LoRaRcvCont(LoRa):
             global PacketLostCounter
             global CurrentPacketCounter
             global FirstPacketCounter
+            global TotalCount
             LastReceivedTime=time.time()
             #print("\nRxDone")
             flags = self.get_irq_flags()
@@ -113,7 +115,8 @@ class LoRaRcvCont(LoRa):
                     lost_msg=f'LoRa-Paket verloren. Alt: {LastCounter} Neu: {CurrentPacketCounter}'
                     print(lost_msg)
                     logging.error(lost_msg)
-                    logging.error(f'PC: {CurrentPacketCounter}({TotalCount-PacketLostCounter}/{TotalCount}) LOSS: {PacketLossPer:.1f}%')
+                    if TotalCount>0:
+                        logging.error(f'PC: {CurrentPacketCounter}({TotalCount-PacketLostCounter}/{TotalCount}) LOSS: {PacketLossPer:.1f}%')
                     PacketLostCounter+=1
                     LastCounter=CurrentPacketCounter
                 
@@ -124,7 +127,7 @@ class LoRaRcvCont(LoRa):
                 PacketLossPer=0
                 if TotalCount>0:
                     PacketLossPer=(PacketLostCounter/TotalCount)*100.0
-                print(f'PC: {CurrentPacketCounter}({TotalCount-PacketLostCounter}/{TotalCount}) LOSS: {PacketLossPer:.1f}% TE: {gwhs_temp}°C LF: {gwhs_hum}% VB: {gwhs_v} V')
+                    print(f'PC: {CurrentPacketCounter}({TotalCount-PacketLostCounter}/{TotalCount}) LOSS: {PacketLossPer:.1f}% TE: {gwhs_temp}°C LF: {gwhs_hum}% VB: {gwhs_v} V')
                 #print(f'Temperatur: {gwhs_temp}°C')
                 #print(f'Luftfeuchtigkeit: {gwhs_hum}%')
                 msgs = [(TopicTemp, gwhs_temp),(TopicHum, gwhs_hum, 0, False),(TopicVBatt,gwhs_v)]
