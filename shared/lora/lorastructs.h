@@ -74,6 +74,7 @@ struct LoraPacketHeader
 #define ORT_CARPORT "D"
 #define ORT_GARTENHAUS "E"
 #define ORT_GEWAECHSHAUS "F"
+#define ORT_ARBEITSZIMMER "G"
 
 // Adressen der einzelnen Lora-Module
 #define LORA_ADDR_RASPI 0				// Raspi-Zentrale

@@ -29,7 +29,14 @@
 #define LILYGO_T3
 
 // Nur definieren, falls der SHT40 nicht angeschlossen ist, man aber trotzdem ein paar Daten haben möchte
-//#define FAKE_SHT40
+// #define FAKE_SHT40
+
+// ADC-Batteriespannungsmessung benutzen?
+#define USE_ADC
+
+// An welchem Ort befindet sich der Sensor? (s. lorastructs.h)
+// #define LORA_ORT ORT_GEWAECHSHAUS
+#define LORA_ORT ORT_ARBEITSZIMMER
 
 extern "C"
 {
@@ -79,6 +86,7 @@ extern "C"
 
 void app_main_cpp()
 {
+#ifdef USE_ADC
   // ADC
   //-------------ADC1 Init---------------//
   adc_oneshot_unit_handle_t adc1_handle;
@@ -87,7 +95,7 @@ void app_main_cpp()
   init_config1.ulp_mode = ADC_ULP_MODE_DISABLE;
 
   ESP_ERROR_CHECK(adc_oneshot_new_unit(&init_config1, &adc1_handle));
-
+#endif
   esp_err_t ret;
   float iTemp_deg, iHum_per, iPress_mBar;
   bool iCRCErr;
@@ -122,29 +130,39 @@ void app_main_cpp()
   gettimeofday(&now, NULL);
   // int sleep_time_ms = (now.tv_sec - sleep_enter_time.tv_sec) * 1000 + (now.tv_usec - sleep_enter_time.tv_usec) / 1000;
 
+#ifdef USE_ADC
   adc_oneshot_chan_cfg_t AdcConfig;
+#endif
 
 #if defined(LILYGO_T3)
   SX1278_LoRa LoRa(LilygoT3);
+#ifdef USE_ADC
   AdcConfig.atten = ADC_ATTEN_DB_11;
+#endif
 #elif defined(HELTEC_ESP_LORA) // Nur die beiden Heltec-Boards haben die Reset-Leitung an einem RTC-Pin des ESP32!
   SX1278_LoRa LoRa(HeltecESPLoRa);
   rtc_gpio_hold_dis((gpio_num_t)LoRa.PinConfig->Reset);
+#ifdef USE_ADC
   AdcConfig.atten = ADC_ATTEN_DB_0;
+#endif
 #elif defined(HELTEC_STICK_V3)
   SX1278_LoRa LoRa(HeltecWirelessStick_V3);
   rtc_gpio_hold_dis((gpio_num_t)LoRa.PinConfig->Reset);
+#ifdef USE_ADC
   AdcConfig.atten = ADC_ATTEN_DB_0;
+#endif
 #endif
 
   gpio_num_t LoraReset = (gpio_num_t)LoRa.PinConfig->Reset;
   gpio_num_t LoraLed = (gpio_num_t)LoRa.PinConfig->Led;
+
+#ifdef USE_ADC
   adc_channel_t AdcChannel = (adc_channel_t)LoRa.PinConfig->AdcChannel;
-  
+
   //-------------ADC1 Config---------------//
   AdcConfig.bitwidth = ADC_BITWIDTH_DEFAULT;
   ESP_ERROR_CHECK(adc_oneshot_config_channel(adc1_handle, AdcChannel, &AdcConfig));
-
+#endif
   rtc_gpio_hold_dis(LoraLed);
   gpio_reset_pin(LoraLed);
   /* Set the GPIO as a push/pull output */
@@ -174,10 +192,15 @@ void app_main_cpp()
   // Sendefrequenz: 434,54 MHz
   // Preambellänge: 14
   // Bandbreite 500 kHz
-  // Sync-Byte: 0x3d
+  // Achtung: Damit auch der neuere SX1262 verwendet wird, muss man sich über die Sync-Words ein paar mehr
+  // Gedanken machen. Der SX1262 hat 2 Bytes Sync, nicht nur 1 Byte. Damit sich trotzdem beide verstehen, muss man
+  // folgendes beachten:
+  // SX1276: Jedes Nibble unterschiedlich von 1-7, also z.B. 0x37 => 0xYZ (Y!=Z, Z und Y <8 && >0)
+  // SX1262: 0Y4Z4, also hier 0x3474
+  // Sync-Byte: 0x37
   // Spreading-Factor: 10 = 1024 Chips/symbol
   // Coding-Rate: 7 = 4/7 = 1,75-facher FEC-Overhead
-  ret = LoRa.SetupModule(LORA_ADDR_GWHS, 434.54e6, 14, 500E3, 0x3d, 10, 7);
+  ret = LoRa.SetupModule(LORA_ADDR_GWHS, 434.54e6, 14, 500E3, 0x37, 10, 7);
   if (ret != ESP_OK)
     ESP_LOGE(TAG, "Fehler beim Initialisieren des LoRa Moduls: %d", ret);
   EndTime = GetTime_us();
@@ -205,11 +228,12 @@ void app_main_cpp()
     if (iCRCErr)
       ESP_LOGE(TAG, "Fehler beim Lesen des SHT40 CRC (T/L)");
 #else
-  iTemp_deg=20+sin((SleepCounter*6) / 360.0 * 2 * 3.141592)*15;
-  iHum_per=50+cos((SleepCounter*3) / 360.0 * 2 * 3.141592)*30;
+    iTemp_deg = 20 + sin((SleepCounter * 6) / 360.0 * 2 * 3.141592) * 15;
+    iHum_per = 50 + cos((SleepCounter * 3) / 360.0 * 2 * 3.141592) * 30;
 #endif
     double AdcMean = 0;
     int AdcValue = 0;
+#ifdef USE_ADC
     // Batteriespannung
     for (int i = 0; i < 64; i++)
     {
@@ -217,6 +241,7 @@ void app_main_cpp()
       AdcMean += AdcValue;
     }
     AdcMean /= 64.0;
+#endif
 
 #ifdef LILYGO_T3
     // Referenzspannung 1.1V, Spannungsteiler 100K/100K, Abschwächung 11dB (Faktor 3.55) = 7.81 V bei Vollausschlag (4095)
@@ -308,15 +333,16 @@ void app_main_cpp()
   // vTaskDelay(2000 / portTICK_PERIOD_MS);
   if (UseDisplay)
     u8g2_SetPowerSave(&u8g2, 1);
+
+  ESP_LOGI(TAG, "Schalte LoRa-Modem ab...");
   LoRa.Close();
 
-  ESP_LOGI(TAG, "Going deep sleep...");
   const int wakeup_time_sec = 60;
   // printf("Enabling timer wakeup, %ds\n", wakeup_time_sec);
   esp_sleep_enable_timer_wakeup(wakeup_time_sec * 1000000);
 
   // LoRa-Modul während des Sleeps in den Reset schicken.
-  gpio_set_level(LoraReset, 0);
+  gpio_set_level(LoraReset, 1);
 
   // RTC-GPIO-Pins isolieren, damit die während des Deep-Sleeps nicht in der Gegen rumfloaten
   rtc_gpio_isolate(LoraLed);
@@ -327,8 +353,35 @@ void app_main_cpp()
 #elif defined(HELTEC_STICK_V3)
   rtc_gpio_isolate((gpio_num_t)LoRa.PinConfig->Reset);
 #endif
+  
+  // Pins auf Input
+  gpio_set_direction(LoraLed, GPIO_MODE_INPUT);
+  gpio_set_direction((gpio_num_t)LoRa.PinConfig->ChipSelect, GPIO_MODE_INPUT);
+  gpio_set_direction((gpio_num_t)LoRa.PinConfig->Reset, GPIO_MODE_INPUT);
+  gpio_set_direction((gpio_num_t)LoRa.PinConfig->DIO0, GPIO_MODE_INPUT);
+  gpio_set_direction(PIN_SCL_TEMP, GPIO_MODE_INPUT);
+  gpio_set_direction(PIN_SDA_TEMP, GPIO_MODE_INPUT);
+  gpio_set_direction((gpio_num_t)LoRa.PinConfig->Clock, GPIO_MODE_INPUT);
+  gpio_set_direction((gpio_num_t)LoRa.PinConfig->Miso, GPIO_MODE_INPUT);
+  gpio_set_direction((gpio_num_t)LoRa.PinConfig->Mosi, GPIO_MODE_INPUT);
+  
+  // Peripeherie-Spezialitäten Lilygo_T3
+#ifdef LILYGO_T3
+  #define DISPL_I2C_SDA GPIO_NUM_21
+  #define DISPL_I2C_SCL GPIO_NUM_22
+  #define ADC_PIN GPIO_NUM_36
+  gpio_set_direction(DISPL_I2C_SDA, GPIO_MODE_INPUT);
+  gpio_set_direction(DISPL_I2C_SCL, GPIO_MODE_INPUT);
+  gpio_set_direction(SDCARD_MOSI, GPIO_MODE_INPUT);
+  gpio_set_direction(SDCARD_MISO, GPIO_MODE_INPUT);
+  gpio_set_direction(SDCARD_SCLK, GPIO_MODE_INPUT);
+  gpio_set_direction(SDCARD_CS, GPIO_MODE_INPUT);
+  gpio_set_direction(BOARD_LED, GPIO_MODE_INPUT);
+  gpio_set_direction(ADC_PIN, GPIO_MODE_INPUT);
+#endif
 
   gettimeofday(&sleep_enter_time, NULL);
+  ESP_LOGI(TAG, "Gehe in Tiefschlaf...");
   esp_deep_sleep_start();
 }
 
@@ -378,7 +431,7 @@ esp_err_t BuildCBORBuf(uint8_t *aBuf, uint16_t aMaxBufSize, uint16_t &aCBORBuild
 
   cbor_encoder_create_map(&arr, &me1, CborIndefiniteLength);
   cbor_encode_text_stringz(&me1, POS_TAG);
-  cbor_encode_text_stringz(&me1, ORT_GEWAECHSHAUS);
+  cbor_encode_text_stringz(&me1, LORA_ORT);
   cbor_encode_text_stringz(&me1, VAL_TAG);
   cbor_encode_float(&me1, aTemp_deg);
   cbor_encoder_close_container(&arr, &me1);
@@ -398,7 +451,7 @@ esp_err_t BuildCBORBuf(uint8_t *aBuf, uint16_t aMaxBufSize, uint16_t &aCBORBuild
 
   cbor_encoder_create_map(&arr, &me1, CborIndefiniteLength);
   cbor_encode_text_stringz(&me1, POS_TAG);
-  cbor_encode_text_stringz(&me1, ORT_GEWAECHSHAUS);
+  cbor_encode_text_stringz(&me1, LORA_ORT);
   cbor_encode_text_stringz(&me1, VAL_TAG);
   cbor_encode_float(&me1, aHum_per);
   cbor_encoder_close_container(&arr, &me1);
@@ -418,7 +471,7 @@ esp_err_t BuildCBORBuf(uint8_t *aBuf, uint16_t aMaxBufSize, uint16_t &aCBORBuild
   cbor_encode_text_stringz(&me0, PRESS_TAG);
   cbor_encoder_create_map(&me0, &me1, CborIndefiniteLength);
   cbor_encode_text_stringz(&me1, POS_TAG);
-  cbor_encode_text_stringz(&me1, ORT_GEWAECHSHAUS);
+  cbor_encode_text_stringz(&me1, LORA_ORT);
   cbor_encode_text_stringz(&me1, VAL_TAG);
   cbor_encode_float(&me1, aPress_mBar);
   cbor_encoder_close_container(&me0, &me1);
@@ -427,7 +480,7 @@ esp_err_t BuildCBORBuf(uint8_t *aBuf, uint16_t aMaxBufSize, uint16_t &aCBORBuild
   cbor_encode_text_stringz(&me0, VOL_TAG);
   cbor_encoder_create_map(&me0, &me1, CborIndefiniteLength);
   cbor_encode_text_stringz(&me1, POS_TAG);
-  cbor_encode_text_stringz(&me1, ORT_GEWAECHSHAUS);
+  cbor_encode_text_stringz(&me1, LORA_ORT);
   cbor_encode_text_stringz(&me1, VAL_TAG);
   cbor_encode_float(&me1, iVBatt_V);
   cbor_encoder_close_container(&me0, &me1);
@@ -436,7 +489,7 @@ esp_err_t BuildCBORBuf(uint8_t *aBuf, uint16_t aMaxBufSize, uint16_t &aCBORBuild
       cbor_encode_text_stringz(&me0, ILLU_TAG);
       cbor_encoder_create_map(&me0, &me1, CborIndefiniteLength);
       cbor_encode_text_stringz(&me1, POS_TAG);
-      cbor_encode_text_stringz(&me1, ORT_GEWAECHSHAUS);
+      cbor_encode_text_stringz(&me1, LORA_ORT);
       cbor_encode_text_stringz(&me1, VAL_TAG);
       cbor_encode_float(&me1, 42);
       cbor_encoder_close_container(&me0, &me1);
@@ -445,7 +498,7 @@ esp_err_t BuildCBORBuf(uint8_t *aBuf, uint16_t aMaxBufSize, uint16_t &aCBORBuild
       cbor_encode_text_stringz(&me0, COOL_TAG);
       cbor_encoder_create_map(&me0, &me1, CborIndefiniteLength);
       cbor_encode_text_stringz(&me1, POS_TAG);
-      cbor_encode_text_stringz(&me1, ORT_GEWAECHSHAUS);
+      cbor_encode_text_stringz(&me1, LORA_ORT);
       cbor_encode_text_stringz(&me1, VAL_TAG);
       cbor_encode_float(&me1, 42);
       cbor_encoder_close_container(&me0, &me1);
