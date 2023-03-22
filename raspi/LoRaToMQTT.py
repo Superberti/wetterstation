@@ -187,7 +187,7 @@ class LoRaRcvCont(LoRa):
                 # Receive-Timeout aufgetreten? Manchmal geht der LoRa-Receiver in einen
                 # Zustand, wo er nichts mehr empfängt. Dann resetten!
                 now=time.time()
-                if now-LastReceivedTime > 120:
+                if now-LastReceivedTime > 300:
                     LastReceivedTime=now
                     print("\nTimeout beim Empfangen. Resette LoRa-Empfänger")
                     logging.error("Timeout beim Empfangen. Resette LoRa-Empfänger")
