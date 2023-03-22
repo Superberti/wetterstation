@@ -66,15 +66,28 @@ struct LoraPacketHeader
 #define VOL_TAG "V"
 // Paket-Zähler
 #define PC_TAG "PC"
+// Alle Daten
+#define DATA_TAG "DATA"
+// Watt (Solar)
+#define POWER_TAG "P"
 
 // Orte
-#define ORT_SCHUPPEN_SCHATTEN "A"
-#define ORT_SCHUPPEN_SONNE "B"
-#define ORT_SCHUPPEN_INNEN "C"
-#define ORT_CARPORT "D"
-#define ORT_GARTENHAUS "E"
-#define ORT_GEWAECHSHAUS "F"
-#define ORT_ARBEITSZIMMER "G"
+#define ORT_SCHUPPEN_SCHATTEN "SCHU_SCHA"
+#define ORT_SCHUPPEN_SONNE "SCHU_SO"
+#define ORT_SCHUPPEN_INNEN "SCHU_INN"
+#define ORT_CARPORT "CARPORT"
+#define ORT_GARTENHAUS "GARTEN"
+#define ORT_GEWAECHSHAUS "GEWAECHS"
+#define ORT_ARBEITSZIMMER "ARBEIT"
+#define ORT_WOHNZIMMER "WOHN"
+#define ORT_KUECHE "KUECHE"
+#define ORT_SCHLAFZIMMER "SCHLAF"
+#define ORT_DACHBODEN "DACH"
+#define ORT_HEIZUNG "HEIZUNG"
+#define ORT_KELLER "KELLER"
+#define ORT_BAD "BAD"
+#define ORT_TERRASSE "TERRASSE"
+#define ORT_CHILLECKE "CHILL"
 
 // Adressen der einzelnen Lora-Module
 #define LORA_ADDR_RASPI 0				// Raspi-Zentrale

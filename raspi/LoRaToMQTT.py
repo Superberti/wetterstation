@@ -20,11 +20,11 @@ LastReceivedTime = time.time()
 TopicTemp="/wetterstation/gwhs/temperatur"
 TopicHum="/wetterstation/gwhs/luftfeuchtigkeit"
 TopicVBatt="/wetterstation/gwhs/vbatt"
-PacketLostCounter=0
-CurrentPacketCounter=0
-FirstPacketCounter=0
-TotalCount=0
-PacketLossPer=0
+PacketLostCounter={}
+CurrentPacketCounter={}
+FirstPacketCounter={}
+TotalCount={}
+PacketLossPer={}
 # Lora-Paketheader, 16 Bytes
 class LoraPacketHeader(Structure):
     _pack_ = 1
@@ -106,33 +106,41 @@ class LoRaRcvCont(LoRa):
             self.reset_ptr_rx()
             self.set_mode(MODE.RXCONT)
             if LoraError == False:
-                gwhs=loads(bs)
-                if CurrentPacketCounter==0:
-                    CurrentPacketCounter=gwhs["PC"] # Initialisierung!
-                    FirstPacketCounter=CurrentPacketCounter
+                cbor_data=loads(bs)
+                Ort=cbor_data['Ort']
+                if Ort=="":
+                    raise Exception("Ortsangabe im CBOR nicht gefunden!") 
+                print(f'Ort: {Ort}')
+                cbor_data=cbor_data['Data']
+                if CurrentPacketCounter[Ort]==0:
+                    CurrentPacketCounter[Ort]=cbor_data["PC"] # Initialisierung!
+                    FirstPacketCounter[Ort]=CurrentPacketCounter[Ort]
                     
-                LastCounter=CurrentPacketCounter
-                CurrentPacketCounter=gwhs["PC"]
-                if LastCounter<CurrentPacketCounter-1:
-                    lost_msg=f'LoRa-Paket verloren. Alt: {LastCounter} Neu: {CurrentPacketCounter}'
+                LastCounter=CurrentPacketCounter[Ort]
+                CurrentPacketCounter[Ort]=cbor_data["PC"]
+                if LastCounter<CurrentPacketCounter[Ort]-1:
+                    lost_msg=f'LoRa-Paket verloren. Alt: {LastCounter} Neu: {CurrentPacketCounter[Ort]}'
                     print(lost_msg)
                     logging.error(lost_msg)
-                    if TotalCount>0:
-                        logging.error(f'PC: {CurrentPacketCounter}({TotalCount-PacketLostCounter}/{TotalCount}) LOSS: {PacketLossPer:.1f}%')
-                    PacketLostCounter+=1
-                    LastCounter=CurrentPacketCounter
+                    if TotalCount[Ort]>0:
+                        logging.error(f'PC: {CurrentPacketCounter[Ort]}({TotalCount[Ort]-PacketLostCounter[Ort]}/{TotalCount[Ort]}) LOSS: {PacketLossPer[Ort]:.1f}%')
+                    PacketLostCounter[Ort]+=1
+                    LastCounter=CurrentPacketCounter[Ort]
                 
-                TotalCount=CurrentPacketCounter-FirstPacketCounter+1
-                gwhs_temp=f'{gwhs["TE"][0]["W"]:.2f}'
-                gwhs_hum=f'{gwhs["LF"][0]["W"]:.1f}'
-                gwhs_v=f'{gwhs["V"]["W"]:.2f}'
+                TotalCount[Ort]=CurrentPacketCounter[Ort]-FirstPacketCounter[Ort]+1
+                temp=f'{cbor_data["TE"][0]["W"]:.2f}'
+                hum=f'{cbor_data["LF"][0]["W"]:.1f}'
+                volt=f'{cbor_data["V"]["W"]:.2f}'
                 
-                if TotalCount>0:
-                    PacketLossPer=(PacketLostCounter/TotalCount)*100.0
-                    print(f'PC: {CurrentPacketCounter}({TotalCount-PacketLostCounter}/{TotalCount}) LOSS: {PacketLossPer:.1f}% TE: {gwhs_temp}°C LF: {gwhs_hum}% VB: {gwhs_v} V')
-                #print(f'Temperatur: {gwhs_temp}°C')
-                #print(f'Luftfeuchtigkeit: {gwhs_hum}%')
-                msgs = [(TopicTemp, gwhs_temp),(TopicHum, gwhs_hum, 0, False),(TopicVBatt,gwhs_v)]
+                if TotalCount[Ort]>0:
+                    PacketLossPer[Ort]=(PacketLostCounter[Ort]/TotalCount[Ort])*100.0
+                    print(f'PC: {CurrentPacketCounter[Ort]}({TotalCount[Ort]-PacketLostCounter[Ort]}/{TotalCount[Ort]}) LOSS: {PacketLossPer[Ort]:.1f}% TE: {temp}°C LF: {hum}% VB: {volt} V')
+                #print(f'Temperatur: {temp}°C')
+                #print(f'Luftfeuchtigkeit: {hum}%')
+                TopicTemp=f'/wetterstation/{Ort}/temperatur'
+                TopicHum=f'/wetterstation/{Ort}/luftfeuchtigkeit'
+                TopicVBatt=f'/wetterstation/{Ort}/vbatt'
+                msgs = [(TopicTemp, temp),(TopicHum, hum, 0, False),(TopicVBatt,volt)]
                 pwd = {'username':"rutsch", 'password':"super_mqtt"}
                 publish.multiple(msgs, auth=pwd, hostname="localhost")
             else:

@@ -16,6 +16,7 @@
 #include "esp_adc/adc_oneshot.h"
 #include "esp_adc/adc_cali.h"
 #include "esp_adc/adc_cali_scheme.h"
+#include "esp_random.h"
 
 /*
  * Boardauswahl: Ich verwende bisher mit diesem Code 3 verschiedene Boards. Bitte hier definieren
@@ -153,7 +154,7 @@ void app_main_cpp()
 #endif
 #endif
 
-  gpio_num_t LoraReset = (gpio_num_t)LoRa.PinConfig->Reset;
+  //gpio_num_t LoraReset = (gpio_num_t)LoRa.PinConfig->Reset;
   gpio_num_t LoraLed = (gpio_num_t)LoRa.PinConfig->Led;
 
 #ifdef USE_ADC
@@ -337,12 +338,14 @@ void app_main_cpp()
   ESP_LOGI(TAG, "Schalte LoRa-Modem ab...");
   LoRa.Close();
 
-  const int wakeup_time_sec = 60;
-  // printf("Enabling timer wakeup, %ds\n", wakeup_time_sec);
+  // Wenn man nur ca. alle 2 Minuten sendet, dann sollte ein 18650-Akku ein Jahr halten
+  const int wakeup_time_sec = 105 + (esp_random() % 30);
+  
+  ESP_LOGI(TAG, "Weckzeit einstellen nach %d s\n", wakeup_time_sec);
   esp_sleep_enable_timer_wakeup(wakeup_time_sec * 1000000);
 
   // LoRa-Modul während des Sleeps in den Reset schicken.
-  gpio_set_level(LoraReset, 1);
+  // gpio_set_level(LoraReset, 0);
 
   // RTC-GPIO-Pins isolieren, damit die während des Deep-Sleeps nicht in der Gegen rumfloaten
   rtc_gpio_isolate(LoraLed);
@@ -353,7 +356,7 @@ void app_main_cpp()
 #elif defined(HELTEC_STICK_V3)
   rtc_gpio_isolate((gpio_num_t)LoRa.PinConfig->Reset);
 #endif
-  
+
   // Pins auf Input
   gpio_set_direction(LoraLed, GPIO_MODE_INPUT);
   gpio_set_direction((gpio_num_t)LoRa.PinConfig->ChipSelect, GPIO_MODE_INPUT);
@@ -364,12 +367,12 @@ void app_main_cpp()
   gpio_set_direction((gpio_num_t)LoRa.PinConfig->Clock, GPIO_MODE_INPUT);
   gpio_set_direction((gpio_num_t)LoRa.PinConfig->Miso, GPIO_MODE_INPUT);
   gpio_set_direction((gpio_num_t)LoRa.PinConfig->Mosi, GPIO_MODE_INPUT);
-  
+
   // Peripeherie-Spezialitäten Lilygo_T3
 #ifdef LILYGO_T3
-  #define DISPL_I2C_SDA GPIO_NUM_21
-  #define DISPL_I2C_SCL GPIO_NUM_22
-  #define ADC_PIN GPIO_NUM_36
+#define DISPL_I2C_SDA GPIO_NUM_21
+#define DISPL_I2C_SCL GPIO_NUM_22
+#define ADC_PIN GPIO_NUM_36
   gpio_set_direction(DISPL_I2C_SDA, GPIO_MODE_INPUT);
   gpio_set_direction(DISPL_I2C_SCL, GPIO_MODE_INPUT);
   gpio_set_direction(SDCARD_MOSI, GPIO_MODE_INPUT);
@@ -418,7 +421,11 @@ esp_err_t BuildCBORBuf(uint8_t *aBuf, uint16_t aMaxBufSize, uint16_t &aCBORBuild
   // schlägt der Encoder fehl!
   CborEncoder encoder, me0, me1, arr;
   cbor_encoder_init(&encoder, aBuf, aMaxBufSize, 0);
-  // cbor_encode_text_stringz(&encoder, "WS");
+
+  cbor_encode_text_stringz(&encoder, POS_TAG);
+  cbor_encode_text_stringz(&encoder, LORA_ORT);
+
+  cbor_encode_text_stringz(&encoder, DATA_TAG);
 
   // Paketzähler
   cbor_encoder_create_map(&encoder, &me0, CborIndefiniteLength);
@@ -430,8 +437,8 @@ esp_err_t BuildCBORBuf(uint8_t *aBuf, uint16_t aMaxBufSize, uint16_t &aCBORBuild
   cbor_encoder_create_array(&me0, &arr, CborIndefiniteLength);
 
   cbor_encoder_create_map(&arr, &me1, CborIndefiniteLength);
-  cbor_encode_text_stringz(&me1, POS_TAG);
-  cbor_encode_text_stringz(&me1, LORA_ORT);
+  // cbor_encode_text_stringz(&me1, POS_TAG);
+  // cbor_encode_text_stringz(&me1, LORA_ORT);
   cbor_encode_text_stringz(&me1, VAL_TAG);
   cbor_encode_float(&me1, aTemp_deg);
   cbor_encoder_close_container(&arr, &me1);
@@ -450,15 +457,15 @@ esp_err_t BuildCBORBuf(uint8_t *aBuf, uint16_t aMaxBufSize, uint16_t &aCBORBuild
   cbor_encoder_create_array(&me0, &arr, CborIndefiniteLength);
 
   cbor_encoder_create_map(&arr, &me1, CborIndefiniteLength);
-  cbor_encode_text_stringz(&me1, POS_TAG);
-  cbor_encode_text_stringz(&me1, LORA_ORT);
+  // cbor_encode_text_stringz(&me1, POS_TAG);
+  // cbor_encode_text_stringz(&me1, LORA_ORT);
   cbor_encode_text_stringz(&me1, VAL_TAG);
   cbor_encode_float(&me1, aHum_per);
   cbor_encoder_close_container(&arr, &me1);
   /*
       cbor_encoder_create_map(&arr, &me1, CborIndefiniteLength);
-      cbor_encode_text_stringz(&me1, POS_TAG);
-      cbor_encode_text_stringz(&me1, ORT_SCHUPPEN_SONNE);
+      //cbor_encode_text_stringz(&me1, POS_TAG);
+      //cbor_encode_text_stringz(&me1, ORT_SCHUPPEN_SONNE);
       cbor_encode_text_stringz(&me1, VAL_TAG);
       cbor_encode_float(&me1, hum2);
       cbor_encoder_close_container(&arr, &me1);
@@ -470,8 +477,8 @@ esp_err_t BuildCBORBuf(uint8_t *aBuf, uint16_t aMaxBufSize, uint16_t &aCBORBuild
   // Luftdruck
   cbor_encode_text_stringz(&me0, PRESS_TAG);
   cbor_encoder_create_map(&me0, &me1, CborIndefiniteLength);
-  cbor_encode_text_stringz(&me1, POS_TAG);
-  cbor_encode_text_stringz(&me1, LORA_ORT);
+  // cbor_encode_text_stringz(&me1, POS_TAG);
+  // cbor_encode_text_stringz(&me1, LORA_ORT);
   cbor_encode_text_stringz(&me1, VAL_TAG);
   cbor_encode_float(&me1, aPress_mBar);
   cbor_encoder_close_container(&me0, &me1);
@@ -479,8 +486,8 @@ esp_err_t BuildCBORBuf(uint8_t *aBuf, uint16_t aMaxBufSize, uint16_t &aCBORBuild
   // Batteriespannung
   cbor_encode_text_stringz(&me0, VOL_TAG);
   cbor_encoder_create_map(&me0, &me1, CborIndefiniteLength);
-  cbor_encode_text_stringz(&me1, POS_TAG);
-  cbor_encode_text_stringz(&me1, LORA_ORT);
+  // cbor_encode_text_stringz(&me1, POS_TAG);
+  // cbor_encode_text_stringz(&me1, LORA_ORT);
   cbor_encode_text_stringz(&me1, VAL_TAG);
   cbor_encode_float(&me1, iVBatt_V);
   cbor_encoder_close_container(&me0, &me1);
@@ -488,8 +495,8 @@ esp_err_t BuildCBORBuf(uint8_t *aBuf, uint16_t aMaxBufSize, uint16_t &aCBORBuild
       // Beleuchtungsstaerke
       cbor_encode_text_stringz(&me0, ILLU_TAG);
       cbor_encoder_create_map(&me0, &me1, CborIndefiniteLength);
-      cbor_encode_text_stringz(&me1, POS_TAG);
-      cbor_encode_text_stringz(&me1, LORA_ORT);
+      //cbor_encode_text_stringz(&me1, POS_TAG);
+      //cbor_encode_text_stringz(&me1, LORA_ORT);
       cbor_encode_text_stringz(&me1, VAL_TAG);
       cbor_encode_float(&me1, 42);
       cbor_encoder_close_container(&me0, &me1);
@@ -497,8 +504,8 @@ esp_err_t BuildCBORBuf(uint8_t *aBuf, uint16_t aMaxBufSize, uint16_t &aCBORBuild
       // Lüftergeschwindigkeit
       cbor_encode_text_stringz(&me0, COOL_TAG);
       cbor_encoder_create_map(&me0, &me1, CborIndefiniteLength);
-      cbor_encode_text_stringz(&me1, POS_TAG);
-      cbor_encode_text_stringz(&me1, LORA_ORT);
+      //cbor_encode_text_stringz(&me1, POS_TAG);
+      //cbor_encode_text_stringz(&me1, LORA_ORT);
       cbor_encode_text_stringz(&me1, VAL_TAG);
       cbor_encode_float(&me1, 42);
       cbor_encoder_close_container(&me0, &me1);
