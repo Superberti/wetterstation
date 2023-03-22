@@ -17,6 +17,9 @@
 #include "esp_adc/adc_cali.h"
 #include "esp_adc/adc_cali_scheme.h"
 #include "esp_random.h"
+#include "tools/json.hpp"
+
+using json = nlohmann::json;
 
 /*
  * Boardauswahl: Ich verwende bisher mit diesem Code 3 verschiedene Boards. Bitte hier definieren
@@ -38,6 +41,9 @@
 // An welchem Ort befindet sich der Sensor? (s. lorastructs.h)
 // #define LORA_ORT ORT_GEWAECHSHAUS
 #define LORA_ORT ORT_ARBEITSZIMMER
+
+// nicht Tiny-CBOR benutzen, sondern die JSON/CBOR-lib von N. Lohmann
+#define USE_CPPJSON
 
 extern "C"
 {
@@ -154,7 +160,7 @@ void app_main_cpp()
 #endif
 #endif
 
-  //gpio_num_t LoraReset = (gpio_num_t)LoRa.PinConfig->Reset;
+  // gpio_num_t LoraReset = (gpio_num_t)LoRa.PinConfig->Reset;
   gpio_num_t LoraLed = (gpio_num_t)LoRa.PinConfig->Led;
 
 #ifdef USE_ADC
@@ -340,7 +346,7 @@ void app_main_cpp()
 
   // Wenn man nur ca. alle 2 Minuten sendet, dann sollte ein 18650-Akku ein Jahr halten
   const int wakeup_time_sec = 105 + (esp_random() % 30);
-  
+
   ESP_LOGI(TAG, "Weckzeit einstellen nach %d s\n", wakeup_time_sec);
   esp_sleep_enable_timer_wakeup(wakeup_time_sec * 1000000);
 
@@ -417,7 +423,31 @@ void error(const char *format, ...)
 
 esp_err_t BuildCBORBuf(uint8_t *aBuf, uint16_t aMaxBufSize, uint16_t &aCBORBuildSize, uint32_t aPC, float aTemp_deg, float aHum_per, float aPress_mBar, float iVBatt_V)
 {
-  // Achtung: In einer Map müssesn stets zwei Einträge paarweise stehen, sonst
+#ifdef USE_CPPJSON
+
+  json j =
+      {
+          {POS_TAG, LORA_ORT},
+          {DATA_TAG,
+           {{PC_TAG, aPC}, 
+           {TEMP_TAG, json::array({VAL_TAG, aTemp_deg})}, 
+           {HUM_TAG, json::array({VAL_TAG, aHum_per})}, 
+           {PRESS_TAG, {VAL_TAG, aPress_mBar}}, 
+           {VOL_TAG, {VAL_TAG, iVBatt_V}}
+           }
+        }
+      };
+
+  // serialize it to CBOR
+  std::vector<std::uint8_t> v = json::to_cbor(j);
+  if (v.size() > aMaxBufSize)
+  {
+    ESP_LOGE(TAG, "CBOR file too big!");
+    aCBORBuildSize=0;
+    return ESP_OK;
+  }
+#else
+  // Achtung: In einer Map müssen stets zwei Einträge paarweise stehen, sonst
   // schlägt der Encoder fehl!
   CborEncoder encoder, me0, me1, arr;
   cbor_encoder_init(&encoder, aBuf, aMaxBufSize, 0);
@@ -514,6 +544,7 @@ esp_err_t BuildCBORBuf(uint8_t *aBuf, uint16_t aMaxBufSize, uint16_t &aCBORBuild
 
   aCBORBuildSize = cbor_encoder_get_buffer_size(&encoder, aBuf);
   // ESP_LOGI(TAG, "CBOR erstellt, Groesse: %d", len);
+#endif
   return ESP_OK;
 }
 
