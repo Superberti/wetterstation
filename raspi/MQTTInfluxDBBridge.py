@@ -19,24 +19,9 @@ INFLUXDB_PASSWORD = 'mqtt'
 INFLUXDB_DATABASE = 'wetterstation'
 
 MQTT_ADDRESS = 'localhost'
-MQTT_USER = 'Oliver'
-MQTT_PASSWORD = 'Oliver'
-MQTT_TOPIC = '/wetterstation/+'
-MQTT_REGEX = '/wetterstation/([^/]+)/([^/]+)'
+MQTT_WETTER_REGEX = '/wetterstation/([^/]+)/([^/]+)'
+MQTT_DEYE_REGEX = 'deye/([^/]+)'
 MQTT_CLIENT_ID = 'MQTTInfluxDBBridge'
-
-TopicTemp1="/wetterstation/aussen/temperatur"
-TopicTemp2="/wetterstation/aussen/temperatur_top"
-TopicPress1="/wetterstation/aussen/luftdruck"
-TopicHum1="/wetterstation/aussen/luftfeuchtigkeit"
-TopicHum2="/wetterstation/aussen/luftfeuchtigkeit_top"
-TopicLight="/wetterstation/aussen/beleuchtungsstaerke"
-TopicStatus="/wetterstation/aussen/status"
-TopicLuefter="/wetterstation/aussen/luefterdrehzahl"
-TopicError="/wetterstation/error/status"
-TopicTemp_gwhs="/wetterstation/gwhs/temperatur"
-TopicHum_gwhs="/wetterstation/gwhs/luftfeuchtigkeit"
-TopicVBatt_gwhs="/wetterstation/gwhs/vbatt"
 
 TopicCounter=0
 
@@ -52,21 +37,25 @@ class SensorData(NamedTuple):
 def on_connect(client, userdata, flags, rc):
     """ The callback for when the client receives a CONNACK response from the server."""
     print('Connected with result code ' + str(rc))
-    client.subscribe(TopicTemp1)
-    client.subscribe(TopicTemp2)
-    client.subscribe(TopicPress1)
-    client.subscribe(TopicHum1)
-    client.subscribe(TopicHum2)
-    client.subscribe(TopicLight)
-    client.subscribe(TopicStatus)
-    client.subscribe(TopicLuefter)
-    client.subscribe(TopicError)
-    client.subscribe(TopicTemp_gwhs)
-    client.subscribe(TopicHum_gwhs)
-    client.subscribe(TopicVBatt_gwhs)
+    
+    # Fahrradschuppen
+    client.subscribe("/wetterstation/aussen/temperatur")
+    client.subscribe("/wetterstation/aussen/luftdruck")
+    client.subscribe("/wetterstation/aussen/luftfeuchtigkeit")
+    
+    # Gewächshaus
+    client.subscribe("/wetterstation/gwhs/temperatur")
+    client.subscribe("/wetterstation/gwhs/luftfeuchtigkeit")
+    client.subscribe("/wetterstation/gwhs/vbatt")
+    
+    # Balkonkraftwerk
+    client.subscribe("deye/logger_status")
+    client.subscribe("deye/day_energy")
+    client.subscribe("deye/total_energy")
+    client.subscribe("deye/ac/l1/power")
  
 def _parse_mqtt_message(topic, payload):
-    match = re.match(MQTT_REGEX, topic)
+    match = re.match(MQTT_WETTER_REGEX, topic)
     if match:
         location = match.group(1)
         measurement = match.group(2)
@@ -75,9 +64,23 @@ def _parse_mqtt_message(topic, payload):
         if payload == '':
             return None
         return SensorData(location, measurement, float(payload))
-    else:
-        print('Kein match:'+topic)
-        return None
+    
+    match = re.match(MQTT_DEYE_REGEX, topic)
+    if match:
+        location = "deye"
+        measurement = match.group(1)
+        if measurement == 'ac':
+            measurement = 'power'
+            
+        if measurement == 'logger_status':
+            if payload == 'online':
+                return SensorData(location, measurement, 0)
+            else:
+                return SensorData(location, measurement, 1)
+        if payload == '':
+            return None
+        return SensorData(location, measurement, float(payload))
+    return None
 
 def _send_sensor_data_to_influxdb(sensor_data):
     global NeelixClient

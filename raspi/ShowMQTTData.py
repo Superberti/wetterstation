@@ -9,10 +9,6 @@ import time
 INFLUXDB_ADDRESS = 'localhost'
 
 MQTT_ADDRESS = 'localhost'
-MQTT_USER = 'Oliver'
-MQTT_PASSWORD = 'Oliver'
-MQTT_TOPIC = '/wetterstation/+'
-MQTT_REGEX = '/wetterstation/([^/]+)/([^/]+)'
 MQTT_CLIENT_ID = 'ShowMQTTData'
 
 TopicTemp1="/wetterstation/aussen/temperatur"
@@ -48,7 +44,10 @@ def on_connect(client, userdata, flags, rc):
     client.subscribe(TopicTemp_gwhs)
     client.subscribe(TopicHum_gwhs)
     client.subscribe(TopicVBatt_gwhs)
- 
+    client.subscribe("deye/logger_status")
+    client.subscribe("deye/day_energy")
+    client.subscribe("deye/total_energy")
+    client.subscribe("deye/ac/l1/power")
 
 def on_message(client, userdata, msg):
     """The callback for when a PUBLISH message is received from the server."""
