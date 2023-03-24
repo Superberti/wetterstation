@@ -18,6 +18,16 @@
 #include "esp_adc/adc_cali_scheme.h"
 #include "esp_random.h"
 #include "tools/json.hpp"
+#include <esp_sleep.h>
+#include <driver/rtc_io.h>
+#include "lorastructs.h"
+#include "esp_wifi.h"
+#include "lora_temp.h"
+extern "C"
+{
+#include <u8g2.h>
+#include <u8g2_esp32_hal.h>
+}
 
 using json = nlohmann::json;
 
@@ -42,21 +52,7 @@ using json = nlohmann::json;
 // #define LORA_ORT ORT_GEWAECHSHAUS
 #define LORA_ORT ORT_ARBEITSZIMMER
 
-// nicht Tiny-CBOR benutzen, sondern die JSON/CBOR-lib von N. Lohmann
-#define USE_CPPJSON
-
-extern "C"
-{
-#include <u8g2.h>
-#include <u8g2_esp32_hal.h>
-}
-#include "cbor.h"
-#include <esp_sleep.h>
-#include <driver/rtc_io.h>
-
-#include "lorastructs.h"
-#include "esp_wifi.h"
-#include "lora_temp.h"
+// Tiny-CBOR benutzen, sondern die JSON/CBOR-lib von N. Lohmann
 
 #define TAG "LORA_TEMP"
 
@@ -423,128 +419,31 @@ void error(const char *format, ...)
 
 esp_err_t BuildCBORBuf(uint8_t *aBuf, uint16_t aMaxBufSize, uint16_t &aCBORBuildSize, uint32_t aPC, float aTemp_deg, float aHum_per, float aPress_mBar, float iVBatt_V)
 {
-#ifdef USE_CPPJSON
-
   json j =
       {
           {POS_TAG, LORA_ORT},
           {DATA_TAG,
-           {{PC_TAG, aPC}, 
-           {TEMP_TAG, json::array({VAL_TAG, aTemp_deg})}, 
-           {HUM_TAG, json::array({VAL_TAG, aHum_per})}, 
-           {PRESS_TAG, {VAL_TAG, aPress_mBar}}, 
-           {VOL_TAG, {VAL_TAG, iVBatt_V}}
-           }
-        }
-      };
+           {{PC_TAG, aPC},
+            {TEMP_TAG, {{VAL_TAG, aTemp_deg}}},
+            {HUM_TAG, {{VAL_TAG, aHum_per}}},
+            {PRESS_TAG, {{VAL_TAG, aPress_mBar}}},
+            {VOL_TAG, {{VAL_TAG, iVBatt_V}}}}}};
 
   // serialize it to CBOR
   std::vector<std::uint8_t> v = json::to_cbor(j);
+  aCBORBuildSize = v.size();
   if (v.size() > aMaxBufSize)
   {
     ESP_LOGE(TAG, "CBOR file too big!");
-    aCBORBuildSize=0;
+    aCBORBuildSize = 0;
     return ESP_OK;
   }
-#else
-  // Achtung: In einer Map müssen stets zwei Einträge paarweise stehen, sonst
-  // schlägt der Encoder fehl!
-  CborEncoder encoder, me0, me1, arr;
-  cbor_encoder_init(&encoder, aBuf, aMaxBufSize, 0);
+  else
+  {
+    // ESP_LOGI(TAG, "CBOR file size: %d!",aCBORBuildSize);
+    memcpy(aBuf, v.data(), aCBORBuildSize);
+  }
 
-  cbor_encode_text_stringz(&encoder, POS_TAG);
-  cbor_encode_text_stringz(&encoder, LORA_ORT);
-
-  cbor_encode_text_stringz(&encoder, DATA_TAG);
-
-  // Paketzähler
-  cbor_encoder_create_map(&encoder, &me0, CborIndefiniteLength);
-  cbor_encode_text_stringz(&me0, PC_TAG);
-  cbor_encode_int(&me0, aPC);
-
-  // Temperaturen
-  cbor_encode_text_stringz(&me0, TEMP_TAG);
-  cbor_encoder_create_array(&me0, &arr, CborIndefiniteLength);
-
-  cbor_encoder_create_map(&arr, &me1, CborIndefiniteLength);
-  // cbor_encode_text_stringz(&me1, POS_TAG);
-  // cbor_encode_text_stringz(&me1, LORA_ORT);
-  cbor_encode_text_stringz(&me1, VAL_TAG);
-  cbor_encode_float(&me1, aTemp_deg);
-  cbor_encoder_close_container(&arr, &me1);
-  /*
-      cbor_encoder_create_map(&arr, &me1, CborIndefiniteLength);
-      cbor_encode_text_stringz(&me1, POS_TAG);
-      cbor_encode_text_stringz(&me1, ORT_SCHUPPEN_SONNE);
-      cbor_encode_text_stringz(&me1, VAL_TAG);
-      cbor_encode_float(&me1, temp2);
-      cbor_encoder_close_container(&arr, &me1);
-  */
-  cbor_encoder_close_container(&me0, &arr);
-
-  // Luftfeuchtigkeit
-  cbor_encode_text_stringz(&me0, HUM_TAG);
-  cbor_encoder_create_array(&me0, &arr, CborIndefiniteLength);
-
-  cbor_encoder_create_map(&arr, &me1, CborIndefiniteLength);
-  // cbor_encode_text_stringz(&me1, POS_TAG);
-  // cbor_encode_text_stringz(&me1, LORA_ORT);
-  cbor_encode_text_stringz(&me1, VAL_TAG);
-  cbor_encode_float(&me1, aHum_per);
-  cbor_encoder_close_container(&arr, &me1);
-  /*
-      cbor_encoder_create_map(&arr, &me1, CborIndefiniteLength);
-      //cbor_encode_text_stringz(&me1, POS_TAG);
-      //cbor_encode_text_stringz(&me1, ORT_SCHUPPEN_SONNE);
-      cbor_encode_text_stringz(&me1, VAL_TAG);
-      cbor_encode_float(&me1, hum2);
-      cbor_encoder_close_container(&arr, &me1);
-
-
-  */
-  cbor_encoder_close_container(&me0, &arr);
-
-  // Luftdruck
-  cbor_encode_text_stringz(&me0, PRESS_TAG);
-  cbor_encoder_create_map(&me0, &me1, CborIndefiniteLength);
-  // cbor_encode_text_stringz(&me1, POS_TAG);
-  // cbor_encode_text_stringz(&me1, LORA_ORT);
-  cbor_encode_text_stringz(&me1, VAL_TAG);
-  cbor_encode_float(&me1, aPress_mBar);
-  cbor_encoder_close_container(&me0, &me1);
-
-  // Batteriespannung
-  cbor_encode_text_stringz(&me0, VOL_TAG);
-  cbor_encoder_create_map(&me0, &me1, CborIndefiniteLength);
-  // cbor_encode_text_stringz(&me1, POS_TAG);
-  // cbor_encode_text_stringz(&me1, LORA_ORT);
-  cbor_encode_text_stringz(&me1, VAL_TAG);
-  cbor_encode_float(&me1, iVBatt_V);
-  cbor_encoder_close_container(&me0, &me1);
-  /*
-      // Beleuchtungsstaerke
-      cbor_encode_text_stringz(&me0, ILLU_TAG);
-      cbor_encoder_create_map(&me0, &me1, CborIndefiniteLength);
-      //cbor_encode_text_stringz(&me1, POS_TAG);
-      //cbor_encode_text_stringz(&me1, LORA_ORT);
-      cbor_encode_text_stringz(&me1, VAL_TAG);
-      cbor_encode_float(&me1, 42);
-      cbor_encoder_close_container(&me0, &me1);
-
-      // Lüftergeschwindigkeit
-      cbor_encode_text_stringz(&me0, COOL_TAG);
-      cbor_encoder_create_map(&me0, &me1, CborIndefiniteLength);
-      //cbor_encode_text_stringz(&me1, POS_TAG);
-      //cbor_encode_text_stringz(&me1, LORA_ORT);
-      cbor_encode_text_stringz(&me1, VAL_TAG);
-      cbor_encode_float(&me1, 42);
-      cbor_encoder_close_container(&me0, &me1);
-  */
-  cbor_encoder_close_container(&encoder, &me0);
-
-  aCBORBuildSize = cbor_encoder_get_buffer_size(&encoder, aBuf);
-  // ESP_LOGI(TAG, "CBOR erstellt, Groesse: %d", len);
-#endif
   return ESP_OK;
 }
 
