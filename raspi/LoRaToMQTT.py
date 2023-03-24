@@ -244,9 +244,9 @@ def lora_init():
     # Sendefrequenz: 434,54 MHz
     # Preambellänge: 14
     # Bandbreite 500 kHz
-    # Sync-Byte: 0x3d
-    # Spreading-Factor: 10 = 1024 Chips/symbol
-    # Coding-Rate: 7 = 4/7 = 1,75-facher FEC-Overhead
+    # Sync-Byte: 0x37
+    # Spreading-Factor: 8 = 256 Chips/symbol
+    # Coding-Rate: 6 = 4/6 = 1,5-facher FEC-Overhead
     global lora
     lora.reset()
     lora.set_mode(MODE.STDBY)
@@ -255,9 +255,9 @@ def lora_init():
     lora.set_freq(434.54)
     lora.set_preamble(14)
     lora.set_bw(9) # 8=250 kHz, 9=500 kHz
-    lora.set_sync_word(0x3d)
-    lora.set_coding_rate(CODING_RATE.CR4_7)
-    lora.set_spreading_factor(10)
+    lora.set_sync_word(0x37)
+    lora.set_coding_rate(CODING_RATE.CR4_6)
+    lora.set_spreading_factor(8)
     #lora.set_pa_config(max_power=0, output_power=0)
     #lora.set_lna_gain(GAIN.G1)
     lora.set_implicit_header_mode(False)

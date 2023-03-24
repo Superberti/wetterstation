@@ -201,9 +201,9 @@ void app_main_cpp()
   // SX1276: Jedes Nibble unterschiedlich von 1-7, also z.B. 0x37 => 0xYZ (Y!=Z, Z und Y <8 && >0)
   // SX1262: 0Y4Z4, also hier 0x3474
   // Sync-Byte: 0x37
-  // Spreading-Factor: 10 = 1024 Chips/symbol
-  // Coding-Rate: 7 = 4/7 = 1,75-facher FEC-Overhead
-  ret = LoRa.SetupModule(LORA_ADDR_GWHS, 434.54e6, 14, 500E3, 0x37, 10, 7);
+  // Spreading-Factor: 8 = 256 Chips/symbol
+  // Coding-Rate: 6 = 4/6 = 1,5-facher FEC-Overhead
+  ret = LoRa.SetupModule(LORA_ADDR_GWHS, 434.54e6, 14, 500E3, 0x37, 10, 6);
   if (ret != ESP_OK)
     ESP_LOGE(TAG, "Fehler beim Initialisieren des LoRa Moduls: %d", ret);
   EndTime = GetTime_us();
