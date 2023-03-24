@@ -49,8 +49,8 @@ using json = nlohmann::json;
 #define USE_ADC
 
 // An welchem Ort befindet sich der Sensor? (s. lorastructs.h)
-// #define LORA_ORT ORT_GEWAECHSHAUS
-#define LORA_ORT ORT_ARBEITSZIMMER
+#define LORA_ORT ORT_GEWAECHSHAUS
+// #define LORA_ORT ORT_ARBEITSZIMMER
 
 // Tiny-CBOR benutzen, sondern die JSON/CBOR-lib von N. Lohmann
 
