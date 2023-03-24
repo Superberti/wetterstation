@@ -386,7 +386,8 @@ void app_main_cpp()
 #endif
 
   gettimeofday(&sleep_enter_time, NULL);
-  ESP_LOGI(TAG, "Gehe in Tiefschlaf...");
+  EndTime = GetTime_us();
+  ESP_LOGI(TAG, "Gehe in Tiefschlaf nach %.1f ms", (EndTime - StartTime) / 1000.0);
   esp_deep_sleep_start();
 }
 
