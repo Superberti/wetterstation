@@ -14,8 +14,8 @@ import threading
 import paho.mqtt.client as mqtt
 import paho.mqtt.publish as publish
 
-FORMAT = '%(asctime)s %(message)s'
-logging.basicConfig(format=FORMAT, filename='/var/log/LoRa_receiver.log', encoding='utf-8', level=logging.INFO)
+#logging.basicConfig(format='%(asctime)s %(message)s', filename='/var/log/LoRa_receiver.log', encoding='utf-8', level=logging.INFO)
+logging.basicConfig(format='%(asctime)s %(message)s', encoding='utf-8', level=logging.INFO)
 LastReceivedTime = time.time()
 TopicTemp="/wetterstation/gwhs/temperatur"
 TopicHum="/wetterstation/gwhs/luftfeuchtigkeit"
@@ -110,8 +110,26 @@ class LoRaRcvCont(LoRa):
                 Ort=cbor_data['Ort']
                 if Ort=="":
                     raise Exception("Ortsangabe im CBOR nicht gefunden!") 
-                print(f'Ort: {Ort}')
-                cbor_data=cbor_data['Data']
+                #print(f'Ort: {Ort}')
+                
+                cbor_data=cbor_data['DATA']
+                #print (cbor_data)
+                # Zähler initialisieren
+                if not Ort in CurrentPacketCounter:
+                    CurrentPacketCounter[Ort]=0
+                    
+                if not Ort in FirstPacketCounter:
+                    FirstPacketCounter[Ort]=0
+                    
+                if not Ort in PacketLossPer:
+                    PacketLossPer[Ort]=0
+                    
+                if not Ort in TotalCount:
+                    TotalCount[Ort]=0
+                    
+                if not Ort in PacketLostCounter:
+                    PacketLostCounter[Ort]=0
+                    
                 if CurrentPacketCounter[Ort]==0:
                     CurrentPacketCounter[Ort]=cbor_data["PC"] # Initialisierung!
                     FirstPacketCounter[Ort]=CurrentPacketCounter[Ort]
@@ -128,13 +146,13 @@ class LoRaRcvCont(LoRa):
                     LastCounter=CurrentPacketCounter[Ort]
                 
                 TotalCount[Ort]=CurrentPacketCounter[Ort]-FirstPacketCounter[Ort]+1
-                temp=f'{cbor_data["TE"][0]["W"]:.2f}'
-                hum=f'{cbor_data["LF"][0]["W"]:.1f}'
+                temp=f'{cbor_data["TE"]["W"]:.2f}'
+                hum=f'{cbor_data["LF"]["W"]:.1f}'
                 volt=f'{cbor_data["V"]["W"]:.2f}'
                 
                 if TotalCount[Ort]>0:
                     PacketLossPer[Ort]=(PacketLostCounter[Ort]/TotalCount[Ort])*100.0
-                    print(f'PC: {CurrentPacketCounter[Ort]}({TotalCount[Ort]-PacketLostCounter[Ort]}/{TotalCount[Ort]}) LOSS: {PacketLossPer[Ort]:.1f}% TE: {temp}°C LF: {hum}% VB: {volt} V')
+                    print(f'{Ort}: PC: {CurrentPacketCounter[Ort]}({TotalCount[Ort]-PacketLostCounter[Ort]}/{TotalCount[Ort]}) LOSS: {PacketLossPer[Ort]:.1f}% TE: {temp}°C LF: {hum}% VB: {volt} V')
                 #print(f'Temperatur: {temp}°C')
                 #print(f'Luftfeuchtigkeit: {hum}%')
                 TopicTemp=f'/wetterstation/{Ort}/temperatur'
