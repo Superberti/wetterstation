@@ -88,12 +88,14 @@ struct LoraPacketHeader
 #define ORT_BAD "BAD"
 #define ORT_TERRASSE "TERRASSE"
 #define ORT_CHILLECKE "CHILL"
+#define ORT_SYMPATEC "SYMPATEC"
 
 // Adressen der einzelnen Lora-Module
 #define LORA_ADDR_RASPI 0				// Raspi-Zentrale
 #define LORA_ADDR_GWHS 1				// Gewächshaus (Temperatur)
 #define LORA_ADDR_CARPORT 2			// Carport-Wetterstation
 #define LORA_ADDR_BIKEPORT 3		// Fahrradschuppen
+#define LORA_ADDR_SYMPATEC 4    // Sympatec in Clausthal
 
 
 #endif
