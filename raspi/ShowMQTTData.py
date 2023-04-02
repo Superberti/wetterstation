@@ -48,6 +48,9 @@ def on_connect(client, userdata, flags, rc):
     client.subscribe("deye/day_energy")
     client.subscribe("deye/total_energy")
     client.subscribe("deye/ac/l1/power")
+    client.subscribe("/wetterstation/SYMPATEC/temperatur")
+    client.subscribe("/wetterstation/SYMPATEC/luftfeuchtigkeit")
+    client.subscribe("/wetterstation/SYMPATEC/vbatt")
 
 def on_message(client, userdata, msg):
     """The callback for when a PUBLISH message is received from the server."""
