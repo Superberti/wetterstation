@@ -157,7 +157,7 @@ esp_err_t SX1278_LoRa::Init(void)
   return Idle();
 }
 
-esp_err_t SX1278_LoRa::SetupModule(uint8_t aAddress, long aFrq, uint16_t aPreambleLength, long aBandwidth, uint8_t aSyncByte, uint8_t aSpreadingFactor, uint8_t aCodingRate)
+esp_err_t SX1278_LoRa::SetupModule(uint8_t aAddress, long aFrq, uint16_t aPreambleLength, long aBandwidth, uint8_t aSyncByte, uint8_t aSpreadingFactor, uint8_t aCodingRate, uint8_t aTxPower)
 {
   mAddress=aAddress;
   mInitialized = false;
@@ -215,6 +215,12 @@ esp_err_t SX1278_LoRa::SetupModule(uint8_t aAddress, long aFrq, uint16_t aPreamb
   if (ret != ESP_OK)
   {
     ESP_LOGE("lora", "SetCodingRate failed: %d", ret);
+    return ret;
+  }
+  ret = SetTxPower(aTxPower);
+  if (ret != ESP_OK)
+  {
+    ESP_LOGE("lora", "SetTxPower failed: %d", ret);
     return ret;
   }
   mInitialized = true;

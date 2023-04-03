@@ -190,18 +190,8 @@ void app_main_cpp()
   ESP_LOGI(TAG, "SSD1306 Init fertig nach %.1f ms", (EndTime - StartTime) / 1000.0);
   gpio_set_level(LoraLed, 0);
 
-  // Sendefrequenz: 434,54 MHz
-  // Preambellänge: 14
-  // Bandbreite 500 kHz
-  // Achtung: Damit auch der neuere SX1262 verwendet wird, muss man sich über die Sync-Words ein paar mehr
-  // Gedanken machen. Der SX1262 hat 2 Bytes Sync, nicht nur 1 Byte. Damit sich trotzdem beide verstehen, muss man
-  // folgendes beachten:
-  // SX1276: Jedes Nibble unterschiedlich von 1-7, also z.B. 0x37 => 0xYZ (Y!=Z, Z und Y <8 && >0)
-  // SX1262: 0Y4Z4, also hier 0x3474
-  // Sync-Byte: 0x37
-  // Spreading-Factor: 8 = 256 Chips/symbol
-  // Coding-Rate: 6 = 4/6 = 1,5-facher FEC-Overhead
-  ret = LoRa.SetupModule(LORA_ADDR_GWHS, 434.54e6, 14, 500E3, 0x37, 8, 6);
+  // Parameter s. InitLoRa
+  ret = InitLoRa(LoRa);
   if (ret != ESP_OK)
     ESP_LOGE(TAG, "Fehler beim Initialisieren des LoRa Moduls: %d", ret);
   EndTime = GetTime_us();
@@ -284,7 +274,7 @@ void app_main_cpp()
         ESP_LOGE(TAG, "Resette LORA-Modul...");
         LoRa.Reset();
         vTaskDelay(pdMS_TO_TICKS(1000));
-        ret = LoRa.SetupModule(LORA_ADDR_GWHS, 434.54e6, 14, 500E3, 0x3d, 10, 7);
+        ret = InitLoRa(LoRa);
         if (ret != ESP_OK)
           ESP_LOGI(TAG, "Fehler beim Initialisieren des LoRa Moduls: %d", ret);
         else
@@ -387,6 +377,23 @@ void app_main_cpp()
   EndTime = GetTime_us();
   ESP_LOGI(TAG, "Gehe in Tiefschlaf nach %.1f ms", (EndTime - StartTime) / 1000.0);
   esp_deep_sleep_start();
+}
+
+esp_err_t InitLoRa(SX1278_LoRa &aLoRa)
+{
+  // Sendefrequenz: 434,54 MHz
+  // Preambellänge: 14
+  // Bandbreite 500 kHz
+  // Achtung: Damit auch der neuere SX1262 verwendet wird, muss man sich über die Sync-Words ein paar mehr
+  // Gedanken machen. Der SX1262 hat 2 Bytes Sync, nicht nur 1 Byte. Damit sich trotzdem beide verstehen, muss man
+  // folgendes beachten:
+  // SX1276: Jedes Nibble unterschiedlich von 1-7, also z.B. 0x37 => 0xYZ (Y!=Z, Z und Y <8 && >0)
+  // SX1262: 0Y4Z4, also hier 0x3474
+  // Sync-Byte: 0x37
+  // Spreading-Factor: 8 = 256 Chips/symbol
+  // Coding-Rate: 6 = 4/6 = 1,5-facher FEC-Overhead
+  // Tx-Power 2-17
+  return aLoRa.SetupModule(LORA_ADDR_GWHS, 434.54e6, 14, 500E3, 0x37, 8, 6, 15);
 }
 
 int64_t GetTime_us()
