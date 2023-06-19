@@ -23,6 +23,7 @@
 #include "lorastructs.h"
 #include "esp_wifi.h"
 #include "lora_temp.h"
+#include "bmp390.h"
 extern "C"
 {
 #include <u8g2.h>
@@ -189,6 +190,21 @@ void app_main_cpp()
   int64_t EndTime = GetTime_us();
   ESP_LOGI(TAG, "SSD1306 Init fertig nach %.1f ms", (EndTime - StartTime) / 1000.0);
   gpio_set_level(LoraLed, 0);
+
+  // Temperatur und Luftdruck BMP390
+  BMP390 Bmp;
+  ret = Bmp.Init();
+  if (ret != ESP_OK)
+    ESP_LOGE(TAG, "Fehler beim Initialisieren des BMP390: %d", ret);
+  else
+  {
+    double p,t;
+    ret = Bmp.ReadTempAndPress(t,p);
+    if (ret != ESP_OK)
+      ESP_LOGE(TAG, "Fehler beim Auslesen des BMP390: %d", ret);
+    else
+      ESP_LOGI(TAG, "Aktuelle Temperatur: %.2f°C. Luftdruck: %.1f mbar",t,p);
+  }
 
   // Parameter s. InitLoRa
   ret = InitLoRa(LoRa);
