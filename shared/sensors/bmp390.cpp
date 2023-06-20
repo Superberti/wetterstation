@@ -9,37 +9,52 @@
 #include "bmp390.h"
 #include <math.h>
 
-#define ACK_CHECK_EN 0x1                        /*!< I2C master will check ack from slave*/
-#define ACK_CHECK_DIS 0x0                       /*!< I2C master will not check ack from slave */
+#define ACK_CHECK_EN 0x1  /*!< I2C master will check ack from slave*/
+#define ACK_CHECK_DIS 0x0 /*!< I2C master will not check ack from slave */
 
-
-BMP390::BMP390()
+BMP390::BMP390(int aPort, uint8_t aI2CAddr, int aSDA_Pin, int aSCL_Pin)
 {
-
+  mPort = aPort;
+  mSDA_Pin = aSDA_Pin;
+  mSCL_Pin = aSCL_Pin;
+  mI2CAddr = aI2CAddr;
 }
 
 BMP390::~BMP390(void)
 {
-
 }
 
 /// @brief ESP-32 initialisieren
 /// @param addr I2C-Adresse (0x76 oder 0x77)
-/// @return 
-esp_err_t BMP390::Init(uint8_t addr)
+/// @return
+esp_err_t BMP390::Init()
 {
-  esp_err_t status=ESP_OK;
-  _i2caddr = addr;
-  if (read8(BMP390_REGISTER_CHIP_ID) != BMP390_CHIP_ID)
-    return ESP_ERR_INVALID_VERSION;
+  if (mPort > 1)
+    return ESP_ERR_INVALID_ARG;
+  esp_err_t status = ESP_OK;
 
-  status = ReadCalibData();
-  if (status!=ESP_OK)
+  i2c_config_t conf;
+  conf.mode = I2C_MODE_MASTER;
+  conf.sda_io_num = mSDA_Pin;
+  conf.sda_pullup_en = GPIO_PULLUP_ENABLE;
+  conf.scl_io_num = mSCL_Pin;
+  conf.scl_pullup_en = GPIO_PULLUP_ENABLE;
+  conf.master.clk_speed = 100000; // Fast Mode, 1000000;  // Fast Mode Plus=1MHz
+  conf.clk_flags = 0;
+  i2c_param_config(mPort, &conf);
+  status = i2c_driver_install(mPort, conf.mode, 0, 0, 0);
+  if (status != ESP_OK)
     return status;
 
-  //vTaskDelay(10 / portTICK_PERIOD_MS);
-  // Oversampling setzen. Bit 0..2: Druck, Bit 3..5 Temperatur
-  return WriteRegister(BMP390_REGISTER_OSR,(SAMPLING_X2 << 3) | SAMPLING_X32);
+  if (Read8(BMP390_REGISTER_CHIP_ID) != BMP390_CHIP_ID)
+    return ESP_ERR_INVALID_VERSION;
+  Reset();
+  status = ReadCalibData();
+  if (status != ESP_OK)
+    return status;
+
+  //  Oversampling setzen. Bit 0..2: Druck, Bit 3..5 Temperatur
+  return WriteRegister(BMP390_REGISTER_OSR, (SAMPLING_X2 << 3) | SAMPLING_X32);
 }
 
 /**************************************************************************/
@@ -52,14 +67,14 @@ esp_err_t BMP390::WriteRegister(uint8_t reg_addr, uint8_t value)
   esp_err_t ret;
   i2c_cmd_handle_t cmd = i2c_cmd_link_create();
   i2c_master_start(cmd);
-  i2c_master_write_byte(cmd, _i2caddr << 1 | I2C_MASTER_WRITE, ACK_CHECK_EN);
+  i2c_master_write_byte(cmd, mI2CAddr << 1 | I2C_MASTER_WRITE, ACK_CHECK_EN);
   i2c_master_write_byte(cmd, reg_addr, ACK_CHECK_EN);
   i2c_master_write_byte(cmd, value, ACK_CHECK_EN);
   i2c_master_stop(cmd);
   ret = i2c_master_cmd_begin(I2C_NUM_0, cmd, 1000 / portTICK_PERIOD_MS);
   i2c_cmd_link_delete(cmd);
-  if (ret!=ESP_OK)
-    ESP_LOGE("BMP390::WriteRegister", "I2C error no.: %d",ret);
+  if (ret != ESP_OK)
+    ESP_LOGE("BMP390::WriteRegister", "I2C error no.: %d", ret);
   return ret;
 }
 
@@ -68,25 +83,25 @@ esp_err_t BMP390::ReadRegister(uint8_t reg_addr, uint8_t *data, uint16_t len)
   esp_err_t ret;
   i2c_cmd_handle_t cmd = i2c_cmd_link_create();
   i2c_master_start(cmd);
-  i2c_master_write_byte(cmd, _i2caddr << 1 | I2C_MASTER_WRITE, ACK_CHECK_EN);
+  i2c_master_write_byte(cmd, mI2CAddr << 1 | I2C_MASTER_WRITE, ACK_CHECK_EN);
   i2c_master_write_byte(cmd, reg_addr, ACK_CHECK_EN);
   i2c_master_stop(cmd);
   ret = i2c_master_cmd_begin(I2C_NUM_0, cmd, 1000 / portTICK_PERIOD_MS);
   i2c_cmd_link_delete(cmd);
   if (ret != ESP_OK)
   {
-    ESP_LOGE("BMP390::ReadRegister", "I2C error no.: %d",ret);
+    ESP_LOGE("BMP390::ReadRegister", "I2C error no.: %d", ret);
     return ret;
   }
   cmd = i2c_cmd_link_create();
   i2c_master_start(cmd);
-  i2c_master_write_byte(cmd, _i2caddr << 1 | I2C_MASTER_READ, ACK_CHECK_EN);
-  i2c_master_read(cmd, data, len,  I2C_MASTER_LAST_NACK);
+  i2c_master_write_byte(cmd, mI2CAddr << 1 | I2C_MASTER_READ, ACK_CHECK_EN);
+  i2c_master_read(cmd, data, len, I2C_MASTER_LAST_NACK);
   i2c_master_stop(cmd);
   ret = i2c_master_cmd_begin(I2C_NUM_0, cmd, 1000 / portTICK_PERIOD_MS);
   i2c_cmd_link_delete(cmd);
-  if (ret!=ESP_OK)
-    ESP_LOGE("BMP390::ReadRegister", "I2C error no.: %d",ret);
+  if (ret != ESP_OK)
+    ESP_LOGE("BMP390::ReadRegister", "I2C error no.: %d", ret);
   return ret;
 }
 
@@ -96,63 +111,38 @@ esp_err_t BMP390::ReadRegister(uint8_t reg_addr, uint8_t *data, uint16_t len)
  *          selected register
  *  @return value from selected register
  */
-uint8_t BMP390::read8(uint8_t reg, esp_err_t* rError)
+uint8_t BMP390::Read8(uint8_t reg, esp_err_t *rError)
 {
   uint8_t value;
-  esp_err_t res=ReadRegister(reg, &value, sizeof(value));
+  esp_err_t res = ReadRegister(reg, &value, sizeof(value));
   if (rError)
-    *rError=res;
+    *rError = res;
   return value;
 }
-
-/*!
- *  @brief  Reads a 16 bit value over I2C/SPI
- */
-uint16_t BMP390::read16(uint8_t reg, esp_err_t* rError)
-{
-  uint16_t value;
-  esp_err_t res=ReadRegister(reg, (uint8_t*)&value, sizeof(value));
-  if (rError)
-    *rError=res;
-  return value;
-}
-
-/*!
- *  @brief  Reads a 24 bit value over I2C/SPI
- */
-uint32_t BMP390::read24(uint8_t reg, esp_err_t* rError)
-{
-  uint8_t tmp[3];
-  esp_err_t res=ReadRegister(reg, tmp, sizeof(tmp));
-  if (rError)
-    *rError=res;
-  return (tmp[0]<<16) | (tmp[1]<<8) | tmp[2];
-}
-
 
 /*!
  *  @brief  Reads the factory-set coefficients
  */
 esp_err_t BMP390::ReadCalibData()
 {
-  esp_err_t status = ReadRegister(BMP390_REGISTER_NVM_START,(uint8_t*)&calib_data,sizeof(calib_data));
-  if (status!=ESP_OK)
+  esp_err_t status = ReadRegister(BMP390_REGISTER_NVM_START, (uint8_t *)&calib_data, sizeof(calib_data));
+  if (status != ESP_OK)
     return status;
-  PAR_T1 = calib_data.NVM_PAR_T1 / pow(2,-8);
-  PAR_T2 = calib_data.NVM_PAR_T2 / pow(2,30);
-  PAR_T3 = calib_data.NVM_PAR_T3 / pow(2,48);
+  PAR_T1 = calib_data.NVM_PAR_T1 / pow(2, -8);
+  PAR_T2 = calib_data.NVM_PAR_T2 / pow(2, 30);
+  PAR_T3 = calib_data.NVM_PAR_T3 / pow(2, 48);
 
-  PAR_P1 = (calib_data.NVM_PAR_P1-pow(2,14)) / pow(2,20);
-  PAR_P2 = (calib_data.NVM_PAR_P2-pow(2,14)) / pow(2,29);
-  PAR_P3 = calib_data.NVM_PAR_P3 / pow(2,32);
-  PAR_P4 = calib_data.NVM_PAR_P4 / pow(2,37);
-  PAR_P5 = calib_data.NVM_PAR_P5 / pow(2,-3);
-  PAR_P6 = calib_data.NVM_PAR_P6 / pow(2,6);
-  PAR_P7 = calib_data.NVM_PAR_P7 / pow(2,8);
-  PAR_P8 = calib_data.NVM_PAR_P8 / pow(2,15);
-  PAR_P9 = calib_data.NVM_PAR_P9 / pow(2,48);
-  PAR_P10 = calib_data.NVM_PAR_P10 / pow(2,48);
-  PAR_P11 = calib_data.NVM_PAR_P11 / pow(2,65);
+  PAR_P1 = (calib_data.NVM_PAR_P1 - pow(2, 14)) / pow(2, 20);
+  PAR_P2 = (calib_data.NVM_PAR_P2 - pow(2, 14)) / pow(2, 29);
+  PAR_P3 = calib_data.NVM_PAR_P3 / pow(2, 32);
+  PAR_P4 = calib_data.NVM_PAR_P4 / pow(2, 37);
+  PAR_P5 = calib_data.NVM_PAR_P5 / pow(2, -3);
+  PAR_P6 = calib_data.NVM_PAR_P6 / pow(2, 6);
+  PAR_P7 = calib_data.NVM_PAR_P7 / pow(2, 8);
+  PAR_P8 = calib_data.NVM_PAR_P8 / pow(2, 15);
+  PAR_P9 = calib_data.NVM_PAR_P9 / pow(2, 48);
+  PAR_P10 = calib_data.NVM_PAR_P10 / pow(2, 48);
+  PAR_P11 = calib_data.NVM_PAR_P11 / pow(2, 65);
   return status;
 }
 
@@ -160,15 +150,23 @@ esp_err_t BMP390::ReadCalibData()
 /// @param rTemp_C Temperatur in Grad C
 /// @param rPress_mbar Druck in mbar
 /// @return Status
-esp_err_t BMP390::ReadTempAndPress(double & rTemp_C, double & rPress_mbar)
+esp_err_t BMP390::ReadTempAndPress(double &rTemp_C, double &rPress_mbar)
 {
   esp_err_t Status;
-  Status = WriteRegister(BMP390_REGISTER_PWR_CTRL, (MODE_FORCED << 4) | 0x03); 
-  if (Status!=ESP_OK)
+  Status = WriteRegister(BMP390_REGISTER_PWR_CTRL, (MODE_FORCED << 4) | 0x03);
+  if (Status != ESP_OK)
     return Status;
-  vTaskDelay(100 / portTICK_PERIOD_MS);
+  int tc = 0;
+  while (!DataReady())
+  {
+    tc++;
+    vTaskDelay(10 / portTICK_PERIOD_MS);
+    if (tc > 50)
+      return ESP_ERR_TIMEOUT;
+  }
+  ESP_LOGI("BMP390", "Lesezeit: %d ms.", tc*10);
   Status = ReadTemperature(rTemp_C);
-  if (Status!=ESP_OK)
+  if (Status != ESP_OK)
     return Status;
   Status = ReadPressure(rPress_mbar);
   return Status;
@@ -178,20 +176,20 @@ esp_err_t BMP390::ReadTempAndPress(double & rTemp_C, double & rPress_mbar)
 /// @return Status
 esp_err_t BMP390::StartReadTempAndPress()
 {
-  return WriteRegister(BMP390_REGISTER_PWR_CTRL, (MODE_FORCED << 4) | 0x03); 
+  return WriteRegister(BMP390_REGISTER_PWR_CTRL, (MODE_FORCED << 4) | 0x03);
 }
 
 /// @brief Temperatur und Druck auslesen mit einem zuvor gestartetem Auslesevorgang (StartReadTempAndPress)
 /// @brief Falls noch keine Werte vorliegen, dann ESP_ERR_INVALID_RESPONSE und noch einmal probieren
-/// @param rTemp_C 
-/// @param rPress_mbar 
-/// @return 
-esp_err_t BMP390::ReadTempAndPressAsync(double & rTemp_C, double & rPress_mbar)
+/// @param rTemp_C
+/// @param rPress_mbar
+/// @return
+esp_err_t BMP390::ReadTempAndPressAsync(double &rTemp_C, double &rPress_mbar)
 {
   if (!DataReady())
     return ESP_ERR_INVALID_RESPONSE;
   esp_err_t Status = ReadTemperature(rTemp_C);
-  if (Status!=ESP_OK)
+  if (Status != ESP_OK)
     return Status;
   Status = ReadPressure(rPress_mbar);
   return Status;
@@ -200,36 +198,47 @@ esp_err_t BMP390::ReadTempAndPressAsync(double & rTemp_C, double & rPress_mbar)
 bool BMP390::DataReady()
 {
   uint8_t Status = 0;
-  Status = read8(BMP390_REGISTER_STATUS);
-  return (Status & (1 << 5)) && (Status & (1 << 6));
+  //Status = Read8(BMP390_REGISTER_STATUS);
+  //return (Status & (1 << 5)) && (Status & (1 << 6));
+  Status = Read8(BMP390_REGISTER_INT_STATUS);
+  return Status & (1 << 3);
 }
 
-esp_err_t BMP390::ReadTemperature(double & rTemp_C)
+esp_err_t BMP390::ReadTemperature(double &rTemp_C)
 {
   // Temperaturwert lesen
   esp_err_t Status;
-  uint32_t adc_T = read24(BMP390_REGISTER_TEMP_DATA_START, &Status);
-  if (Status!=ESP_OK)
+  uint32_t adc_T;
+  uint8_t adc[3];
+  Status = ReadRegister(BMP390_REGISTER_TEMP_DATA_START, adc, sizeof(adc));
+  if (Status != ESP_OK)
     return Status;
+  adc_T = adc[0] + (adc[1] << 8) + (adc[2] << 16);
+  ESP_LOGI("BMP390", "ADC Temperatur: %lu.", adc_T);
   double partial_data1 = (double)(adc_T - PAR_T1);
   double partial_data2 = (double)(partial_data1 * PAR_T2);
   // Update the compensated temperature in calib structure since this is
   // needed for pressure calculation */
   t_lin = partial_data2 + (partial_data1 * partial_data1) * PAR_T3;
-  /* Returns compensated temperature */
-  return t_lin;
+  rTemp_C = t_lin;
+
+  return Status;
 }
 
 /*!
  * Reads the barometric pressure from the device.
  * @return Barometric pressure in Pa.
  */
-esp_err_t BMP390::ReadPressure(double & rPress_mbar)
+esp_err_t BMP390::ReadPressure(double &rPress_mbar)
 {
-  esp_err_t Status=ESP_OK;
-  uint32_t adc_P = read24(BMP390_REGISTER_PRESS_DATA_START, &Status);
-  if (Status!=ESP_OK)
+  esp_err_t Status = ESP_OK;
+  uint32_t adc_P;
+  uint8_t adc[3];
+  Status = ReadRegister(BMP390_REGISTER_PRESS_DATA_START, adc, sizeof(adc));
+  if (Status != ESP_OK)
     return Status;
+  adc_P = adc[0] + (adc[1] << 8) + (adc[2] << 16);
+  ESP_LOGI("BMP390", "ADC Druck: %lu.", adc_P);
   /* Temporary variables used for compensation */
   double partial_data1;
   double partial_data2;
@@ -245,12 +254,12 @@ esp_err_t BMP390::ReadPressure(double & rPress_mbar)
   partial_data1 = PAR_P2 * t_lin;
   partial_data2 = PAR_P3 * (t_lin * t_lin);
   partial_data3 = PAR_P4 * (t_lin * t_lin * t_lin);
-  partial_out2 = (double)adc_P *  (PAR_P1 + partial_data1 + partial_data2 + partial_data3);
+  partial_out2 = (double)adc_P * (PAR_P1 + partial_data1 + partial_data2 + partial_data3);
   partial_data1 = (double)adc_P * (double)adc_P;
   partial_data2 = PAR_P9 + PAR_P10 * t_lin;
-  partial_data3 = partial_data1 *  partial_data2;
+  partial_data3 = partial_data1 * partial_data2;
   partial_data4 = partial_data3 + ((double)adc_P * (double)adc_P * (double)adc_P) * PAR_P11;
-  rPress_mbar = partial_out1 + partial_out2 + partial_data4;
+  rPress_mbar = (partial_out1 + partial_out2 + partial_data4) / 10.0; // Wird im Datenblatt in Pascal berechnet
   return Status;
 }
 
@@ -261,7 +270,7 @@ esp_err_t BMP390::ReadPressure(double & rPress_mbar)
  *        The current hPa at sea level.
  * @return The approximate altitude above sea level in meters.
  */
-esp_err_t BMP390::ReadAltitude(double & aAlt, double seaLevelhPa)
+esp_err_t BMP390::ReadAltitude(double &aAlt, double seaLevelhPa)
 {
   double pressure;
   esp_err_t Status = ReadPressure(pressure); // in Si units for Pascal
@@ -304,13 +313,13 @@ double BMP390::WaterBoilingPoint(double pressure)
          (17.08085 - log(pressure / 6.1078));
 }
 
-
 /*!
  *  @brief  Resets the chip via soft reset
  */
 void BMP390::Reset(void)
 {
   WriteRegister(BMP390_REGISTER_CMD, BMP390_CMD_SOFTRESET);
+  vTaskDelay(10 / portTICK_PERIOD_MS);
 }
 
 /*!
@@ -319,8 +328,5 @@ void BMP390::Reset(void)
  */
 uint8_t BMP390::GetStatus(void)
 {
-  return read8(BMP390_REGISTER_STATUS);
+  return Read8(BMP390_REGISTER_STATUS);
 }
-
-
-

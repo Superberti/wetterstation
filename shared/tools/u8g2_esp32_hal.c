@@ -16,6 +16,14 @@ static spi_device_handle_t handle_spi;   // SPI handle.
 static i2c_cmd_handle_t handle_i2c;      // I2C handle.
 static u8g2_esp32_hal_t u8g2_esp32_hal;  // HAL state data.
 
+
+#if CONFIG_IDF_TARGET_ESP32S2 || CONFIG_IDF_TARGET_ESP32S3
+// SPI_HOST (SPI1_HOST) is not supported by the SPI Master and SPI Slave driver on ESP32-S2
+#define SPI_HOST    SPI1_HOST
+#define FSPI_HOST   SPI2_HOST
+#define HSPI_HOST   SPI3_HOST
+#endif
+
 #undef ESP_ERROR_CHECK
 #define ESP_ERROR_CHECK(x)                   \
   do {                                       \
