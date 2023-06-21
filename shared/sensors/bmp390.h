@@ -15,10 +15,10 @@ enum
   BMP390_REGISTER_REV_ID = 0x01,
   BMP390_REGISTER_ERROR = 0x02,
   BMP390_REGISTER_STATUS = 0x03,
-  BMP390_REGISTER_PRESS_DATA_START = 0x04,  // 24-Bit Druck
-  
-  BMP390_REGISTER_TEMP_DATA_START = 0x07,   // 24-Bit Temperatur
-  
+  BMP390_REGISTER_PRESS_DATA_START = 0x04, // 24-Bit Druck
+
+  BMP390_REGISTER_TEMP_DATA_START = 0x07, // 24-Bit Temperatur
+
   BMP390_REGISTER_SENSORTIME0 = 0x0C,
   BMP390_REGISTER_SENSORTIME1 = 0x0D,
   BMP390_REGISTER_SENSORTIME2 = 0x0E,
@@ -42,7 +42,7 @@ enum
 };
 
 // Kommandos in Verbindung mit Register BMP390_REGISTER_CMD
-enum 
+enum
 {
   BMP390_CMD_FIFO_FLUSH = 0xB0,
   BMP390_CMD_SOFTRESET = 0xB6,
@@ -69,10 +69,28 @@ struct bmp390_calib_data
   int8_t NVM_PAR_P11;
 } __attribute__((packed));
 
-
 /// @brief Bosch BMP390 Sensor
 class BMP390
 {
+protected:
+  int mPort;
+  int mSDA_Pin;
+  int mSCL_Pin;
+  uint8_t mI2CAddr;
+  // Berechnete Kalibrierfaktoren aus dem NVM
+  double PAR_T1, PAR_T2, PAR_T3;
+  double PAR_P1, PAR_P2, PAR_P3, PAR_P4, PAR_P5, PAR_P6, PAR_P7, PAR_P8, PAR_P9, PAR_P10, PAR_P11;
+  double t_lin;
+  bmp390_calib_data calib_data;
+
+  esp_err_t ReadRegister(uint8_t reg_addr, uint8_t *data, uint16_t len);
+  esp_err_t ReadCalibData(void);
+  esp_err_t ReadTemperature(double &rTemp);
+  esp_err_t ReadPressure(double &rPress);
+  esp_err_t WriteRegister(uint8_t reg, uint8_t value);
+  uint8_t Read8(uint8_t reg, esp_err_t *rError = NULL);
+  bool DataReady();
+
 public:
   /* Oversampling rate for the sensor. */
   enum sensor_sampling
@@ -103,45 +121,33 @@ public:
   };
 
   BMP390(int aPort, uint8_t aI2CAddr, int aSDA_Pin, int aSCL_Pin);
-
   ~BMP390(void);
 
-  /// @brief Druck und Temperatur auslesen
+  /// @brief Temperatur und Druck im Force-Mode synchron lesen, reine Messzeit ca. 70 ms. Hier werden 500 gewartet...
   /// @param rTemp_C Temperatur
   /// @param rPress_mbar Druck
-  /// @return Temperatur in °C und Druck in mbar 
-  esp_err_t ReadTempAndPress(double & rTemp_C, double & rPress_mbar);
+  /// @return Status
+  esp_err_t ReadTempAndPress(double &rTemp_C, double &rPress_mbar);
+
+  /// @brief Auslesevorgang starten
+  /// @return Status
   esp_err_t StartReadTempAndPress();
-  esp_err_t ReadTempAndPressAsync(double & rTemp_C, double & rPress_mbar);
+
+  /// @brief Temperatur und Druck auslesen mit einem zuvor gestartetem Auslesevorgang (StartReadTempAndPress)
+  /// @brief Falls noch keine Werte vorliegen, dann ESP_ERR_INVALID_RESPONSE und noch einmal probieren
+  /// @param rTemp_C Temperatur
+  /// @param rPress_mbar Druck
+  /// @param rPress_mbar Wartet, bis die Daten anliegen. Timeout bei 1 s
+  /// @return Status
+  esp_err_t ReadTempAndPressAsync(double &rTemp_C, double &rPress_mbar, bool aWaitForData = true);
 
   esp_err_t Init();
   void Reset(void);
   uint8_t GetStatus();
 
-  esp_err_t ReadAltitude(double & aAlt, double seaLevelhPa = 1013.25);
+  esp_err_t ReadAltitude(double &aAlt, double seaLevelhPa = 1013.25);
   double SeaLevelForAltitude(double altitude, double atmospheric);
   double WaterBoilingPoint(double pressure);
-
-private:
-  int mPort;
-  int mSDA_Pin;
-  int mSCL_Pin;
-  uint8_t mI2CAddr;
-  // Berechnete Kalibrierfaktoren aus dem NVM
-  double PAR_T1, PAR_T2, PAR_T3;
-  double PAR_P1, PAR_P2, PAR_P3, PAR_P4, PAR_P5, PAR_P6, PAR_P7, PAR_P8, PAR_P9, PAR_P10, PAR_P11;
-  double t_lin;
-
-  esp_err_t ReadRegister(uint8_t reg_addr, uint8_t *data, uint16_t len);
-  esp_err_t ReadCalibData(void);
-  esp_err_t ReadTemperature(double & rTemp);
-  esp_err_t ReadPressure(double & rPress);
-
-  esp_err_t WriteRegister(uint8_t reg, uint8_t value);
-  uint8_t Read8(uint8_t reg, esp_err_t* rError=NULL);
-
-  bool DataReady();
-  bmp390_calib_data calib_data;
 };
 
 #endif

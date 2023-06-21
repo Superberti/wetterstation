@@ -146,48 +146,38 @@ esp_err_t BMP390::ReadCalibData()
   return status;
 }
 
-/// @brief Temperatur und Druck im Force-Mode synchron lesen, reine Messzeit ca. 70 ms. Hier werden 100 gewartet...
-/// @param rTemp_C Temperatur in Grad C
-/// @param rPress_mbar Druck in mbar
-/// @return Status
 esp_err_t BMP390::ReadTempAndPress(double &rTemp_C, double &rPress_mbar)
 {
   esp_err_t Status;
-  Status = WriteRegister(BMP390_REGISTER_PWR_CTRL, (MODE_FORCED << 4) | 0x03);
+  Status = StartReadTempAndPress();
   if (Status != ESP_OK)
     return Status;
-  int tc = 0;
-  while (!DataReady())
-  {
-    tc++;
-    vTaskDelay(10 / portTICK_PERIOD_MS);
-    if (tc > 50)
-      return ESP_ERR_TIMEOUT;
-  }
-  ESP_LOGI("BMP390", "Lesezeit: %d ms.", tc*10);
-  Status = ReadTemperature(rTemp_C);
-  if (Status != ESP_OK)
-    return Status;
-  Status = ReadPressure(rPress_mbar);
-  return Status;
+  return ReadTempAndPressAsync(rTemp_C, rPress_mbar, true);
 }
 
-/// @brief Auslesevorgang asynchron starten
-/// @return Status
 esp_err_t BMP390::StartReadTempAndPress()
 {
   return WriteRegister(BMP390_REGISTER_PWR_CTRL, (MODE_FORCED << 4) | 0x03);
 }
 
-/// @brief Temperatur und Druck auslesen mit einem zuvor gestartetem Auslesevorgang (StartReadTempAndPress)
-/// @brief Falls noch keine Werte vorliegen, dann ESP_ERR_INVALID_RESPONSE und noch einmal probieren
-/// @param rTemp_C
-/// @param rPress_mbar
-/// @return
-esp_err_t BMP390::ReadTempAndPressAsync(double &rTemp_C, double &rPress_mbar)
+esp_err_t BMP390::ReadTempAndPressAsync(double &rTemp_C, double &rPress_mbar, bool aWaitForData)
 {
-  if (!DataReady())
-    return ESP_ERR_INVALID_RESPONSE;
+  if (!aWaitForData)
+  {
+    if (!DataReady())
+      return ESP_ERR_INVALID_RESPONSE; // nix zum Abholen da
+  }
+  else
+  {
+    int tc = 0;
+    while (!DataReady())
+    {
+      tc++;
+      vTaskDelay(10 / portTICK_PERIOD_MS);
+      if (tc > 50)
+        return ESP_ERR_TIMEOUT;
+    }
+  }
   esp_err_t Status = ReadTemperature(rTemp_C);
   if (Status != ESP_OK)
     return Status;
@@ -198,8 +188,6 @@ esp_err_t BMP390::ReadTempAndPressAsync(double &rTemp_C, double &rPress_mbar)
 bool BMP390::DataReady()
 {
   uint8_t Status = 0;
-  //Status = Read8(BMP390_REGISTER_STATUS);
-  //return (Status & (1 << 5)) && (Status & (1 << 6));
   Status = Read8(BMP390_REGISTER_INT_STATUS);
   return Status & (1 << 3);
 }
@@ -259,7 +247,7 @@ esp_err_t BMP390::ReadPressure(double &rPress_mbar)
   partial_data2 = PAR_P9 + PAR_P10 * t_lin;
   partial_data3 = partial_data1 * partial_data2;
   partial_data4 = partial_data3 + ((double)adc_P * (double)adc_P * (double)adc_P) * PAR_P11;
-  rPress_mbar = (partial_out1 + partial_out2 + partial_data4) / 10.0; // Wird im Datenblatt in Pascal berechnet
+  rPress_mbar = (partial_out1 + partial_out2 + partial_data4) / 100.0; // Wird im Datenblatt in Pascal berechnet
   return Status;
 }
 

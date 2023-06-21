@@ -46,6 +46,10 @@ using json = nlohmann::json;
 // Nur definieren, falls der SHT40 nicht angeschlossen ist, man aber trotzdem ein paar Daten haben möchte
 // #define FAKE_SHT40
 
+/// BMP390 Luftdrucksensor angeschlossen
+#define USE_BMP390
+#define BMP390_SENSOR_ADDR 0x77 // Adresse BMP390 wenn SDO auf high, auf low = 0x76
+
 // ADC-Batteriespannungsmessung benutzen?
 #define USE_ADC
 
@@ -99,7 +103,8 @@ void app_main_cpp()
   ESP_ERROR_CHECK(adc_oneshot_new_unit(&init_config1, &adc1_handle));
 #endif
   esp_err_t ret;
-  float iTemp_deg, iHum_per, iPress_mBar;
+  float iTemp_deg, iHum_per;
+  double iPress_mBar, t;
   bool iCRCErr;
   int64_t StartTime = GetTime_us();
   // Strom-Reset oder Wakeup-Timer?
@@ -191,20 +196,23 @@ void app_main_cpp()
   ESP_LOGI(TAG, "SSD1306 Init fertig nach %.1f ms", (EndTime - StartTime) / 1000.0);
   gpio_set_level(LoraLed, 0);
 
-  // Temperatur und Luftdruck BMP390
-  BMP390 Bmp;
+// Temperatur und Luftdruck BMP390
+#ifdef USE_BMP390
+  BMP390 Bmp(I2C_NUM_0, BMP390_SENSOR_ADDR, PIN_SDA_TEMP, PIN_SCL_TEMP);
   ret = Bmp.Init();
   if (ret != ESP_OK)
     ESP_LOGE(TAG, "Fehler beim Initialisieren des BMP390: %d", ret);
   else
   {
-    double p,t;
-    ret = Bmp.ReadTempAndPress(t,p);
+    ESP_LOGI(TAG, "BMP390 Init OK");
+
+    ret = Bmp.ReadTempAndPress(t, iPress_mBar);
     if (ret != ESP_OK)
       ESP_LOGE(TAG, "Fehler beim Auslesen des BMP390: %d", ret);
     else
-      ESP_LOGI(TAG, "Aktuelle Temperatur: %.2f°C. Luftdruck: %.1f mbar",t,p);
+      ESP_LOGI(TAG, "Aktuelle Temperatur: %.2f°C. Luftdruck(raw): %.1f mbar", t, iPress_mBar);
   }
+#endif
 
   // Parameter s. InitLoRa
   ret = InitLoRa(LoRa);
@@ -227,6 +235,11 @@ void app_main_cpp()
   int Loops = FirstBoot ? 6 : 1;
   for (int i = 0; i < Loops; i++)
   {
+#ifdef USE_BMP390
+    ret = Bmp.StartReadTempAndPress();
+    if (ret != ESP_OK)
+      ESP_LOGE(TAG, "Fehler beim Starten des BMP390: %d", ret);
+#endif
 #ifndef FAKE_SHT40
     ret = iTempSensor.Read(iTemp_deg, iHum_per, iCRCErr);
     ESP_LOGI(TAG, "Temp.: %.2f LF: %.2f %%", iTemp_deg, iHum_per);
@@ -250,6 +263,13 @@ void app_main_cpp()
     AdcMean /= 64.0;
 #endif
 
+#ifdef USE_BMP390
+    ret = Bmp.ReadTempAndPressAsync(t, iPress_mBar);
+    iPress_mBar=Bmp.SeaLevelForAltitude(602, iPress_mBar);
+    if (ret != ESP_OK)
+      ESP_LOGE(TAG, "Fehler beim Lesen des BMP390: %d", ret);
+#endif
+
 #ifdef LILYGO_T3
     // Referenzspannung 1.1V, Spannungsteiler 100K/100K, Abschwächung 11dB (Faktor 3.55) = 7.81 V bei Vollausschlag (4095)
     // Der Kalibrierwert -0.448 muss für jedes Board neu nachgemessen werden, da die Referenzspannung des ESP32-ADCs einfach
@@ -261,11 +281,11 @@ void app_main_cpp()
 
     ESP_LOGI(TAG, "ADC raw value: %.0f = %.2f V", AdcMean, iVBatt_V);
 
-    // iTemp_deg = 20 + 20 * sin(3.141592 * (SleepCounter / 360.0));
-    // iHum_per = 60 + 30 * sin(0.8 + 3.141592 * (SleepCounter / 360.0));
+#ifndef USE_BMP390
     iPress_mBar = 1000 + 30 * cos(3.141592 * (SleepCounter / 360.0));
+#endif
     iCBORBuildSize = 0;
-    BuildCBORBuf(LoraBuf, sizeof(LoraBuf), iCBORBuildSize, SleepCounter, iTemp_deg, iHum_per, iPress_mBar, iVBatt_V);
+    BuildCBORBuf(LoraBuf, sizeof(LoraBuf), iCBORBuildSize, SleepCounter, iTemp_deg, iHum_per, (float)iPress_mBar, iVBatt_V);
     if (iCBORBuildSize > sizeof(LoraBuf))
       ESP_LOGE(TAG, "LoRa Buffer overflow...:%d", iCBORBuildSize);
 
@@ -309,8 +329,11 @@ void app_main_cpp()
     if (UseDisplay)
     {
       u8g2_ClearBuffer(&u8g2);
-      sprintf(DisplayBuf, "Paket Nr.: %lu", SleepCounter);
+      sprintf(DisplayBuf, "[%lu] Vbatt: %.2f V", SleepCounter, iVBatt_V);
       u8g2_DrawStr(&u8g2, 2, 14, DisplayBuf);
+
+      // sprintf(DisplayBuf, "Paket Nr.: %lu", SleepCounter);
+      // u8g2_DrawStr(&u8g2, 2, 14, DisplayBuf);
 
       sprintf(DisplayBuf, "Temp: %.2f%cC", iTemp_deg, 176);
       u8g2_DrawStr(&u8g2, 2, 28, DisplayBuf);
@@ -321,14 +344,11 @@ void app_main_cpp()
       sprintf(DisplayBuf, "Feuchte: %.2f %%", iHum_per);
       u8g2_DrawStr(&u8g2, 2, 42, DisplayBuf);
 
-      // sprintf(DisplayBuf, "Druck: %.2f mBar", iPress_mBar);
-      // u8g2_DrawStr(&u8g2, 2, 56, DisplayBuf);
+      sprintf(DisplayBuf, "Druck: %.2f mBar", iPress_mBar);
+      u8g2_DrawStr(&u8g2, 2, 56, DisplayBuf);
 
       // sprintf(DisplayBuf, "Sleep: %.3f s", sleep_time_ms / 1000.0);
       // u8g2_DrawStr(&u8g2, 2, 56, DisplayBuf);
-
-      sprintf(DisplayBuf, "Vbatt: %.2f V", iVBatt_V);
-      u8g2_DrawStr(&u8g2, 2, 56, DisplayBuf);
 
       u8g2_SendBuffer(&u8g2);
     }
