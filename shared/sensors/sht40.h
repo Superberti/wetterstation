@@ -69,7 +69,7 @@ public:
   SHT40(int aPort, int aSDA_Pin, int aSCL_Pin, SHT40_COMMAND aReadMode=SHT40_CMD_HPM);
   ~SHT40(void);
 
-  esp_err_t Init();
+  esp_err_t Init(bool aDoI2CInit);
   void Close();
   esp_err_t Read(float & aTemp, float & aHum, bool & rCRC_Err);
   esp_err_t ReadSerial(uint32_t & aSerialNo, bool &rCRC_Err);

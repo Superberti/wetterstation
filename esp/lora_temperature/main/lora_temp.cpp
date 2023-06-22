@@ -178,11 +178,13 @@ void app_main_cpp()
 
   // Init Temperatursensor
   uint32_t iSerial = 0;
+  bool i2c_init_done=false;
 #ifndef FAKE_SHT40
   SHT40 iTempSensor(I2C_NUM_0, PIN_SDA_TEMP, PIN_SCL_TEMP);
-  ret = iTempSensor.Init();
+  ret = iTempSensor.Init(true);
   if (ret != ESP_OK)
     ESP_LOGE(TAG, "Fehler beim Initialisieren des SHT40: %d", ret);
+  i2c_init_done=true;
   ret = iTempSensor.ReadSerial(iSerial, iCRCErr);
   ESP_LOGI(TAG, "SHT40 Seriennummer: %lu", iSerial);
   if (ret != ESP_OK)
@@ -199,18 +201,19 @@ void app_main_cpp()
 // Temperatur und Luftdruck BMP390
 #ifdef USE_BMP390
   BMP390 Bmp(I2C_NUM_0, BMP390_SENSOR_ADDR, PIN_SDA_TEMP, PIN_SCL_TEMP);
-  ret = Bmp.Init();
+  ret = Bmp.Init(!i2c_init_done); // I2C wurde schon vom SHT40 initialisiert
   if (ret != ESP_OK)
     ESP_LOGE(TAG, "Fehler beim Initialisieren des BMP390: %d", ret);
   else
   {
     ESP_LOGI(TAG, "BMP390 Init OK");
-
+    /*
     ret = Bmp.ReadTempAndPress(t, iPress_mBar);
     if (ret != ESP_OK)
       ESP_LOGE(TAG, "Fehler beim Auslesen des BMP390: %d", ret);
     else
       ESP_LOGI(TAG, "Aktuelle Temperatur: %.2f°C. Luftdruck(raw): %.1f mbar", t, iPress_mBar);
+      */
   }
 #endif
 
@@ -242,7 +245,7 @@ void app_main_cpp()
 #endif
 #ifndef FAKE_SHT40
     ret = iTempSensor.Read(iTemp_deg, iHum_per, iCRCErr);
-    ESP_LOGI(TAG, "Temp.: %.2f LF: %.2f %%", iTemp_deg, iHum_per);
+    ESP_LOGI("SHT40", "Temp.: %.2f LF: %.2f %%", iTemp_deg, iHum_per);
     if (ret != ESP_OK)
       ESP_LOGE(TAG, "Fehler beim Lesen der Temperatur/Luftfeuchtigkeit des SHT40: %d", ret);
     if (iCRCErr)
@@ -268,6 +271,7 @@ void app_main_cpp()
     iPress_mBar=Bmp.SeaLevelForAltitude(602, iPress_mBar);
     if (ret != ESP_OK)
       ESP_LOGE(TAG, "Fehler beim Lesen des BMP390: %d", ret);
+    ESP_LOGI("BMP390", "Druck: %.2f mbar Temp: %.2f°C", iPress_mBar, t);
 #endif
 
 #ifdef LILYGO_T3
@@ -335,7 +339,7 @@ void app_main_cpp()
       // sprintf(DisplayBuf, "Paket Nr.: %lu", SleepCounter);
       // u8g2_DrawStr(&u8g2, 2, 14, DisplayBuf);
 
-      sprintf(DisplayBuf, "Temp: %.2f%cC", iTemp_deg, 176);
+      sprintf(DisplayBuf, "Temp: %.2f%cC[%.2f]", iTemp_deg, 176, t);
       u8g2_DrawStr(&u8g2, 2, 28, DisplayBuf);
 
       // sprintf(DisplayBuf, "Wach: %.1f ms", (EndTime - StartTime) / 1000.0);

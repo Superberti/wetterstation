@@ -24,27 +24,27 @@ BMP390::~BMP390(void)
 {
 }
 
-/// @brief ESP-32 initialisieren
-/// @param addr I2C-Adresse (0x76 oder 0x77)
-/// @return
-esp_err_t BMP390::Init()
+esp_err_t BMP390::Init(bool aDoI2CInit)
 {
-  if (mPort > 1)
-    return ESP_ERR_INVALID_ARG;
   esp_err_t status = ESP_OK;
-
-  i2c_config_t conf;
-  conf.mode = I2C_MODE_MASTER;
-  conf.sda_io_num = mSDA_Pin;
-  conf.sda_pullup_en = GPIO_PULLUP_ENABLE;
-  conf.scl_io_num = mSCL_Pin;
-  conf.scl_pullup_en = GPIO_PULLUP_ENABLE;
-  conf.master.clk_speed = 100000; // Fast Mode, 1000000;  // Fast Mode Plus=1MHz
-  conf.clk_flags = 0;
-  i2c_param_config(mPort, &conf);
-  status = i2c_driver_install(mPort, conf.mode, 0, 0, 0);
-  if (status != ESP_OK)
-    return status;
+  if (aDoI2CInit)
+  {
+    if (mPort > 1)
+      return ESP_ERR_INVALID_ARG;
+    
+    i2c_config_t conf;
+    conf.mode = I2C_MODE_MASTER;
+    conf.sda_io_num = mSDA_Pin;
+    conf.sda_pullup_en = GPIO_PULLUP_ENABLE;
+    conf.scl_io_num = mSCL_Pin;
+    conf.scl_pullup_en = GPIO_PULLUP_ENABLE;
+    conf.master.clk_speed = 100000; // Fast Mode, 1000000;  // Fast Mode Plus=1MHz
+    conf.clk_flags = 0;
+    i2c_param_config(mPort, &conf);
+    status = i2c_driver_install(mPort, conf.mode, 0, 0, 0);
+    if (status != ESP_OK)
+      return status;
+  }
 
   if (Read8(BMP390_REGISTER_CHIP_ID) != BMP390_CHIP_ID)
     return ESP_ERR_INVALID_VERSION;
@@ -57,11 +57,6 @@ esp_err_t BMP390::Init()
   return WriteRegister(BMP390_REGISTER_OSR, (SAMPLING_X2 << 3) | SAMPLING_X32);
 }
 
-/**************************************************************************/
-/*!
-    @brief  Writes an 8 bit value over I2C/SPI
-*/
-/**************************************************************************/
 esp_err_t BMP390::WriteRegister(uint8_t reg_addr, uint8_t value)
 {
   esp_err_t ret;
@@ -105,12 +100,6 @@ esp_err_t BMP390::ReadRegister(uint8_t reg_addr, uint8_t *data, uint16_t len)
   return ret;
 }
 
-/*!
- *  @brief  Reads an 8 bit value over I2C/SPI
- *  @param  reg
- *          selected register
- *  @return value from selected register
- */
 uint8_t BMP390::Read8(uint8_t reg, esp_err_t *rError)
 {
   uint8_t value;
@@ -120,9 +109,6 @@ uint8_t BMP390::Read8(uint8_t reg, esp_err_t *rError)
   return value;
 }
 
-/*!
- *  @brief  Reads the factory-set coefficients
- */
 esp_err_t BMP390::ReadCalibData()
 {
   esp_err_t status = ReadRegister(BMP390_REGISTER_NVM_START, (uint8_t *)&calib_data, sizeof(calib_data));
@@ -202,7 +188,7 @@ esp_err_t BMP390::ReadTemperature(double &rTemp_C)
   if (Status != ESP_OK)
     return Status;
   adc_T = adc[0] + (adc[1] << 8) + (adc[2] << 16);
-  ESP_LOGI("BMP390", "ADC Temperatur: %lu.", adc_T);
+  //ESP_LOGI("BMP390", "ADC Temperatur: %lu.", adc_T);
   double partial_data1 = (double)(adc_T - PAR_T1);
   double partial_data2 = (double)(partial_data1 * PAR_T2);
   // Update the compensated temperature in calib structure since this is
@@ -213,10 +199,6 @@ esp_err_t BMP390::ReadTemperature(double &rTemp_C)
   return Status;
 }
 
-/*!
- * Reads the barometric pressure from the device.
- * @return Barometric pressure in Pa.
- */
 esp_err_t BMP390::ReadPressure(double &rPress_mbar)
 {
   esp_err_t Status = ESP_OK;
@@ -226,7 +208,7 @@ esp_err_t BMP390::ReadPressure(double &rPress_mbar)
   if (Status != ESP_OK)
     return Status;
   adc_P = adc[0] + (adc[1] << 8) + (adc[2] << 16);
-  ESP_LOGI("BMP390", "ADC Druck: %lu.", adc_P);
+  //ESP_LOGI("BMP390", "ADC Druck: %lu.", adc_P);
   /* Temporary variables used for compensation */
   double partial_data1;
   double partial_data2;
@@ -251,13 +233,6 @@ esp_err_t BMP390::ReadPressure(double &rPress_mbar)
   return Status;
 }
 
-/*!
- * @brief Calculates the approximate altitude using barometric pressure and the
- * supplied sea level hPa as a reference.
- * @param seaLevelhPa
- *        The current hPa at sea level.
- * @return The approximate altitude above sea level in meters.
- */
 esp_err_t BMP390::ReadAltitude(double &aAlt, double seaLevelhPa)
 {
   double pressure;
@@ -269,13 +244,6 @@ esp_err_t BMP390::ReadAltitude(double &aAlt, double seaLevelhPa)
   return Status;
 }
 
-/*!
- * Calculates the pressure at sea level (QFH) from the specified altitude,
- * and atmospheric pressure (QFE).
- * @param  altitude      Altitude in m
- * @param  atmospheric   Atmospheric pressure in hPa
- * @return The approximate pressure in hPa
- */
 double BMP390::SeaLevelForAltitude(double altitude, double atmospheric)
 {
   // Equation taken from BMP180 datasheet (page 17):
@@ -287,12 +255,6 @@ double BMP390::SeaLevelForAltitude(double altitude, double atmospheric)
   return atmospheric / pow(1.0 - (altitude / 44330.0), 5.255);
 }
 
-/*!
-    @brief  calculates the boiling point  of water by a given pressure
-    @param pressure pressure in hPa
-    @return temperature in °C
-*/
-
 double BMP390::WaterBoilingPoint(double pressure)
 {
   // Magnusformular for calculation of the boiling point of water at a given
@@ -301,19 +263,12 @@ double BMP390::WaterBoilingPoint(double pressure)
          (17.08085 - log(pressure / 6.1078));
 }
 
-/*!
- *  @brief  Resets the chip via soft reset
- */
 void BMP390::Reset(void)
 {
   WriteRegister(BMP390_REGISTER_CMD, BMP390_CMD_SOFTRESET);
   vTaskDelay(10 / portTICK_PERIOD_MS);
 }
 
-/*!
-    @brief  Gets the most recent sensor event from the hardware status register.
-    @return Sensor status as a byte.
- */
 uint8_t BMP390::GetStatus(void)
 {
   return Read8(BMP390_REGISTER_STATUS);
