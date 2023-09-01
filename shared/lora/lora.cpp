@@ -10,78 +10,70 @@
 #include "lora.h"
 #include "../tools/tools.h"
 
+// Quarzfrequenz aller Module
+#define XTAL_FRQ 32000000
+
 LoRa_PinConfiguration::LoRa_PinConfiguration(LoRaBoardTypes aBoard)
 {
   switch (aBoard)
   {
-    case LilygoT3:
-      ChipSelect=18;
-      Reset=23;
-      Miso=19;
-      Mosi=27;
-      Clock=5;
-      DIO0=26;
-	    DIO1=33;
-	    Busy=32;
-      Led=25;
-      AdcChannel=7;
+  case LilygoT3:
+    ChipSelect = 18;
+    Reset = 23;
+    Miso = 19;
+    Mosi = 27;
+    Clock = 5;
+    DIO0 = 26;
+    DIO1 = 33;
+    Busy = 32;
+    Led = 25;
+    AdcChannel = 7;
     break;
-    case HeltecESPLoRa:
-      ChipSelect=18;
-      Reset=14;
-      Miso=19;
-      Mosi=27;
-      Clock=5;
-      DIO0=33;
-	    DIO1=34;
-	    Busy=0;
-      Led=25;
-      AdcChannel=0;
+  case HeltecESPLoRa:
+    ChipSelect = 18;
+    Reset = 14;
+    Miso = 19;
+    Mosi = 27;
+    Clock = 5;
+    DIO0 = 33;
+    DIO1 = 34;
+    Busy = 0;
+    Led = 25;
+    AdcChannel = 0;
     break;
-    case HeltecWirelessStick_V3:
-      ChipSelect=8;
-      Reset=12;
-      Miso=11;
-      Mosi=10;
-      Clock=9;
-      DIO0=26;
-	    DIO1=14;
-	    Busy=13;
-      Led=35;
-      AdcChannel=0;
+  case HeltecWirelessStick_V3:
+    ChipSelect = 8;
+    Reset = 12;
+    Miso = 11;
+    Mosi = 10;
+    Clock = 9;
+    DIO0 = 26;
+    DIO1 = 14;
+    Busy = 13;
+    Led = 35;
+    AdcChannel = 0;
     break;
   }
 }
 
-SX1278_LoRa::SX1278_LoRa(LoRaBoardTypes aBoard)
-  : mhSpi(NULL)
-  , mInitialized(false)
-  , mImplicit(false)
-  , mAddress(0)
+LoRaBase::LoRaBase(LoRaBoardTypes aBoard)
+    : mhSpi(NULL), mInitialized(false), mImplicit(false), mAddress(0)
 {
-  PinConfig=new LoRa_PinConfiguration(aBoard);
+  PinConfig = new LoRa_PinConfiguration(aBoard);
 }
 
-SX1278_LoRa::~SX1278_LoRa()
-{
-  Close();
-}
-
-/**
- * Perform hardware initialization.
- */
-esp_err_t SX1278_LoRa::Init(void)
+esp_err_t LoRaBase::SPIBusInit()
 {
   esp_err_t ret;
 
   /*
-    * Configure CPU hardware to communicate with the radio chip
-    */
+   * Configure CPU hardware to communicate with the radio chip
+   */
   gpio_reset_pin((gpio_num_t)PinConfig->Reset);
   gpio_set_direction((gpio_num_t)PinConfig->Reset, GPIO_MODE_OUTPUT);
   gpio_reset_pin((gpio_num_t)PinConfig->ChipSelect);
   gpio_set_direction((gpio_num_t)PinConfig->ChipSelect, GPIO_MODE_OUTPUT);
-  Reset();
+  // Reset();
 
   spi_bus_config_t bus = {};
   bus.miso_io_num = PinConfig->Miso;
@@ -90,7 +82,7 @@ esp_err_t SX1278_LoRa::Init(void)
   bus.quadwp_io_num = -1;
   bus.quadhd_io_num = -1;
   bus.max_transfer_sz = 0;
-  
+
   ret = spi_bus_initialize(VSPI_HOST, &bus, 0);
   if (ret != ESP_OK)
     return ret;
@@ -104,15 +96,110 @@ esp_err_t SX1278_LoRa::Init(void)
   ret = spi_bus_add_device(VSPI_HOST, &dev, &mhSpi);
   if (ret != ESP_OK)
     return ret;
+  return ESP_OK;
+}
+
+/**
+ * Shutdown hardware.
+ */
+void LoRaBase::Close(void)
+{
+  Sleep();
+  if (mhSpi != NULL)
+  {
+    spi_bus_remove_device(mhSpi);
+    spi_bus_free(VSPI_HOST);
+    mhSpi = NULL;
+  }
+}
+
+/**
+ * Perform physical reset on the Lora chip
+ */
+void LoRaBase::Reset(void)
+{
+  gpio_set_level((gpio_num_t)PinConfig->Reset, 0);
+  vTaskDelay(pdMS_TO_TICKS(1));
+  gpio_set_level((gpio_num_t)PinConfig->Reset, 1);
+  vTaskDelay(pdMS_TO_TICKS(10));
+}
+
+LoRaBase::~LoRaBase()
+{
+  Close();
+}
+
+// ----------------------------------------------------------------------------------
+// ----------------------------------------------------------------------------------
+// ----------------------------------------------------------------------------------
+
+SX1278_LoRa::SX1278_LoRa(LoRaBoardTypes aBoard) : LoRaBase(aBoard)
+{
+}
+
+/**
+ * Write a value to a register.
+ * @param reg Register index.
+ * @param val Value to write.
+ */
+esp_err_t SX1278_LoRa::WriteReg(uint8_t reg, uint8_t val)
+{
+  uint8_t out[2] = {(uint8_t)(0x80 | reg), val};
+  uint8_t in[2];
+
+  spi_transaction_t t = {};
+  t.flags = 0;
+  t.length = 8 * sizeof(out);
+  t.tx_buffer = out;
+  t.rx_buffer = in;
+
+  gpio_set_level((gpio_num_t)PinConfig->ChipSelect, 0);
+  esp_err_t ret = spi_device_transmit(mhSpi, &t);
+  gpio_set_level((gpio_num_t)PinConfig->ChipSelect, 1);
+  return ret;
+}
+
+/**
+ * Read the current value of a register.
+ * @param reg Register index.
+ * @return Value of the register.
+ */
+esp_err_t SX1278_LoRa::ReadReg(uint8_t reg, uint8_t *aInVal)
+{
+  uint8_t out[2] = {reg, 0xff};
+  uint8_t in[2];
+
+  spi_transaction_t t = {};
+  t.flags = 0;
+  t.length = 8 * sizeof(out);
+  t.tx_buffer = out;
+  t.rx_buffer = in;
+
+  gpio_set_level((gpio_num_t)PinConfig->ChipSelect, 0);
+  esp_err_t ret = spi_device_transmit(mhSpi, &t);
+  gpio_set_level((gpio_num_t)PinConfig->ChipSelect, 1);
+  *aInVal = in[1];
+  return ret;
+}
+
+/**
+ * Perform hardware initialization.
+ */
+esp_err_t SX1278_LoRa::Init()
+{
+  esp_err_t ret;
+  ret = SPIBusInit();
+  if (ret != ESP_OK)
+    return ret;
 
   /*
-    * Perform hardware reset.
-    */
+   * Perform hardware reset.
+   */
   Reset();
 
   /*
-    * Check version.
-    */
+   * Check version.
+   */
   uint8_t version, reg;
   int i;
   for (i = 0; i < Misc::TIMEOUT_RESET; i++)
@@ -128,8 +215,8 @@ esp_err_t SX1278_LoRa::Init(void)
     return ESP_ERR_TIMEOUT;
 
   /*
-    * Default configuration.
-    */
+   * Default configuration.
+   */
   ret = Sleep();
   if (ret != ESP_OK)
     return ret;
@@ -157,9 +244,10 @@ esp_err_t SX1278_LoRa::Init(void)
   return Idle();
 }
 
-esp_err_t SX1278_LoRa::SetupModule(uint8_t aAddress, long aFrq, uint16_t aPreambleLength, long aBandwidth, uint8_t aSyncByte, uint8_t aSpreadingFactor, uint8_t aCodingRate, uint8_t aTxPower)
+esp_err_t SX1278_LoRa::SetupModule(uint8_t aAddress, uint32_t aFrq, uint16_t aPreambleLength, LoRaBandwidth aBandwidth,
+                                   uint16_t aSyncWord, SpreadingFactor aSpreadingFactor, LoRaCodingRate aCodingRate, int8_t aTxPower)
 {
-  mAddress=aAddress;
+  mAddress = aAddress;
   mInitialized = false;
   esp_err_t ret;
   ret = Init();
@@ -199,7 +287,7 @@ esp_err_t SX1278_LoRa::SetupModule(uint8_t aAddress, long aFrq, uint16_t aPreamb
     ESP_LOGE("lora", "SetBandwidth failed: %d", ret);
     return ret;
   }
-  ret = SetSyncWord(aSyncByte);
+  ret = SetSyncWord((uint8_t)aSyncWord);
   if (ret != ESP_OK)
   {
     ESP_LOGE("lora", "SetSyncWord failed: %d", ret);
@@ -225,62 +313,6 @@ esp_err_t SX1278_LoRa::SetupModule(uint8_t aAddress, long aFrq, uint16_t aPreamb
   }
   mInitialized = true;
   return ret;
-}
-
-/**
- * Write a value to a register.
- * @param reg Register index.
- * @param val Value to write.
- */
-esp_err_t SX1278_LoRa::WriteReg(uint8_t reg, uint8_t val)
-{
-  uint8_t out[2] = {(uint8_t)(0x80 | reg), val};
-  uint8_t in[2];
-
-  spi_transaction_t t={};
-  t.flags = 0;
-  t.length = 8 * sizeof(out);
-  t.tx_buffer = out;
-  t.rx_buffer = in;
-
-  gpio_set_level((gpio_num_t)PinConfig->ChipSelect, 0);
-  esp_err_t ret = spi_device_transmit(mhSpi, &t);
-  gpio_set_level((gpio_num_t)PinConfig->ChipSelect, 1);
-  return ret;
-}
-
-/**
- * Read the current value of a register.
- * @param reg Register index.
- * @return Value of the register.
- */
-esp_err_t SX1278_LoRa::ReadReg(uint8_t reg, uint8_t *aInVal)
-{
-  uint8_t out[2] = {reg, 0xff};
-  uint8_t in[2];
-
-  spi_transaction_t t={};
-  t.flags = 0;
-  t.length = 8 * sizeof(out);
-  t.tx_buffer = out;
-  t.rx_buffer = in;
-
-  gpio_set_level((gpio_num_t)PinConfig->ChipSelect, 0);
-  esp_err_t ret = spi_device_transmit(mhSpi, &t);
-  gpio_set_level((gpio_num_t)PinConfig->ChipSelect, 1);
-  *aInVal = in[1];
-  return ret;
-}
-
-/**
- * Perform physical reset on the Lora chip
- */
-void SX1278_LoRa::Reset(void)
-{
-  gpio_set_level((gpio_num_t)PinConfig->Reset, 0);
-  vTaskDelay(pdMS_TO_TICKS(1));
-  gpio_set_level((gpio_num_t)PinConfig->Reset, 1);
-  vTaskDelay(pdMS_TO_TICKS(10));
 }
 
 /**
@@ -319,7 +351,7 @@ esp_err_t SX1278_LoRa::ImplicitHeaderMode(uint8_t size)
  * Sets the radio transceiver in idle mode.
  * Must be used to change registers and access the FIFO.
  */
-esp_err_t SX1278_LoRa::Idle(void)
+esp_err_t SX1278_LoRa::Idle()
 {
   return WriteReg(Registers::REG_OP_MODE, TransceiverMode::MODE_LONG_RANGE_MODE | TransceiverMode::MODE_STDBY);
 }
@@ -328,7 +360,7 @@ esp_err_t SX1278_LoRa::Idle(void)
  * Sets the radio transceiver in sleep mode.
  * Low power consumption and FIFO is lost.
  */
-esp_err_t SX1278_LoRa::Sleep(void)
+esp_err_t SX1278_LoRa::Sleep()
 {
   return WriteReg(Registers::REG_OP_MODE, TransceiverMode::MODE_LONG_RANGE_MODE | TransceiverMode::MODE_SLEEP);
 }
@@ -337,7 +369,7 @@ esp_err_t SX1278_LoRa::Sleep(void)
  * Sets the radio transceiver in receive mode.
  * Incoming packets will be received.
  */
-esp_err_t SX1278_LoRa::Receive(void)
+esp_err_t SX1278_LoRa::Receive()
 {
   return WriteReg(Registers::REG_OP_MODE, TransceiverMode::MODE_LONG_RANGE_MODE | TransceiverMode::MODE_RX_CONTINUOUS);
 }
@@ -360,11 +392,11 @@ esp_err_t SX1278_LoRa::SetTxPower(uint8_t level)
  * Set carrier frequency.
  * @param frequency Frequency in Hz
  */
-esp_err_t SX1278_LoRa::SetFrequency(long frequency)
+esp_err_t SX1278_LoRa::SetFrequency(uint32_t frequency)
 {
   mFrequency = frequency;
 
-  uint64_t frf = ((uint64_t)frequency << 19) / 32000000;
+  uint64_t frf = ((uint64_t)frequency << 19) / XTAL_FRQ;
   esp_err_t ret;
   ret = WriteReg(Registers::REG_FRF_MSB, (uint8_t)(frf >> 16));
   if (ret != ESP_OK)
@@ -416,7 +448,7 @@ esp_err_t SX1278_LoRa::SetSpreadingFactor(uint8_t sf)
  * Set bandwidth (bit rate)
  * @param sbw Bandwidth in Hz (up to 500000)
  */
-esp_err_t SX1278_LoRa::SetBandwidth(long sbw)
+esp_err_t SX1278_LoRa::SetBandwidth(uint32_t sbw)
 {
   uint8_t bw;
 
@@ -450,7 +482,7 @@ esp_err_t SX1278_LoRa::SetBandwidth(long sbw)
 }
 
 /**
- * Set coding rate 
+ * Set coding rate
  * @param denominator 5-8, Denominator for the coding rate 4/x
  */
 esp_err_t SX1278_LoRa::SetCodingRate(uint8_t denominator)
@@ -529,31 +561,31 @@ esp_err_t SX1278_LoRa::SendPacket(uint8_t *buf, uint8_t size)
   uint8_t reg;
   esp_err_t ret;
   /*
-    * Transfer data to radio.
-    */
+   * Transfer data to radio.
+   */
   ret = Idle();
   if (ret != ESP_OK)
     return ret;
-  //ESP_LOGI("lora","lora is idle");
+  // ESP_LOGI("lora","lora is idle");
   ret = WriteReg(Registers::REG_FIFO_ADDR_PTR, 0);
   if (ret != ESP_OK)
     return ret;
-  //ESP_LOGI("lora","filling FIFO");
+  // ESP_LOGI("lora","filling FIFO");
   for (int i = 0; i < size; i++)
   {
     ret = WriteReg(Registers::REG_FIFO, *buf++);
     if (ret != ESP_OK)
       return ret;
   }
-  //ESP_LOGI("lora","FIFO is idle");
+  // ESP_LOGI("lora","FIFO is idle");
   ret = WriteReg(Registers::REG_PAYLOAD_LENGTH, size);
   if (ret != ESP_OK)
     return ret;
 
   /*
-    * Start transmission and wait for conclusion.
-    */
-  //ESP_LOGI("lora","starting transmission");
+   * Start transmission and wait for conclusion.
+   */
+  // ESP_LOGI("lora","starting transmission");
 
   ret = WriteReg(Registers::REG_OP_MODE, TransceiverMode::MODE_LONG_RANGE_MODE | TransceiverMode::MODE_TX);
   if (ret != ESP_OK)
@@ -573,19 +605,19 @@ esp_err_t SX1278_LoRa::SendPacket(uint8_t *buf, uint8_t size)
   ret = ReadReg(Registers::REG_IRQ_FLAGS, &reg);
   if (ret != ESP_OK)
     return ret;
-  //ESP_LOGI("lora","Reg: %d",reg);
-  //ESP_LOGI("lora","waiting for end of transmission");
+  // ESP_LOGI("lora","Reg: %d",reg);
+  // ESP_LOGI("lora","waiting for end of transmission");
   while ((reg & IrqMask::IRQ_TX_DONE_MASK) == 0)
   {
     ret = ReadReg(Registers::REG_IRQ_FLAGS, &reg);
     if (reg & IrqMask::IRQ_TX_DONE_MASK)
       break;
-    //ESP_LOGI("lora","Reg: %d",reg);
+    // ESP_LOGI("lora","Reg: %d",reg);
     if (ret != ESP_OK)
       return ret;
     vTaskDelay(2);
   };
-  //ESP_LOGI("lora","Sending done");
+  // ESP_LOGI("lora","Sending done");
   return WriteReg(Registers::REG_IRQ_FLAGS, IrqMask::IRQ_TX_DONE_MASK);
 }
 
@@ -603,8 +635,8 @@ esp_err_t SX1278_LoRa::ReceivePacket(uint8_t *buf, uint8_t size, uint8_t *BytesR
   uint8_t reg;
 
   /*
-    * Check interrupts.
-    */
+   * Check interrupts.
+   */
   uint8_t irq;
   ret = ReadReg(Registers::REG_IRQ_FLAGS, &irq);
   if (ret != ESP_OK)
@@ -629,18 +661,18 @@ esp_err_t SX1278_LoRa::ReceivePacket(uint8_t *buf, uint8_t size, uint8_t *BytesR
     return ESP_ERR_INVALID_CRC;
 
   /*
-    * Find packet size.
-    */
+   * Find packet size.
+   */
   ret = ReadReg(mImplicit ? Registers::REG_PAYLOAD_LENGTH : Registers::REG_RX_NB_BYTES, &len);
   if (ret != ESP_OK)
     return ret;
 
   /*
-    * Transfer data from radio.
-    */
-  //ret = lora_idle();
-  //if (ret != ESP_OK)
-    //return ret;
+   * Transfer data from radio.
+   */
+  // ret = lora_idle();
+  // if (ret != ESP_OK)
+  // return ret;
   ret = ReadReg(Registers::REG_FIFO_RX_CURRENT_ADDR, &reg);
   if (ret != ESP_OK)
     return ret;
@@ -693,20 +725,6 @@ float SX1278_LoRa::PacketSnr(void)
   return ((int8_t)reg) * 0.25;
 }
 
-/**
- * Shutdown hardware.
- */
-void SX1278_LoRa::Close(void)
-{
-  Sleep();
-  if (mhSpi!=NULL)
-  {
-    spi_bus_remove_device(mhSpi);
-    spi_bus_free(VSPI_HOST);
-    mhSpi=NULL;
-  }
-}
-
 esp_err_t SX1278_LoRa::DumpRegisters(void)
 {
   esp_err_t ret;
@@ -734,7 +752,7 @@ esp_err_t SX1278_LoRa::SendLoraMsg(LoraCommand aCmd, uint8_t *aBuf, uint16_t aSi
   ph.Address = mAddress;
   ph.Cmd = (uint8_t)aCmd;
   ph.NumPackets = NumPackets;
-  ph.Tag=aTag;
+  ph.Tag = aTag;
   int BytesWritten = 0;
   esp_err_t ret;
   for (int i = 0; i < NumPackets; i++)
@@ -745,14 +763,290 @@ esp_err_t SX1278_LoRa::SendLoraMsg(LoraCommand aCmd, uint8_t *aBuf, uint16_t aSi
     ph.PayloadCRC = Crc16(aBuf + BytesWritten, ph.PacketPayloadSize);
     memcpy(mLoraBuf, &ph, sizeof(ph)); // Header kopieren
     memcpy(mLoraBuf + sizeof(ph), aBuf + BytesWritten, ph.PacketPayloadSize);
-    //ESP_LOGI(TAG, "Sending LoRa packet %d/%d, %d bytes", i + 1, NumPackets, sizeof(ph) + ph.PacketPayloadSize);
+    // ESP_LOGI(TAG, "Sending LoRa packet %d/%d, %d bytes", i + 1, NumPackets, sizeof(ph) + ph.PacketPayloadSize);
     ret = SendPacket(mLoraBuf, sizeof(ph) + ph.PacketPayloadSize);
     if (ret != ESP_OK)
       return ret;
-    
+
     BytesWritten += ph.PacketPayloadSize;
   }
   return ESP_OK;
 }
 
+// ----------------------------------------------------------------------------------
+// ----------------------------------------------------------------------------------
+// ----------------------------------------------------------------------------------
 
+SX1262_LoRa::SX1262_LoRa(LoRaBoardTypes aBoard) : LoRaBase(aBoard)
+{
+}
+
+esp_err_t SX1262_LoRa::ChipCommand(uint8_t *aParams, uint8_t aParamLength)
+{
+  // Byte0 = SX1262-Opcode
+  esp_err_t ret;
+  spi_transaction_t t = {};
+  t.flags = 0;
+  t.length = 8 * aParamLength;
+  t.tx_buffer = aParams;
+  t.rx_buffer = SPIRecBuf;
+
+  gpio_set_level((gpio_num_t)PinConfig->ChipSelect, 0);
+  ret = spi_device_transmit(mhSpi, &t);
+  gpio_set_level((gpio_num_t)PinConfig->ChipSelect, 1);
+  if (aParams != NULL && aParamLength != 0)
+    memcpy(aParams, SPIRecBuf, aParamLength); // Für Lesekommandos
+  return ret;
+}
+
+esp_err_t SX1262_LoRa::SetRadioMode(RadioMode aRM, uint32_t aTimeout)
+{
+  esp_err_t ret;
+  uint8_t Params[4];
+
+  // Zu allererst immer in den Standby gehen!
+  Params[0] = Opcodes::OP_SET_STANDBY;
+  Params[1] = 0;
+  ret = ChipCommand(Params, 2); // Standby mit 13 MHz RC-Oszillator
+  if (ret != ESP_OK)
+    return ret;
+
+  switch (aRM)
+  {
+  case RM_STANDBY:
+    // Ist schon im Standby
+    break;
+  case RM_SLEEP:
+    Params[0] = Opcodes::OP_SET_SLEEP;
+    Params[1] = 0;
+    ret = ChipCommand(Params, 2);
+    // Mindestens 500 µs Pause lt. Datenblatt
+    vTaskDelay(pdMS_TO_TICKS(1));
+    break;
+  case RM_RX_ENABLE:
+    Params[0] = Opcodes::OP_SET_RX;
+    // Timeout Bit 23:0
+    Params[1] = (aTimeout >> 16); // MSB
+    Params[2] = (aTimeout >> 8) & 0x00FF;
+    Params[3] = aTimeout & 0xFF;
+    ret = ChipCommand(Params, 4);
+    break;
+  case RM_TX_ENABLE:
+    Params[0] = Opcodes::OP_SET_TX;
+    // Timeout Bit 23:0, 64000 = 1 s
+    Params[1] = (aTimeout >> 16); // MSB
+    Params[2] = (aTimeout >> 8) & 0xFF;
+    Params[3] = aTimeout & 0xFF;
+    ret = ChipCommand(Params, 4);
+    break;
+  }
+  return ret;
+}
+
+esp_err_t SX1262_LoRa::SetPacketType(PacketType aPT)
+{
+  uint8_t Params[2];
+  Params[0] = Opcodes::OP_SET_PKG_TYPE;
+  Params[1] = (uint8_t)aPT;
+  return ChipCommand(Params, sizeof(Params));
+}
+
+esp_err_t SX1262_LoRa::SetFrequency(uint32_t aFrequency)
+{
+  mFrequency = aFrequency;
+  uint8_t Params[5];
+  Params[0] = Opcodes::OP_SET_RF_FRQ;
+  uint32_t Chip_FRQ = (uint32_t)(((uint64_t)aFrequency * XTAL_FRQ) >> 25);
+  Params[1] = (Chip_FRQ >> 24) & 0xFF;
+  Params[2] = (Chip_FRQ >> 16) & 0xFF;
+  Params[3] = (Chip_FRQ >> 8) & 0xFF;
+  Params[4] = Chip_FRQ & 0xFF;
+  return ChipCommand(Params, sizeof(Params));
+}
+
+esp_err_t SX1262_LoRa::SetTxParams(RampTime aRampTime, int8_t aTXPower_DB, bool aUseHighPowerPA)
+{
+  esp_err_t ret;
+  uint8_t Params[5];
+  Params[0] = Opcodes::OP_SET_PA_CONFIG;
+
+  // s. Tabelle 13-21 Datenblatt
+  Params[3] = 0x00;
+  Params[4] = 0x01;
+  if (aTXPower_DB <= 14)
+  {
+    Params[1] = 0x02;
+    Params[2] = 0x02;
+  }
+  else if (aTXPower_DB <= 17)
+  {
+    Params[1] = 0x02;
+    Params[2] = 0x03;
+  }
+  else if (aTXPower_DB <= 20)
+  {
+    Params[1] = 0x03;
+    Params[2] = 0x05;
+  }
+  else
+  {
+    Params[1] = 0x04;
+    Params[2] = 0x07;
+  }
+  ret = ChipCommand(Params, sizeof(Params));
+  if (ret != ESP_OK)
+    return ret;
+
+  Params[0] = Opcodes::OP_SET_TX_PARAMS;
+  Params[1] = (uint8_t)aRampTime;
+  Params[2] = (uint8_t)aTXPower_DB;
+  return ChipCommand(Params, 3);
+}
+
+esp_err_t SX1262_LoRa::SetModulationParams(SpreadingFactor aSF, LoRaBandwidth aBW, LoRaCodingRate aCR, bool aLowDataRateOpt)
+{
+  uint8_t Params[9];
+  Params[0] = Opcodes::OP_SET_MOD_PARAMS;
+  Params[1] = (uint8_t)aSF;
+  Params[2] = (uint8_t)aBW;
+  Params[3] = (uint8_t)aCR;
+  Params[4] = (uint8_t)aLowDataRateOpt;
+  return ChipCommand(Params, sizeof(Params));
+}
+
+esp_err_t SX1262_LoRa::SetPacketParams(uint16_t aPreambleLength, bool aImplicitHeader, uint8_t aPayloadLength, bool aUseCRC)
+{
+  uint8_t Params[10];
+  Params[0] = Opcodes::OP_SET_PKG_PARAMS;
+  // PreambleLength
+  Params[1] = (aPreambleLength >> 8) & 0xFF;
+  Params[2] = aPreambleLength & 0xFF;
+
+  // HeaderType
+  Params[3] = (uint8_t)aImplicitHeader;
+
+  // Paketlänge (Nutzdaten)
+  Params[4] = aPayloadLength;
+
+  // CRC ja/nein
+  Params[5] = (uint8_t)aUseCRC;
+
+  // InvertIQ
+  Params[6] = 0;
+
+  return ChipCommand(Params, sizeof(Params));
+}
+
+esp_err_t SX1262_LoRa::SetCadParams(uint8_t aSymbolNum, uint8_t aDetPeak, uint8_t aDetMin, uint8_t aExitMode, uint32_t aTimeout)
+{
+  uint8_t Params[8];
+  Params[0] = Opcodes::OP_SET_CAD_PARAMS;
+
+  Params[1] = aSymbolNum;
+  Params[2] = aDetPeak;
+  Params[3] = aDetMin;
+  Params[4] = aExitMode;
+
+  // CAD-Timeout
+  Params[5] = (aPreambleLength >> 16) & 0xFF;
+  Params[6] = (aPreambleLength >> 8) & 0xFF;
+  Params[7] = aPreambleLength & 0xFF;
+
+  return ChipCommand(Params, sizeof(Params));
+}
+
+esp_err_t SX1262_LoRa::SetBufferBaseAddress(uint8_t aTxBaseAddr, uint8_t aRxBaseAddr)
+{
+  uint8_t Params[3];
+  Params[0] = Opcodes::OP_SET_BUFFER_BASE_ADDR;
+  Params[1] = aTxBaseAddr;
+  Params[2] = aRxBaseAddr;
+  return ChipCommand(Params, sizeof(Params));
+}
+
+esp_err_t SX1262_LoRa::SetSyncWord(uint16_t aSyncWord)
+{
+  uint8_t Params[2];
+  Params[0] = (aSyncWord >> 8) & 0xFF;
+  Params[1] = aSyncWord & 0xFF;
+  return WriteReg(REG_LORA_SYNC_MSB, Params, 2);
+}
+
+esp_err_t SX1262_LoRa::ReadReg(uint16_t aAddr, uint8_t *aParams, uint8_t aParamLength)
+{
+  SPITransBuf[0] = Opcodes::OP_READ_REG;
+  SPITransBuf[1] = (aAddr >> 8) & 0xFF;
+  SPITransBuf[2] = aAddr & 0xFF;
+  // Es müssen aParamLength+1 NOPs gesendet werden, damit 1 (oder mehrere) Register gelesen werden können
+  memset(SPITransBuf + 3, 0, aParamLength + 1);
+  esp_err_t ret = ChipCommand(SPITransBuf, aParamLength + 4);
+  memcpy(aParams, SPITransBuf + 4, aParamLength);
+  return ret;
+}
+
+esp_err_t SX1262_LoRa::WriteReg(uint16_t aAddr, uint8_t *aParams, uint8_t aParamLength)
+{
+  SPITransBuf[0] = Opcodes::OP_WRITE_REG;
+  SPITransBuf[1] = (aAddr >> 8) & 0xFF;
+  SPITransBuf[2] = aAddr & 0xFF;
+  memcpy(SPITransBuf + 3, aParams, aParamLength);
+  return ChipCommand(SPITransBuf, aParamLength + 3);
+}
+
+esp_err_t SX1262_LoRa::ReadBuffer(uint8_t aOffset, uint8_t *aParams, uint8_t aParamLength)
+{
+  SPITransBuf[0] = Opcodes::OP_READ_BUF;
+  SPITransBuf[1] = aOffset;
+  memset(SPITransBuf + 2, 0, aParamLength + 1);
+  esp_err_t ret = ChipCommand(SPITransBuf, aParamLength + 3);
+  memcpy(aParams, SPITransBuf + 3, aParamLength);
+  return ret;
+}
+
+esp_err_t SX1262_LoRa::WriteBuffer(uint8_t aOffset, uint8_t *aParams, uint8_t aParamLength)
+{
+  SPITransBuf[0] = Opcodes::OP_WRITE_BUF;
+  SPITransBuf[1] = aOffset;
+  memcpy(SPITransBuf + 2, aParams, aParamLength);
+  return ChipCommand(SPITransBuf, aParamLength + 2);
+}
+
+esp_err_t SX1262_LoRa::SetupModule(uint8_t aAddress, uint32_t aFrq, uint16_t aPreambleLength, LoRaBandwidth aBandwidth,
+                                   uint16_t aSyncWord, SpreadingFactor aSpreadingFactor, LoRaCodingRate aCodingRate, int8_t aTxPower)
+
+{
+  mAddress = aAddress;
+  mPreambleLength = aPreambleLength;
+  mInitialized = false;
+  esp_err_t ret;
+  ret = SPIBusInit();
+  if (ret != ESP_OK)
+    return ret;
+  ret = SetRadioMode(RM_STANDBY, 0);
+  if (ret != ESP_OK)
+    return ret;
+  ret = SetPacketType(PACKET_TYPE_LORA);
+  if (ret != ESP_OK)
+    return ret;
+  ret = SetFrequency(aFrq);
+  if (ret != ESP_OK)
+    return ret;
+  ret = SetTxParams(SET_RAMP_10U, aTxPower);
+  if (ret != ESP_OK)
+    return ret;
+  ret = SetBufferBaseAddress(0, 0);
+  if (ret != ESP_OK)
+    return ret;
+  ret = SetModulationParams(aSpreadingFactor, aBandwidth, aCodingRate, false);
+  if (ret != ESP_OK)
+    return ret;
+  ret = SetPacketParams(aPreambleLength, true, uint8_t aPayloadLength, true);
+  if (ret != ESP_OK)
+    return ret;
+  ret = SetSyncWord(aSyncWord);
+  if (ret != ESP_OK)
+    return ret;
+
+  mInitialized = true;
+  return ret;
+}

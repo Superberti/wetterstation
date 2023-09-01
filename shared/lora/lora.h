@@ -20,15 +20,86 @@ public:
   uint8_t Mosi;
   uint8_t Clock;
   uint8_t DIO0;
-	uint8_t DIO1;
-	uint8_t Busy;
+  uint8_t DIO1;
+  uint8_t Busy;
   uint8_t Led;
   uint8_t AdcChannel;
   LoRa_PinConfiguration(LoRaBoardTypes aBoard);
 };
 
+class LoRaBase
+{
+protected:
+  spi_device_handle_t mhSpi;
+  bool mInitialized;
+  bool mImplicit;
+  uint32_t mFrequency;
+  uint8_t mAddress;
+  static const uint16_t mLoraBufSize = 256;
+  uint8_t mLoraBuf[mLoraBufSize];
 
-class SX1278_LoRa
+  esp_err_t SPIBusInit();
+
+  virtual esp_err_t ExplicitHeaderMode() = 0;
+  virtual esp_err_t ImplicitHeaderMode(uint8_t size) = 0;
+  virtual esp_err_t Idle() = 0;
+  virtual esp_err_t SetTxPower(uint8_t level) = 0;
+  virtual esp_err_t SetFrequency(uint32_t frequency) = 0;
+  virtual esp_err_t SetPreambleLength(uint16_t length) = 0;
+  virtual esp_err_t SetSyncWord(uint8_t sw) = 0;
+  virtual esp_err_t EnableCrc() = 0;
+  virtual esp_err_t DisableCrc() = 0;
+
+public:
+  enum SpreadingFactor
+  {
+    SF5 = 5,
+    SF6 = 6,
+    SF7 = 7,
+    SF8 = 8,
+    SF9 = 9,
+    SF10 = 10,
+    SF11 = 11,
+    SF12 = 12,
+  };
+
+  enum LoRaBandwidth
+  {
+    LORA_BW_7 = 0x00,   // (7.81 kHz real)
+    LORA_BW_10 = 0x08,  // (10.42 kHz real)
+    LORA_BW_15 = 0x01,  // (15.63 kHz real)
+    LORA_BW_20 = 0x09,  // (20.83 kHz real)
+    LORA_BW_31 = 0x02,  // (31.25 kHz real)
+    LORA_BW_41 = 0x0A,  // (41.67 kHz real)
+    LORA_BW_62 = 0x03,  // (62.50 kHz real)
+    LORA_BW_125 = 0x04, // (125 kHz real)
+    LORA_BW_250 = 0x05, // (250 kHz real)
+    LORA_BW_500 = 0x06, // (500 kHz real)
+  };
+
+  enum LoRaCodingRate
+  {
+    LORA_CR_4_5 = 0x01,
+    LORA_CR_4_6 = 0x02,
+    LORA_CR_4_7 = 0x03,
+    LORA_CR_4_8 = 0x04,
+  };
+
+  LoRa_PinConfiguration *PinConfig;
+  void Reset();
+  bool Initialized() { return mInitialized; }
+
+  virtual void Close();
+  virtual esp_err_t DumpRegisters() = 0;
+  virtual esp_err_t SetupModule(uint8_t aAddress, uint32_t aFrq, uint16_t aPreambleLength, LoRaBandwidth aBandwidth,
+                                uint16_t aSyncWord, SpreadingFactor aSpreadingFactor, LoRaCodingRate aCodingRate, int8_t aTxPower) = 0;
+  virtual esp_err_t SendLoraMsg(LoraCommand aCmd, uint8_t *aBuf, uint16_t aSize, uint32_t aTag) = 0;
+
+  LoRaBase(LoRaBoardTypes aBoard);
+  virtual ~LoRaBase();
+};
+
+class SX1278_LoRa : public LoRaBase
 {
   struct Registers
   {
@@ -87,51 +158,175 @@ class SX1278_LoRa
     static const uint8_t PA_OUTPUT_PA_BOOST_PIN = 1;
     static const uint8_t TIMEOUT_RESET = 100;
   };
-
-  spi_device_handle_t mhSpi;
-  bool mInitialized;
-  bool mImplicit;
-  long mFrequency;
-  uint8_t mAddress;
-  static const uint16_t mLoraBufSize=256;
-  uint8_t mLoraBuf[mLoraBufSize];
-  
-  esp_err_t ExplicitHeaderMode(void);
-  esp_err_t ImplicitHeaderMode(uint8_t size);
-  esp_err_t Idle(void);
   esp_err_t WriteReg(uint8_t reg, uint8_t val);
   esp_err_t ReadReg(uint8_t reg, uint8_t *aInVal);
-
+  esp_err_t ExplicitHeaderMode();
+  esp_err_t ImplicitHeaderMode(uint8_t size);
+  esp_err_t Idle();
   esp_err_t SetTxPower(uint8_t level);
-  esp_err_t SetFrequency(long frequency);
+  esp_err_t SetFrequency(uint32_t frequency);
   esp_err_t SetSpreadingFactor(uint8_t sf);
-  esp_err_t SetBandwidth(long sbw);
+  esp_err_t SetBandwidth(uint32_t sbw);
   esp_err_t SetCodingRate(uint8_t denominator);
   esp_err_t SetPreambleLength(uint16_t length);
   esp_err_t SetSyncWord(uint8_t sw);
-  esp_err_t Init(void);
-  esp_err_t EnableCrc(void);
-  esp_err_t DisableCrc(void);
-  
-  bool Initialized(){return mInitialized;}
+  esp_err_t Init();
+  esp_err_t EnableCrc();
+  esp_err_t DisableCrc();
 
 public:
-  LoRa_PinConfiguration *PinConfig;
-  void Reset(void);
-  void Close(void);
-  esp_err_t Receive(void);
-  esp_err_t Sleep(void);
+  esp_err_t Receive();
+  esp_err_t Sleep();
   esp_err_t SendPacket(uint8_t *buf, uint8_t size);
   esp_err_t ReceivePacket(uint8_t *buf, uint8_t size, uint8_t *BytesRead);
-  uint8_t Received(void);
-  uint8_t PacketRssi(void);
-  float PacketSnr(void);
-  
-  esp_err_t DumpRegisters(void);
-  esp_err_t SetupModule(uint8_t aAddress, long aFrq, uint16_t aPreambleLength, long aBandwidth, uint8_t aSyncByte, uint8_t aSpreadingFactor, uint8_t aCodingRate, uint8_t aTxPower);
-  esp_err_t SendLoraMsg(LoraCommand aCmd, uint8_t* aBuf, uint16_t aSize, uint32_t aTag);
+  uint8_t Received();
+  uint8_t PacketRssi();
+  float PacketSnr();
+
+  esp_err_t DumpRegisters();
+  esp_err_t SetupModule(uint8_t aAddress, uint32_t aFrq, uint16_t aPreambleLength, LoRaBandwidth aBandwidth,
+                                uint16_t aSyncWord, SpreadingFactor aSpreadingFactor, LoRaCodingRate aCodingRate, int8_t aTxPower)
+  esp_err_t SendLoraMsg(LoraCommand aCmd, uint8_t *aBuf, uint16_t aSize, uint32_t aTag);
 
   SX1278_LoRa(LoRaBoardTypes aBoard);
-  ~SX1278_LoRa();
+  //~SX1278_LoRa();
+};
+
+class SX1262_LoRa : public LoRaBase
+{
+  struct Opcodes
+  {
+    static const uint8_t NOP = 0x00;
+    static const uint8_t OP_RESET_STATS = 0x00;
+    static const uint8_t OP_CLR_IRQ_STATUS = 0x02;
+    static const uint8_t OP_CLR_DEV_ERR = 0x07;
+    static const uint8_t OP_SET_DIO_IRQ_PARAMS = 0x08;
+    static const uint8_t OP_WRITE_REG = 0x0D;
+    static const uint8_t OP_WRITE_BUF = 0x0E;
+    static const uint8_t OP_GET_STATS = 0x10;
+    static const uint8_t OP_GET_PKG_TYPE = 0x11;
+    static const uint8_t OP_GET_IRQ_STATUS = 0x12;
+    static const uint8_t OP_GET_RX_BUF_STAT = 0x13;
+    static const uint8_t OP_GET_PKG_STAT = 0x14;
+    static const uint8_t OP_GET_RSSI_INST = 0x15;
+    static const uint8_t OP_GET_DEV_ERR = 0x17;
+    static const uint8_t OP_READ_REG = 0x1D;
+    static const uint8_t OP_READ_BUF = 0x1E;
+    static const uint8_t OP_SET_RX = 0x82;
+    static const uint8_t OP_SET_TX = 0x83;
+    static const uint8_t OP_SET_STANDBY = 0x80;
+    static const uint8_t OP_SET_SLEEP = 0x84;
+    static const uint8_t OP_SET_RF_FRQ = 0x86;
+    static const uint8_t OP_SET_CAD_PARAMS = 0x88;
+    static const uint8_t OP_CALIBRATE = 0x89;
+    static const uint8_t OP_SET_PKG_TYPE = 0x8A;
+    static const uint8_t OP_SET_MOD_PARAMS = 0x8B;
+    static const uint8_t OP_SET_PKG_PARAMS = 0x8C;
+    static const uint8_t OP_SET_TX_PARAMS = 0x8E;
+    static const uint8_t OP_SET_BUFFER_BASE_ADDR = 0x8F;
+    static const uint8_t OP_SET_RXTX_FALLBACK_MODE = 0x93;
+    static const uint8_t OP_SET_RX_DUTY_CYCLE = 0x94;
+    static const uint8_t OP_SET_PA_CONFIG = 0x95;
+    static const uint8_t OP_SET_REGUL_MODE = 0x96;
+    static const uint8_t OP_SET_DIO3_AS_TCXO_CTRL = 0x97;
+    static const uint8_t OP_CALIBRATE_IMAGE = 0x98;
+    static const uint8_t OP_SET_DIO2_AS_RF_SWITCH_CTRL = 0x9D;
+    static const uint8_t OP_STOP_TIMER_ON_PREAMBLE = 0x9F;
+    static const uint8_t OP_SET_LORA_SYM_NUM_TO = 0xA0;
+    static const uint8_t OP_GET_STATUS = 0xC0;
+    static const uint8_t OP_SET_FS = 0xC1;
+    static const uint8_t OP_SET_CAD = 0xC5;
+    static const uint8_t OP_SET_TX_CONT_WAVE = 0xD1;
+    static const uint8_t OP_SET_TX_INF_PREAMBLE = 0xD2;
+  };
+
+  struct Registers
+  {
+    static const uint16_t REG_WHITE_INIT_MSB = 0x06B8;
+    static const uint16_t REG_WHITE_INIT_LSB = 0x06B9;
+    static const uint16_t REG_CRC_INIT_MSB = 0x06BC;
+    static const uint16_t REG_CRC_INIT_LSB = 0x06BD;
+    static const uint16_t REG_CRC_POLY_MSB = 0x06BE;
+    static const uint16_t REG_CRC_POLY_LSB = 0x06BF;
+    static const uint16_t REG_FSK_SYNC_0 = 0x06C0;
+    static const uint16_t REG_FSK_SYNC_1 = 0x06C1;
+    static const uint16_t REG_FSK_SYNC_2 = 0x06C2;
+    static const uint16_t REG_FSK_SYNC_3 = 0x06C3;
+    static const uint16_t REG_FSK_SYNC_4 = 0x06C4;
+    static const uint16_t REG_FSK_SYNC_5 = 0x06C5;
+    static const uint16_t REG_FSK_SYNC_6 = 0x06C6;
+    static const uint16_t REG_FSK_SYNC_7 = 0x06C7;
+    static const uint16_t REG_FSK_NODE_ADDRESS = 0x06CD;
+    static const uint16_t REG_FSK_BROADCAST_ADDRESS = 0x06CE;
+    static const uint16_t REG_LORA_SYNC_MSB = 0x0740;
+    static const uint16_t REG_LORA_SYNC_LSB = 0x0741;
+    static const uint16_t REG_RANDOM_DATA_0 = 0x0819;
+    static const uint16_t REG_RANDOM_DATA_1 = 0x081A;
+    static const uint16_t REG_RANDOM_DATA_2 = 0x081B;
+    static const uint16_t REG_RANDOM_DATA_3 = 0x081C;
+    static const uint16_t REG_RX_GAIN = 0x08AC;
+    static const uint16_t REG_OCP_CONFIG = 0x08E7;
+    static const uint16_t REG_XTA_TRIM = 0x0911;
+    static const uint16_t REG_XTB_TRIM = 0x0912;
+  };
+
+  enum RadioMode
+  {
+    RM_STANDBY,
+    RM_SLEEP,
+    RM_TX_ENABLE,
+    RM_RX_ENABLE,
+  };
+
+  enum PacketType
+  {
+    PACKET_TYPE_GFSK = 0,
+    PACKET_TYPE_LORA = 1
+  };
+
+  enum RampTime
+  {
+    SET_RAMP_10U = 0x00,
+    SET_RAMP_20U = 0x01,
+    SET_RAMP_40U = 0x02,
+    SET_RAMP_80U = 0x03,
+    SET_RAMP_200U = 0x04,
+    SET_RAMP_800U = 0x05,
+    SET_RAMP_1700U = 0x06,
+    SET_RAMP_3400U = 0x07,
+  };
+
+  uint8_t SPIRecBuf[262];
+  uint8_t SPITransBuf[262];
+  uint16_t mPreambleLength;
+
+  esp_err_t SetRadioMode(RadioMode aRM, uint32_t aTimeout);
+  esp_err_t SetPacketType(PacketType);
+  esp_err_t SetTxParams(RampTime aRampTime, int8_t aTXPower_DB);
+  esp_err_t SetModulationParams(SpreadingFactor aSF, LoRaBandwidth aBW, LoRaCodingRate aCR, bool aLowDataRateOpt);
+  esp_err_t SetPacketParams(uint16_t aPreambleLength, bool aImplicitHeader, uint8_t aPayloadLength, bool aUseCRC);
+  esp_err_t ChipCommand(uint8_t *aParams, uint8_t aParamLength);
+  esp_err_t SetFrequency(uint32_t aFrequency);
+  esp_err_t SetSyncWord(uint16_t aSyncWord);
+  esp_err_t ReadReg(uint16_t aAddr, uint8_t *aParams, uint8_t aParamLength);
+  esp_err_t WriteReg(uint16_t aAddr, uint8_t *aParams, uint8_t aParamLength);
+  esp_err_t ReadBuffer(uint8_t aOffset, uint8_t *aParams, uint8_t aParamLength);
+  esp_err_t WriteBuffer(uint8_t aOffset, uint8_t *aParams, uint8_t aParamLength);
+
+public:
+  esp_err_t Receive();
+  esp_err_t Sleep();
+  esp_err_t SendPacket(uint8_t *buf, uint8_t size);
+  esp_err_t ReceivePacket(uint8_t *buf, uint8_t size, uint8_t *BytesRead);
+  uint8_t Received();
+  uint8_t PacketRssi();
+  float PacketSnr();
+
+  esp_err_t DumpRegisters();
+  esp_err_t SetupModule(uint8_t aAddress, uint32_t aFrq, uint16_t aPreambleLength, LoRaBandwidth aBandwidth,
+                                uint16_t aSyncWord, SpreadingFactor aSpreadingFactor, LoRaCodingRate aCodingRate, int8_t aTxPower);
+  esp_err_t SendLoraMsg(LoraCommand aCmd, uint8_t *aBuf, uint16_t aSize, uint32_t aTag);
+
+  SX1262_LoRa(LoRaBoardTypes aBoard);
 };
 #endif
