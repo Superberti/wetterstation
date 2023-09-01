@@ -448,30 +448,45 @@ esp_err_t SX1278_LoRa::SetSpreadingFactor(uint8_t sf)
  * Set bandwidth (bit rate)
  * @param sbw Bandwidth in Hz (up to 500000)
  */
-esp_err_t SX1278_LoRa::SetBandwidth(uint32_t sbw)
+esp_err_t SX1278_LoRa::SetBandwidth(LoRaBandwidth sbw)
 {
   uint8_t bw;
-
-  if (sbw <= 7.8E3)
+  switch (sbw)
+  {
+  case LORA_BW_7:
     bw = 0;
-  else if (sbw <= 10.4E3)
+    break;
+  case LORA_BW_10:
     bw = 1;
-  else if (sbw <= 15.6E3)
+    break;
+  case LORA_BW_15:
     bw = 2;
-  else if (sbw <= 20.8E3)
+    break;
+  case LORA_BW_20:
     bw = 3;
-  else if (sbw <= 31.25E3)
+    break;
+  case LORA_BW_31:
     bw = 4;
-  else if (sbw <= 41.7E3)
+    break;
+  case LORA_BW_41:
     bw = 5;
-  else if (sbw <= 62.5E3)
+    break;
+  case LORA_BW_62:
     bw = 6;
-  else if (sbw <= 125E3)
+    break;
+  case LORA_BW_125:
     bw = 7;
-  else if (sbw <= 250E3)
+    break;
+  case LORA_BW_250:
     bw = 8;
-  else
+    break;
+  case LORA_BW_500:
     bw = 9;
+    break;
+  default:
+    bw = 8;
+    break;
+  }
 
   esp_err_t ret;
   uint8_t reg;
@@ -969,7 +984,7 @@ esp_err_t SX1262_LoRa::SetSyncWord(uint16_t aSyncWord)
   uint8_t Params[2];
   Params[0] = (aSyncWord >> 8) & 0xFF;
   Params[1] = aSyncWord & 0xFF;
-  return WriteReg(REG_LORA_SYNC_MSB, Params, 2);
+  return WriteReg(Registers::REG_LORA_SYNC_MSB, Params, 2);
 }
 
 esp_err_t SX1262_LoRa::ReadReg(uint16_t aAddr, uint8_t *aParams, uint8_t aParamLength)
@@ -1040,10 +1055,12 @@ esp_err_t SX1262_LoRa::SetupModule(uint8_t aAddress, uint32_t aFrq, uint16_t aPr
   ret = SetModulationParams(aSpreadingFactor, aBandwidth, aCodingRate, false);
   if (ret != ESP_OK)
     return ret;
-  ret = SetPacketParams(aPreambleLength, true, uint8_t aPayloadLength, true);
+  /**/
+  ret = SetPacketParams(aPreambleLength, true, 0, true);
   if (ret != ESP_OK)
     return ret;
-  ret = SetSyncWord(aSyncWord);
+  * /
+      ret = SetSyncWord(aSyncWord);
   if (ret != ESP_OK)
     return ret;
 

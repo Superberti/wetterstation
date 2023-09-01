@@ -166,7 +166,7 @@ class SX1278_LoRa : public LoRaBase
   esp_err_t SetTxPower(uint8_t level);
   esp_err_t SetFrequency(uint32_t frequency);
   esp_err_t SetSpreadingFactor(uint8_t sf);
-  esp_err_t SetBandwidth(uint32_t sbw);
+  esp_err_t SetBandwidth(LoRaBandwidth sbw);
   esp_err_t SetCodingRate(uint8_t denominator);
   esp_err_t SetPreambleLength(uint16_t length);
   esp_err_t SetSyncWord(uint8_t sw);
@@ -185,7 +185,7 @@ public:
 
   esp_err_t DumpRegisters();
   esp_err_t SetupModule(uint8_t aAddress, uint32_t aFrq, uint16_t aPreambleLength, LoRaBandwidth aBandwidth,
-                                uint16_t aSyncWord, SpreadingFactor aSpreadingFactor, LoRaCodingRate aCodingRate, int8_t aTxPower)
+                                uint16_t aSyncWord, SpreadingFactor aSpreadingFactor, LoRaCodingRate aCodingRate, int8_t aTxPower);
   esp_err_t SendLoraMsg(LoraCommand aCmd, uint8_t *aBuf, uint16_t aSize, uint32_t aTag);
 
   SX1278_LoRa(LoRaBoardTypes aBoard);
@@ -312,6 +312,7 @@ class SX1262_LoRa : public LoRaBase
   esp_err_t WriteReg(uint16_t aAddr, uint8_t *aParams, uint8_t aParamLength);
   esp_err_t ReadBuffer(uint8_t aOffset, uint8_t *aParams, uint8_t aParamLength);
   esp_err_t WriteBuffer(uint8_t aOffset, uint8_t *aParams, uint8_t aParamLength);
+  esp_err_t SetBufferBaseAddress(uint8_t aTxBaseAddr, uint8_t aRxBaseAddr);
 
 public:
   esp_err_t Receive();
