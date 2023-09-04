@@ -39,8 +39,8 @@ esp_err_t SHT40::Init(bool aDoI2CInit)
     conf.scl_pullup_en = GPIO_PULLUP_ENABLE;
     conf.master.clk_speed = 100000; // Fast Mode, 1000000;  // Fast Mode Plus=1MHz
     conf.clk_flags = 0;
-    i2c_param_config(mPort, &conf);
-    return i2c_driver_install(mPort, conf.mode, 0, 0, 0);
+    i2c_param_config((i2c_port_t)mPort, &conf);
+    return i2c_driver_install((i2c_port_t)mPort, conf.mode, 0, 0, 0);
   }
   else
     return ESP_OK;
@@ -56,7 +56,7 @@ esp_err_t SHT40::Read(float &aTemp, float &aHum, bool &rCRC_Err)
   i2c_master_write_byte(cmd, (SHT40_ADDR) << 1 | I2C_MASTER_WRITE, ACK_CHECK_EN);
   i2c_master_write_byte(cmd, (uint8_t)mReadMode, ACK_CHECK_EN);
   i2c_master_stop(cmd);
-  ret = i2c_master_cmd_begin(mPort, cmd, 1000 / portTICK_PERIOD_MS);
+  ret = i2c_master_cmd_begin((i2c_port_t)mPort, cmd, 1000 / portTICK_PERIOD_MS);
   i2c_cmd_link_delete(cmd);
   if (ret != ESP_OK)
   {
@@ -100,7 +100,7 @@ esp_err_t SHT40::Read(float &aTemp, float &aHum, bool &rCRC_Err)
   i2c_master_read_byte(cmd, rb + 5, I2C_MASTER_NACK); // Beim letzten Byte gibt's ein NACK
 
   i2c_master_stop(cmd);
-  ret = i2c_master_cmd_begin(mPort, cmd, 1000 / portTICK_PERIOD_MS);
+  ret = i2c_master_cmd_begin((i2c_port_t)mPort, cmd, 1000 / portTICK_PERIOD_MS);
   i2c_cmd_link_delete(cmd);
 
   aTemp = -45 + 175 * (double)(rb[0] * 256 + rb[1]) / 65535.0;
@@ -135,7 +135,7 @@ esp_err_t SHT40::ReadSerial(uint32_t &aSerialNo, bool &rCRC_Err)
   i2c_master_write_byte(cmd, (SHT40_ADDR << 1) | I2C_MASTER_WRITE, ACK_CHECK_EN);
   i2c_master_write_byte(cmd, SHT40_CMD_READ_SERIAL, ACK_CHECK_EN);
   i2c_master_stop(cmd);
-  ret = i2c_master_cmd_begin(mPort, cmd, 1000 / portTICK_PERIOD_MS);
+  ret = i2c_master_cmd_begin((i2c_port_t)mPort, cmd, 1000 / portTICK_PERIOD_MS);
   i2c_cmd_link_delete(cmd);
   if (ret != ESP_OK)
   {
@@ -155,7 +155,7 @@ esp_err_t SHT40::ReadSerial(uint32_t &aSerialNo, bool &rCRC_Err)
   i2c_master_read_byte(cmd, rb + 5, I2C_MASTER_NACK); // Beim letzten Byte gibt's ein NACK
 
   i2c_master_stop(cmd);
-  ret = i2c_master_cmd_begin(mPort, cmd, 1000 / portTICK_PERIOD_MS);
+  ret = i2c_master_cmd_begin((i2c_port_t)mPort, cmd, 1000 / portTICK_PERIOD_MS);
   i2c_cmd_link_delete(cmd);
   if (ret != ESP_OK)
   {

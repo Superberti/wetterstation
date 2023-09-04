@@ -83,7 +83,7 @@ esp_err_t LoRaBase::SPIBusInit()
   bus.quadhd_io_num = -1;
   bus.max_transfer_sz = 0;
 
-  ret = spi_bus_initialize(VSPI_HOST, &bus, 0);
+  ret = spi_bus_initialize(SPI1_HOST, &bus, 0);
   if (ret != ESP_OK)
     return ret;
   spi_device_interface_config_t dev = {};
@@ -93,7 +93,7 @@ esp_err_t LoRaBase::SPIBusInit()
   dev.queue_size = 1;
   dev.flags = 0;
   dev.pre_cb = NULL;
-  ret = spi_bus_add_device(VSPI_HOST, &dev, &mhSpi);
+  ret = spi_bus_add_device(SPI1_HOST, &dev, &mhSpi);
   if (ret != ESP_OK)
     return ret;
   return ESP_OK;
@@ -108,9 +108,39 @@ void LoRaBase::Close(void)
   if (mhSpi != NULL)
   {
     spi_bus_remove_device(mhSpi);
-    spi_bus_free(VSPI_HOST);
+    spi_bus_free(SPI1_HOST);
     mhSpi = NULL;
   }
+}
+
+esp_err_t LoRaBase::SendLoraMsg(LoraCommand aCmd, uint8_t *aBuf, uint16_t aSize, uint32_t aTag)
+{
+  uint8_t MaxPayloadPerPaketSize = 255 - sizeof(LoraPacketHeader);
+  uint8_t NumPackets = aSize / MaxPayloadPerPaketSize + 1;
+  uint8_t LastPacketSize = aSize - (NumPackets - 1) * MaxPayloadPerPaketSize;
+  LoraPacketHeader ph;
+  ph.Address = mAddress;
+  ph.Cmd = (uint8_t)aCmd;
+  ph.NumPackets = NumPackets;
+  ph.Tag = aTag;
+  int BytesWritten = 0;
+  esp_err_t ret;
+  for (int i = 0; i < NumPackets; i++)
+  {
+    ph.PacketNumber = i;
+    ph.PacketPayloadSize = i == (NumPackets - 1) ? LastPacketSize : MaxPayloadPerPaketSize;
+    ph.TotalTransmissionSize = aSize;
+    ph.PayloadCRC = Crc16(aBuf + BytesWritten, ph.PacketPayloadSize);
+    memcpy(mLoraBuf, &ph, sizeof(ph)); // Header kopieren
+    memcpy(mLoraBuf + sizeof(ph), aBuf + BytesWritten, ph.PacketPayloadSize);
+    // ESP_LOGI(TAG, "Sending LoRa packet %d/%d, %d bytes", i + 1, NumPackets, sizeof(ph) + ph.PacketPayloadSize);
+    ret = SendPacket(mLoraBuf, sizeof(ph) + ph.PacketPayloadSize);
+    if (ret != ESP_OK)
+      return ret;
+
+    BytesWritten += ph.PacketPayloadSize;
+  }
+  return ESP_OK;
 }
 
 /**
@@ -411,8 +441,9 @@ esp_err_t SX1278_LoRa::SetFrequency(uint32_t frequency)
  * Set spreading factor.
  * @param sf 6-12, Spreading factor to use.
  */
-esp_err_t SX1278_LoRa::SetSpreadingFactor(uint8_t sf)
+esp_err_t SX1278_LoRa::SetSpreadingFactor(SpreadingFactor aSF)
 {
+  uint8_t sf = (uint8_t)aSF;
   esp_err_t ret;
   if (sf < 6)
     sf = 6;
@@ -496,19 +527,9 @@ esp_err_t SX1278_LoRa::SetBandwidth(LoRaBandwidth sbw)
   return WriteReg(Registers::REG_MODEM_CONFIG_1, (reg & 0x0f) | (bw << 4));
 }
 
-/**
- * Set coding rate
- * @param denominator 5-8, Denominator for the coding rate 4/x
- */
-esp_err_t SX1278_LoRa::SetCodingRate(uint8_t denominator)
+esp_err_t SX1278_LoRa::SetCodingRate(LoRaCodingRate aCR)
 {
-  if (denominator < 5)
-    denominator = 5;
-  else if (denominator > 8)
-    denominator = 8;
-
-  uint8_t cr = denominator - 4;
-
+  uint8_t cr = (uint8_t)aCR;
   esp_err_t ret;
   uint8_t reg;
   ret = ReadReg(Registers::REG_MODEM_CONFIG_1, &reg);
@@ -758,36 +779,6 @@ esp_err_t SX1278_LoRa::DumpRegisters(void)
   return ESP_OK;
 }
 
-esp_err_t SX1278_LoRa::SendLoraMsg(LoraCommand aCmd, uint8_t *aBuf, uint16_t aSize, uint32_t aTag)
-{
-  uint8_t MaxPayloadPerPaketSize = 255 - sizeof(LoraPacketHeader);
-  uint8_t NumPackets = aSize / MaxPayloadPerPaketSize + 1;
-  uint8_t LastPacketSize = aSize - (NumPackets - 1) * MaxPayloadPerPaketSize;
-  LoraPacketHeader ph;
-  ph.Address = mAddress;
-  ph.Cmd = (uint8_t)aCmd;
-  ph.NumPackets = NumPackets;
-  ph.Tag = aTag;
-  int BytesWritten = 0;
-  esp_err_t ret;
-  for (int i = 0; i < NumPackets; i++)
-  {
-    ph.PacketNumber = i;
-    ph.PacketPayloadSize = i == (NumPackets - 1) ? LastPacketSize : MaxPayloadPerPaketSize;
-    ph.TotalTransmissionSize = aSize;
-    ph.PayloadCRC = Crc16(aBuf + BytesWritten, ph.PacketPayloadSize);
-    memcpy(mLoraBuf, &ph, sizeof(ph)); // Header kopieren
-    memcpy(mLoraBuf + sizeof(ph), aBuf + BytesWritten, ph.PacketPayloadSize);
-    // ESP_LOGI(TAG, "Sending LoRa packet %d/%d, %d bytes", i + 1, NumPackets, sizeof(ph) + ph.PacketPayloadSize);
-    ret = SendPacket(mLoraBuf, sizeof(ph) + ph.PacketPayloadSize);
-    if (ret != ESP_OK)
-      return ret;
-
-    BytesWritten += ph.PacketPayloadSize;
-  }
-  return ESP_OK;
-}
-
 // ----------------------------------------------------------------------------------
 // ----------------------------------------------------------------------------------
 // ----------------------------------------------------------------------------------
@@ -879,7 +870,12 @@ esp_err_t SX1262_LoRa::SetFrequency(uint32_t aFrequency)
   return ChipCommand(Params, sizeof(Params));
 }
 
-esp_err_t SX1262_LoRa::SetTxParams(RampTime aRampTime, int8_t aTXPower_DB, bool aUseHighPowerPA)
+esp_err_t SX1262_LoRa::Sleep()
+{
+  return SetRadioMode(RadioMode::RM_SLEEP, 0);
+}
+
+esp_err_t SX1262_LoRa::SetTxParams(RampTime aRampTime, int8_t aTXPower_DB)
 {
   esp_err_t ret;
   uint8_t Params[5];
@@ -963,9 +959,9 @@ esp_err_t SX1262_LoRa::SetCadParams(uint8_t aSymbolNum, uint8_t aDetPeak, uint8_
   Params[4] = aExitMode;
 
   // CAD-Timeout
-  Params[5] = (aPreambleLength >> 16) & 0xFF;
-  Params[6] = (aPreambleLength >> 8) & 0xFF;
-  Params[7] = aPreambleLength & 0xFF;
+  Params[5] = (aTimeout >> 16) & 0xFF;
+  Params[6] = (aTimeout >> 8) & 0xFF;
+  Params[7] = aTimeout & 0xFF;
 
   return ChipCommand(Params, sizeof(Params));
 }
@@ -1026,6 +1022,44 @@ esp_err_t SX1262_LoRa::WriteBuffer(uint8_t aOffset, uint8_t *aParams, uint8_t aP
   return ChipCommand(SPITransBuf, aParamLength + 2);
 }
 
+esp_err_t SX1262_LoRa::GetIRQStatus(uint16_t &aStatus)
+{
+  esp_err_t ret;
+  uint8_t Params[4] = {};
+  Params[0] = Opcodes::OP_GET_IRQ_STATUS;
+  ret = ChipCommand(Params, sizeof(Params));
+  aStatus = (Params[2] << 8) + Params[3];
+  return ret;
+}
+
+esp_err_t SX1262_LoRa::ClearIRQStatus(uint16_t aIRQsToClear)
+{
+  uint8_t Params[3];
+  Params[0] = Opcodes::OP_CLR_IRQ_STATUS;
+  Params[1] = (aIRQsToClear >> 8) & 0xFF;
+  Params[2] = aIRQsToClear & 0xFF;
+  return ChipCommand(Params, sizeof(Params));
+}
+
+esp_err_t SX1262_LoRa::SetIRQParams(uint16_t aIRQMask, uint16_t DIO1Mask, uint16_t DIO2Mask, uint16_t DIO3Mask)
+{
+  uint8_t Params[9];
+  Params[0] = Opcodes::OP_SET_DIO_IRQ_PARAMS;
+
+  Params[1] = (aIRQMask >> 8) & 0xFF;
+  Params[2] = aIRQMask & 0xFF;
+
+  Params[3] = (DIO1Mask >> 8) & 0xFF;
+  Params[4] = DIO1Mask & 0xFF;
+
+  Params[5] = (DIO2Mask >> 8) & 0xFF;
+  Params[6] = DIO2Mask & 0xFF;
+
+  Params[7] = (DIO3Mask >> 8) & 0xFF;
+  Params[8] = DIO3Mask & 0xFF;
+  return ChipCommand(Params, sizeof(Params));
+}
+
 esp_err_t SX1262_LoRa::SetupModule(uint8_t aAddress, uint32_t aFrq, uint16_t aPreambleLength, LoRaBandwidth aBandwidth,
                                    uint16_t aSyncWord, SpreadingFactor aSpreadingFactor, LoRaCodingRate aCodingRate, int8_t aTxPower)
 
@@ -1055,15 +1089,99 @@ esp_err_t SX1262_LoRa::SetupModule(uint8_t aAddress, uint32_t aFrq, uint16_t aPr
   ret = SetModulationParams(aSpreadingFactor, aBandwidth, aCodingRate, false);
   if (ret != ESP_OK)
     return ret;
-  /**/
+  /*
   ret = SetPacketParams(aPreambleLength, true, 0, true);
   if (ret != ESP_OK)
     return ret;
-  * /
-      ret = SetSyncWord(aSyncWord);
+  */
+  ret = SetSyncWord(aSyncWord);
   if (ret != ESP_OK)
     return ret;
 
+  ret = SetIRQParams(IRQFlags::TxDone | IRQFlags::RxDone | IRQFlags::CRCErr | IRQFlags::HeaderErr | IRQFlags::HeaderValid | IRQFlags::SyncWordValid | IRQFlags::Timeout, 0, 0, 0);
+
   mInitialized = true;
+  return ret;
+}
+
+esp_err_t SX1262_LoRa::SendPacket(uint8_t *aBuf, uint8_t aSize)
+{
+  esp_err_t ret;
+
+  ret = SetRadioMode(RadioMode::RM_STANDBY, 0);
+  if (ret != ESP_OK)
+    return ret;
+  // ESP_LOGI("lora","lora is idle");
+  ret = SetBufferBaseAddress(0, 0);
+  if (ret != ESP_OK)
+    return ret;
+  // ESP_LOGI("lora","filling FIFO");
+  ret = WriteBuffer(0, aBuf, aSize);
+  if (ret != ESP_OK)
+    return ret;
+  // ESP_LOGI("lora","FIFO is idle");
+  ret = SetPacketParams(mPreambleLength, true, aSize, true);
+  if (ret != ESP_OK)
+    return ret;
+  ret = ClearIRQStatus(0xFFFF);
+  if (ret != ESP_OK)
+    return ret;
+
+  // ESP_LOGI("lora","starting transmission");
+
+  ret = SetRadioMode(RadioMode::RM_TX_ENABLE, 64000); // = 1 s Sendetimeout
+  if (ret != ESP_OK)
+    return ret;
+  vTaskDelay(1);
+
+  uint16_t iIRQStatus = 0;
+  ret = GetIRQStatus(iIRQStatus);
+  if (ret != ESP_OK)
+    return ret;
+  // ESP_LOGI("lora","Reg: %d",reg);
+  // ESP_LOGI("lora","waiting for end of transmission");
+  while ((iIRQStatus & IRQFlags::TxDone) == 0)
+  {
+    ret = GetIRQStatus(iIRQStatus);
+    if (ret != ESP_OK)
+      return ret;
+    if (iIRQStatus & IRQFlags::Timeout)
+      return ESP_ERR_TIMEOUT;
+    vTaskDelay(1);
+  };
+  // ESP_LOGI("lora","Sending done");
+  return ret;
+}
+
+esp_err_t SX1262_LoRa::ReceivePacket(uint8_t *buf, uint8_t size, uint8_t *BytesRead)
+{
+  esp_err_t ret = 0;
+  return ret;
+}
+
+esp_err_t SX1262_LoRa::Receive()
+{
+  esp_err_t ret = 0;
+  return ret;
+}
+
+uint8_t SX1262_LoRa::Received()
+{
+  return 0;
+}
+
+uint8_t SX1262_LoRa::PacketRssi()
+{
+  return 0;
+}
+
+float SX1262_LoRa::PacketSnr()
+{
+  return 0.0;
+}
+
+esp_err_t SX1262_LoRa::DumpRegisters()
+{
+  esp_err_t ret = 0;
   return ret;
 }

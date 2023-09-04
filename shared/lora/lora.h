@@ -39,16 +39,7 @@ protected:
   uint8_t mLoraBuf[mLoraBufSize];
 
   esp_err_t SPIBusInit();
-
-  virtual esp_err_t ExplicitHeaderMode() = 0;
-  virtual esp_err_t ImplicitHeaderMode(uint8_t size) = 0;
-  virtual esp_err_t Idle() = 0;
-  virtual esp_err_t SetTxPower(uint8_t level) = 0;
   virtual esp_err_t SetFrequency(uint32_t frequency) = 0;
-  virtual esp_err_t SetPreambleLength(uint16_t length) = 0;
-  virtual esp_err_t SetSyncWord(uint8_t sw) = 0;
-  virtual esp_err_t EnableCrc() = 0;
-  virtual esp_err_t DisableCrc() = 0;
 
 public:
   enum SpreadingFactor
@@ -93,8 +84,10 @@ public:
   virtual esp_err_t DumpRegisters() = 0;
   virtual esp_err_t SetupModule(uint8_t aAddress, uint32_t aFrq, uint16_t aPreambleLength, LoRaBandwidth aBandwidth,
                                 uint16_t aSyncWord, SpreadingFactor aSpreadingFactor, LoRaCodingRate aCodingRate, int8_t aTxPower) = 0;
-  virtual esp_err_t SendLoraMsg(LoraCommand aCmd, uint8_t *aBuf, uint16_t aSize, uint32_t aTag) = 0;
-
+  virtual esp_err_t SendLoraMsg(LoraCommand aCmd, uint8_t *aBuf, uint16_t aSize, uint32_t aTag);
+  virtual esp_err_t SendPacket(uint8_t *buf, uint8_t size)=0;
+  virtual esp_err_t ReceivePacket(uint8_t *buf, uint8_t size, uint8_t *BytesRead)=0;
+  virtual esp_err_t Sleep() = 0;
   LoRaBase(LoRaBoardTypes aBoard);
   virtual ~LoRaBase();
 };
@@ -165,9 +158,9 @@ class SX1278_LoRa : public LoRaBase
   esp_err_t Idle();
   esp_err_t SetTxPower(uint8_t level);
   esp_err_t SetFrequency(uint32_t frequency);
-  esp_err_t SetSpreadingFactor(uint8_t sf);
+  esp_err_t SetSpreadingFactor(SpreadingFactor sf);
   esp_err_t SetBandwidth(LoRaBandwidth sbw);
-  esp_err_t SetCodingRate(uint8_t denominator);
+  esp_err_t SetCodingRate(LoRaCodingRate aCR);
   esp_err_t SetPreambleLength(uint16_t length);
   esp_err_t SetSyncWord(uint8_t sw);
   esp_err_t Init();
@@ -185,8 +178,8 @@ public:
 
   esp_err_t DumpRegisters();
   esp_err_t SetupModule(uint8_t aAddress, uint32_t aFrq, uint16_t aPreambleLength, LoRaBandwidth aBandwidth,
-                                uint16_t aSyncWord, SpreadingFactor aSpreadingFactor, LoRaCodingRate aCodingRate, int8_t aTxPower);
-  esp_err_t SendLoraMsg(LoraCommand aCmd, uint8_t *aBuf, uint16_t aSize, uint32_t aTag);
+                        uint16_t aSyncWord, SpreadingFactor aSpreadingFactor, LoRaCodingRate aCodingRate, int8_t aTxPower);
+  
 
   SX1278_LoRa(LoRaBoardTypes aBoard);
   //~SX1278_LoRa();
@@ -296,6 +289,20 @@ class SX1262_LoRa : public LoRaBase
     SET_RAMP_3400U = 0x07,
   };
 
+  struct IRQFlags
+  {
+    static const uint16_t TxDone = 1 << 0;
+    static const uint16_t RxDone = 1 << 1;
+    static const uint16_t PreambleDetected = 1 << 2;
+    static const uint16_t SyncWordValid = 1 << 3;
+    static const uint16_t HeaderValid = 1 << 4;
+    static const uint16_t HeaderErr = 1 << 5;
+    static const uint16_t CRCErr = 1 << 6;
+    static const uint16_t CadDone = 1 << 7;
+    static const uint16_t CadDetected = 1 << 8;
+    static const uint16_t Timeout = 1 << 9;
+  };
+
   uint8_t SPIRecBuf[262];
   uint8_t SPITransBuf[262];
   uint16_t mPreambleLength;
@@ -313,6 +320,10 @@ class SX1262_LoRa : public LoRaBase
   esp_err_t ReadBuffer(uint8_t aOffset, uint8_t *aParams, uint8_t aParamLength);
   esp_err_t WriteBuffer(uint8_t aOffset, uint8_t *aParams, uint8_t aParamLength);
   esp_err_t SetBufferBaseAddress(uint8_t aTxBaseAddr, uint8_t aRxBaseAddr);
+  esp_err_t SetCadParams(uint8_t aSymbolNum, uint8_t aDetPeak, uint8_t aDetMin, uint8_t aExitMode, uint32_t aTimeout);
+  esp_err_t GetIRQStatus(uint16_t &aStatus);
+  esp_err_t ClearIRQStatus(uint16_t aIRQsToClear);
+  esp_err_t SetIRQParams(uint16_t aIRQMask, uint16_t DIO1Mask, uint16_t DIO2Mask, uint16_t DIO3Mask);
 
 public:
   esp_err_t Receive();
@@ -325,8 +336,8 @@ public:
 
   esp_err_t DumpRegisters();
   esp_err_t SetupModule(uint8_t aAddress, uint32_t aFrq, uint16_t aPreambleLength, LoRaBandwidth aBandwidth,
-                                uint16_t aSyncWord, SpreadingFactor aSpreadingFactor, LoRaCodingRate aCodingRate, int8_t aTxPower);
-  esp_err_t SendLoraMsg(LoraCommand aCmd, uint8_t *aBuf, uint16_t aSize, uint32_t aTag);
+                        uint16_t aSyncWord, SpreadingFactor aSpreadingFactor, LoRaCodingRate aCodingRate, int8_t aTxPower);
+  
 
   SX1262_LoRa(LoRaBoardTypes aBoard);
 };

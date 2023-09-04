@@ -40,8 +40,8 @@ esp_err_t BMP390::Init(bool aDoI2CInit)
     conf.scl_pullup_en = GPIO_PULLUP_ENABLE;
     conf.master.clk_speed = 100000; // Fast Mode, 1000000;  // Fast Mode Plus=1MHz
     conf.clk_flags = 0;
-    i2c_param_config(mPort, &conf);
-    status = i2c_driver_install(mPort, conf.mode, 0, 0, 0);
+    i2c_param_config((i2c_port_t)mPort, &conf);
+    status = i2c_driver_install((i2c_port_t)mPort, conf.mode, 0, 0, 0);
     if (status != ESP_OK)
       return status;
   }

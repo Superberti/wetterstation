@@ -12,6 +12,7 @@
 #include "esp_sleep.h"
 #include "driver/rtc_io.h"
 #include "soc/rtc.h"
+#include "driver/i2c.h"
 #include "sht40.h"
 #include "esp_adc/adc_oneshot.h"
 #include "esp_adc/adc_cali.h"
@@ -22,13 +23,10 @@
 #include <driver/rtc_io.h>
 #include "lorastructs.h"
 #include "esp_wifi.h"
-#include "lora_temp.h"
+#include "heltec_lite.h"
 #include "bmp390.h"
-extern "C"
-{
-#include <u8g2.h>
-#include <u8g2_esp32_hal.h>
-}
+
+
 
 using json = nlohmann::json;
 
@@ -41,7 +39,7 @@ using json = nlohmann::json;
  */
 
 // Welches Board wird verwendet?
-#define LILYGO_T3
+#define HELTEC_STICK_V3
 
 // Nur definieren, falls der SHT40 nicht angeschlossen ist, man aber trotzdem ein paar Daten haben möchte
 // #define FAKE_SHT40
@@ -59,12 +57,6 @@ using json = nlohmann::json;
 
 #define TAG "LORA_TEMP"
 
-// SDA - GPIO21 (DISPLAY)
-#define PIN_SDA_DISPL GPIO_NUM_21
-
-// SCL - GPIO22 (DISPLAY)
-#define PIN_SCL_DISPL GPIO_NUM_22
-
 // Temperatursensor SHT40
 #define PIN_SDA_TEMP GPIO_NUM_13
 #define PIN_SCL_TEMP GPIO_NUM_14
@@ -74,12 +66,11 @@ using json = nlohmann::json;
 #define SDCARD_SCLK GPIO_NUM_14
 #define SDCARD_CS GPIO_NUM_13
 
-#define BOARD_LED GPIO_NUM_25
 #define LED_ON HIGH
 
 static RTC_DATA_ATTR struct timeval sleep_enter_time;
 static RTC_DATA_ATTR uint32_t SleepCounter;
-u8g2_t u8g2; // a structure which will contain all the data for one display
+
 static bool FirstBoot = true;
 
 extern "C"
@@ -129,6 +120,7 @@ void app_main_cpp()
   }
 #ifdef LILYGO_T3
   bool UseDisplay = FirstBoot;
+  #define BOARD_LED GPIO_NUM_25
 #else
   bool UseDisplay = false;
 #endif
@@ -143,18 +135,21 @@ void app_main_cpp()
 
 #if defined(LILYGO_T3)
   SX1278_LoRa LoRa(LilygoT3);
+  #define BOARD_LED GPIO_NUM_25
 #ifdef USE_ADC
   AdcConfig.atten = ADC_ATTEN_DB_11;
 #endif
 #elif defined(HELTEC_ESP_LORA) // Nur die beiden Heltec-Boards haben die Reset-Leitung an einem RTC-Pin des ESP32!
   SX1278_LoRa LoRa(HeltecESPLoRa);
   rtc_gpio_hold_dis((gpio_num_t)LoRa.PinConfig->Reset);
+  #define BOARD_LED GPIO_NUM_25
 #ifdef USE_ADC
   AdcConfig.atten = ADC_ATTEN_DB_0;
 #endif
 #elif defined(HELTEC_STICK_V3)
-  SX1278_LoRa LoRa(HeltecWirelessStick_V3);
+  SX1262_LoRa LoRa(HeltecWirelessStick_V3);
   rtc_gpio_hold_dis((gpio_num_t)LoRa.PinConfig->Reset);
+  #define BOARD_LED GPIO_NUM_35
 #ifdef USE_ADC
   AdcConfig.atten = ADC_ATTEN_DB_0;
 #endif
@@ -192,8 +187,6 @@ void app_main_cpp()
   if (iCRCErr)
     ESP_LOGE(TAG, "Fehler beim Lesen des SHT40 CRC (Seriennummer)");
 #endif
-  if (UseDisplay)
-    InitSSD1306_u8g2();
   int64_t EndTime = GetTime_us();
   ESP_LOGI(TAG, "SSD1306 Init fertig nach %.1f ms", (EndTime - StartTime) / 1000.0);
   gpio_set_level(LoraLed, 0);
@@ -224,12 +217,6 @@ void app_main_cpp()
   EndTime = GetTime_us();
   ESP_LOGI(TAG, "LoRa Init fertig nach %.1f ms", (EndTime - StartTime) / 1000.0);
 
-  // vTaskDelay(2000 / portTICK_PERIOD_MS);
-  if (UseDisplay)
-  {
-    u8g2_ClearDisplay(&u8g2);
-    u8g2_SetFont(&u8g2, u8g2_font_crox1h_tf);
-  }
   uint8_t LoraBuf[255];
   uint16_t iCBORBuildSize;
   // uint32_t iPC = 0;
@@ -297,7 +284,6 @@ void app_main_cpp()
     int RetryCounter = 0;
     bool SendOK = false;
     const int MaxRetries = 5;
-    char DisplayBuf[256] = {};
     while (!SendOK && RetryCounter < MaxRetries)
     {
       gpio_set_level(LoraLed, 1);
@@ -330,40 +316,10 @@ void app_main_cpp()
     EndTime = GetTime_us();
     ESP_LOGI(TAG, "LoRa gesendet nach %.1f ms", (EndTime - StartTime) / 1000.0);
 
-    if (UseDisplay)
-    {
-      u8g2_ClearBuffer(&u8g2);
-      sprintf(DisplayBuf, "[%lu] Vbatt: %.2f V", SleepCounter, iVBatt_V);
-      u8g2_DrawStr(&u8g2, 2, 14, DisplayBuf);
-
-      // sprintf(DisplayBuf, "Paket Nr.: %lu", SleepCounter);
-      // u8g2_DrawStr(&u8g2, 2, 14, DisplayBuf);
-
-      sprintf(DisplayBuf, "Temp: %.2f%cC[%.2f]", iTemp_deg, 176, t);
-      u8g2_DrawStr(&u8g2, 2, 28, DisplayBuf);
-
-      // sprintf(DisplayBuf, "Wach: %.1f ms", (EndTime - StartTime) / 1000.0);
-      // u8g2_DrawStr(&u8g2, 2, 42, DisplayBuf);
-
-      sprintf(DisplayBuf, "Feuchte: %.2f %%", iHum_per);
-      u8g2_DrawStr(&u8g2, 2, 42, DisplayBuf);
-
-      sprintf(DisplayBuf, "Druck: %.2f mBar", iPress_mBar);
-      u8g2_DrawStr(&u8g2, 2, 56, DisplayBuf);
-
-      // sprintf(DisplayBuf, "Sleep: %.3f s", sleep_time_ms / 1000.0);
-      // u8g2_DrawStr(&u8g2, 2, 56, DisplayBuf);
-
-      u8g2_SendBuffer(&u8g2);
-    }
     if (FirstBoot)
       vTaskDelay(5000 / portTICK_PERIOD_MS);
     SleepCounter++;
   }
-
-  // vTaskDelay(2000 / portTICK_PERIOD_MS);
-  if (UseDisplay)
-    u8g2_SetPowerSave(&u8g2, 1);
 
   ESP_LOGI(TAG, "Schalte LoRa-Modem ab...");
   LoRa.Close();
@@ -419,7 +375,7 @@ void app_main_cpp()
   esp_deep_sleep_start();
 }
 
-esp_err_t InitLoRa(SX1278_LoRa &aLoRa)
+esp_err_t InitLoRa(LoRaBase &aLoRa)
 {
   // Sendefrequenz: 434,54 MHz
   // Preambellänge: 14
@@ -458,7 +414,7 @@ void error(const char *format, ...)
   for (;;)
   {
     toggle = 1 - toggle;
-    gpio_set_level(GPIO_NUM_25, toggle);
+    gpio_set_level(BOARD_LED, toggle);
     vTaskDelay(pdMS_TO_TICKS(100));
   }
 }
@@ -493,45 +449,3 @@ esp_err_t BuildCBORBuf(uint8_t *aBuf, uint16_t aMaxBufSize, uint16_t &aCBORBuild
   return ESP_OK;
 }
 
-void InitSSD1306_u8g2()
-{
-  u8g2_esp32_hal_t u8g2_esp32_hal = U8G2_ESP32_HAL_DEFAULT;
-  u8g2_esp32_hal.sda = PIN_SDA_DISPL;
-  u8g2_esp32_hal.scl = PIN_SCL_DISPL;
-  u8g2_esp32_hal_init(u8g2_esp32_hal);
-
-  /*
-    gpio_set_level(PIN_DISP_RESET, 0);
-    vTaskDelay(pdMS_TO_TICKS(50));
-    gpio_set_level(PIN_DISP_RESET, 1);
-  */
-
-  u8g2_Setup_ssd1306_i2c_128x64_noname_f(
-      &u8g2,
-      U8G2_R0,
-      u8g2_esp32_i2c_byte_cb,
-      u8g2_esp32_gpio_and_delay_cb); // init u8g2 structure
-  u8x8_SetI2CAddress(&u8g2.u8x8, 0x78);
-
-  ESP_LOGI(TAG, "u8g2_InitDisplay");
-  u8g2_InitDisplay(&u8g2); // send init sequence to the display, display is in sleep mode after this,
-
-  ESP_LOGI(TAG, "u8g2_SetPowerSave");
-  u8g2_SetPowerSave(&u8g2, 0); // wake up display
-  ESP_LOGI(TAG, "u8g2_ClearBuffer");
-  u8g2_ClearBuffer(&u8g2);
-  u8g2_SendBuffer(&u8g2);
-  /*
-    ESP_LOGI(TAG, "u8g2_DrawBox");
-    u8g2_DrawBox(&u8g2, 0, 26, 80, 6);
-    u8g2_DrawFrame(&u8g2, 0, 26, 100, 6);
-
-    ESP_LOGI(TAG, "u8g2_SetFont");
-    u8g2_SetFont(&u8g2, u8g2_font_ncenB10_tr);
-    ESP_LOGI(TAG, "u8g2_DrawStr");
-    u8g2_DrawStr(&u8g2, 2, 17, "Hi Oliver!");
-    ESP_LOGI(TAG, "u8g2_SendBuffer");
-    u8g2_SendBuffer(&u8g2);
-  */
-  ESP_LOGI(TAG, "SSD 1306 display initialized!");
-}
