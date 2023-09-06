@@ -12,7 +12,7 @@
 #define ACK_CHECK_EN 0x1  /*!< I2C master will check ack from slave*/
 #define ACK_CHECK_DIS 0x0 /*!< I2C master will not check ack from slave */
 
-BMP390::BMP390(int aPort, uint8_t aI2CAddr, int aSDA_Pin, int aSCL_Pin)
+BMP390::BMP390(i2c_port_t aPort, uint8_t aI2CAddr, int aSDA_Pin, int aSCL_Pin)
 {
   mPort = aPort;
   mSDA_Pin = aSDA_Pin;
@@ -28,10 +28,7 @@ esp_err_t BMP390::Init(bool aDoI2CInit)
 {
   esp_err_t status = ESP_OK;
   if (aDoI2CInit)
-  {
-    if (mPort > 1)
-      return ESP_ERR_INVALID_ARG;
-    
+  { 
     i2c_config_t conf;
     conf.mode = I2C_MODE_MASTER;
     conf.sda_io_num = mSDA_Pin;
@@ -40,8 +37,8 @@ esp_err_t BMP390::Init(bool aDoI2CInit)
     conf.scl_pullup_en = GPIO_PULLUP_ENABLE;
     conf.master.clk_speed = 100000; // Fast Mode, 1000000;  // Fast Mode Plus=1MHz
     conf.clk_flags = 0;
-    i2c_param_config((i2c_port_t)mPort, &conf);
-    status = i2c_driver_install((i2c_port_t)mPort, conf.mode, 0, 0, 0);
+    i2c_param_config(mPort, &conf);
+    status = i2c_driver_install(mPort, conf.mode, 0, 0, 0);
     if (status != ESP_OK)
       return status;
   }

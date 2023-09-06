@@ -12,7 +12,7 @@
 #define ACK_CHECK_EN 0x1                        /*!< I2C master will check ack from slave*/
 #define ACK_CHECK_DIS 0x0                       /*!< I2C master will not check ack from slave */
 
-SHT35::SHT35(int aPort)
+SHT35::SHT35(i2c_port_t aPort)
 {
   mPort=aPort;
 }
@@ -73,7 +73,7 @@ esp_err_t SHT35::ReadSHT35(double & aTemp, double & aHum, bool & rCRC_Err)
   i2c_master_write_byte(cmd, SHT35_CMD_START_MSB, ACK_CHECK_EN);
   i2c_master_write_byte(cmd, SHT35_CMD_START_LSB, ACK_CHECK_EN);
   i2c_master_stop(cmd);
-  ret = i2c_master_cmd_begin((i2c_port_t)mPort, cmd, 1000 / portTICK_PERIOD_MS);
+  ret = i2c_master_cmd_begin(mPort, cmd, 1000 / portTICK_PERIOD_MS);
   i2c_cmd_link_delete(cmd);
   if (ret != ESP_OK)
   {
@@ -92,7 +92,7 @@ esp_err_t SHT35::ReadSHT35(double & aTemp, double & aHum, bool & rCRC_Err)
 
 
   i2c_master_stop(cmd);
-  ret = i2c_master_cmd_begin((i2c_port_t)mPort, cmd, 1000 / portTICK_PERIOD_MS);
+  ret = i2c_master_cmd_begin(mPort, cmd, 1000 / portTICK_PERIOD_MS);
   i2c_cmd_link_delete(cmd);
 
   aTemp=-45+175*(double)(rb[0]*256+rb[1])/65535.0;

@@ -24,6 +24,8 @@ public:
   uint8_t Busy;
   uint8_t Led;
   uint8_t AdcChannel;
+  spi_host_device_t SPIChannel;
+  bool UseTXCO;
   LoRa_PinConfiguration(LoRaBoardTypes aBoard);
 };
 
@@ -39,6 +41,7 @@ protected:
   uint8_t mLoraBuf[mLoraBufSize];
 
   esp_err_t SPIBusInit();
+  void WaitBusy();
   virtual esp_err_t SetFrequency(uint32_t frequency) = 0;
 
 public:
@@ -78,6 +81,7 @@ public:
 
   LoRa_PinConfiguration *PinConfig;
   void Reset();
+  void CloseSPI();
   bool Initialized() { return mInitialized; }
 
   virtual void Close();
@@ -85,8 +89,8 @@ public:
   virtual esp_err_t SetupModule(uint8_t aAddress, uint32_t aFrq, uint16_t aPreambleLength, LoRaBandwidth aBandwidth,
                                 uint16_t aSyncWord, SpreadingFactor aSpreadingFactor, LoRaCodingRate aCodingRate, int8_t aTxPower) = 0;
   virtual esp_err_t SendLoraMsg(LoraCommand aCmd, uint8_t *aBuf, uint16_t aSize, uint32_t aTag);
-  virtual esp_err_t SendPacket(uint8_t *buf, uint8_t size)=0;
-  virtual esp_err_t ReceivePacket(uint8_t *buf, uint8_t size, uint8_t *BytesRead)=0;
+  virtual esp_err_t SendPacket(uint8_t *buf, uint8_t size) = 0;
+  virtual esp_err_t ReceivePacket(uint8_t *buf, uint8_t size, uint8_t *BytesRead) = 0;
   virtual esp_err_t Sleep() = 0;
   LoRaBase(LoRaBoardTypes aBoard);
   virtual ~LoRaBase();
@@ -179,7 +183,6 @@ public:
   esp_err_t DumpRegisters();
   esp_err_t SetupModule(uint8_t aAddress, uint32_t aFrq, uint16_t aPreambleLength, LoRaBandwidth aBandwidth,
                         uint16_t aSyncWord, SpreadingFactor aSpreadingFactor, LoRaCodingRate aCodingRate, int8_t aTxPower);
-  
 
   SX1278_LoRa(LoRaBoardTypes aBoard);
   //~SX1278_LoRa();
@@ -289,6 +292,18 @@ class SX1262_LoRa : public LoRaBase
     SET_RAMP_3400U = 0x07,
   };
 
+  enum TXCO_Voltage
+  {
+    TCXO_CTRL_1_6V = 0x00,
+    TCXO_CTRL_1_7V = 0x01,
+    TCXO_CTRL_1_8V = 0x02,
+    TCXO_CTRL_2_2V = 0x03,
+    TCXO_CTRL_2_4V = 0x04,
+    TCXO_CTRL_2_7V = 0x05,
+    TCXO_CTRL_3_0V = 0x06,
+    TCXO_CTRL_3_3V = 0x07,
+  };
+
   struct IRQFlags
   {
     static const uint16_t TxDone = 1 << 0;
@@ -324,6 +339,12 @@ class SX1262_LoRa : public LoRaBase
   esp_err_t GetIRQStatus(uint16_t &aStatus);
   esp_err_t ClearIRQStatus(uint16_t aIRQsToClear);
   esp_err_t SetIRQParams(uint16_t aIRQMask, uint16_t DIO1Mask, uint16_t DIO2Mask, uint16_t DIO3Mask);
+  esp_err_t GetDeviceError(uint16_t &aErr);
+  esp_err_t ClearDeviceError();
+  esp_err_t SetDio2AsRfSwitchCtrl(bool aOn);
+  esp_err_t SetDio3AsTcxoCtrl(TXCO_Voltage, uint32_t aTimeout);
+  esp_err_t SetCalibrateSections(uint8_t aCP);
+  esp_err_t Calibrate(double aFrq_MHz);
 
 public:
   esp_err_t Receive();
@@ -337,7 +358,6 @@ public:
   esp_err_t DumpRegisters();
   esp_err_t SetupModule(uint8_t aAddress, uint32_t aFrq, uint16_t aPreambleLength, LoRaBandwidth aBandwidth,
                         uint16_t aSyncWord, SpreadingFactor aSpreadingFactor, LoRaCodingRate aCodingRate, int8_t aTxPower);
-  
 
   SX1262_LoRa(LoRaBoardTypes aBoard);
 };

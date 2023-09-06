@@ -15,6 +15,7 @@
 
 LoRa_PinConfiguration::LoRa_PinConfiguration(LoRaBoardTypes aBoard)
 {
+  UseTXCO = false;
   switch (aBoard)
   {
   case LilygoT3:
@@ -28,6 +29,7 @@ LoRa_PinConfiguration::LoRa_PinConfiguration(LoRaBoardTypes aBoard)
     Busy = 32;
     Led = 25;
     AdcChannel = 7;
+    SPIChannel = SPI1_HOST;
     break;
   case HeltecESPLoRa:
     ChipSelect = 18;
@@ -40,6 +42,7 @@ LoRa_PinConfiguration::LoRa_PinConfiguration(LoRaBoardTypes aBoard)
     Busy = 0;
     Led = 25;
     AdcChannel = 0;
+    SPIChannel = SPI1_HOST;
     break;
   case HeltecWirelessStick_V3:
     ChipSelect = 8;
@@ -47,11 +50,13 @@ LoRa_PinConfiguration::LoRa_PinConfiguration(LoRaBoardTypes aBoard)
     Miso = 11;
     Mosi = 10;
     Clock = 9;
-    DIO0 = 26;
+    // DIO0 = 26;  // Der SX1262 hat nur DIO1-3. Angeschlossen ist aber nur DIO1
     DIO1 = 14;
     Busy = 13;
     Led = 35;
     AdcChannel = 0;
+    SPIChannel = SPI2_HOST; // Der ESP32-S3 hat SPI0 und SPI1 intern mit dem Flash verdrahtet. Frei sind SPI2/3
+    UseTXCO = true;         // Hat einen TXCO und keinen XTAL
     break;
   }
 }
@@ -65,7 +70,6 @@ LoRaBase::LoRaBase(LoRaBoardTypes aBoard)
 esp_err_t LoRaBase::SPIBusInit()
 {
   esp_err_t ret;
-
   /*
    * Configure CPU hardware to communicate with the radio chip
    */
@@ -73,7 +77,9 @@ esp_err_t LoRaBase::SPIBusInit()
   gpio_set_direction((gpio_num_t)PinConfig->Reset, GPIO_MODE_OUTPUT);
   gpio_reset_pin((gpio_num_t)PinConfig->ChipSelect);
   gpio_set_direction((gpio_num_t)PinConfig->ChipSelect, GPIO_MODE_OUTPUT);
-  // Reset();
+  gpio_reset_pin((gpio_num_t)PinConfig->Busy);
+  gpio_set_direction((gpio_num_t)PinConfig->Busy, GPIO_MODE_INPUT);
+  gpio_pulldown_en((gpio_num_t)PinConfig->Busy);
 
   spi_bus_config_t bus = {};
   bus.miso_io_num = PinConfig->Miso;
@@ -82,8 +88,7 @@ esp_err_t LoRaBase::SPIBusInit()
   bus.quadwp_io_num = -1;
   bus.quadhd_io_num = -1;
   bus.max_transfer_sz = 0;
-
-  ret = spi_bus_initialize(SPI1_HOST, &bus, 0);
+  ret = spi_bus_initialize(PinConfig->SPIChannel, &bus, 0 /*SPI_DMA_CH_AUTO*/); // ohne DMA max. 32 Bytes gleichzeitig per SPI!
   if (ret != ESP_OK)
     return ret;
   spi_device_interface_config_t dev = {};
@@ -93,7 +98,7 @@ esp_err_t LoRaBase::SPIBusInit()
   dev.queue_size = 1;
   dev.flags = 0;
   dev.pre_cb = NULL;
-  ret = spi_bus_add_device(SPI1_HOST, &dev, &mhSpi);
+  ret = spi_bus_add_device(PinConfig->SPIChannel, &dev, &mhSpi);
   if (ret != ESP_OK)
     return ret;
   return ESP_OK;
@@ -102,13 +107,18 @@ esp_err_t LoRaBase::SPIBusInit()
 /**
  * Shutdown hardware.
  */
-void LoRaBase::Close(void)
+void LoRaBase::Close()
 {
   Sleep();
+  CloseSPI();
+}
+
+void LoRaBase::CloseSPI()
+{
   if (mhSpi != NULL)
   {
     spi_bus_remove_device(mhSpi);
-    spi_bus_free(SPI1_HOST);
+    spi_bus_free(PinConfig->SPIChannel);
     mhSpi = NULL;
   }
 }
@@ -149,9 +159,24 @@ esp_err_t LoRaBase::SendLoraMsg(LoraCommand aCmd, uint8_t *aBuf, uint16_t aSize,
 void LoRaBase::Reset(void)
 {
   gpio_set_level((gpio_num_t)PinConfig->Reset, 0);
-  vTaskDelay(pdMS_TO_TICKS(1));
+  vTaskDelay(pdMS_TO_TICKS(10));
   gpio_set_level((gpio_num_t)PinConfig->Reset, 1);
   vTaskDelay(pdMS_TO_TICKS(10));
+}
+
+void LoRaBase::WaitBusy()
+{
+  uint32_t timeout = 0;
+  while (gpio_get_level((gpio_num_t)PinConfig->Busy) == 1)
+  {
+    timeout++;
+    if (timeout > 1000)
+    {
+      ESP_LOGE("LoRa", "WaitBusy timeout!");
+      break;
+    }
+    vTaskDelay(pdMS_TO_TICKS(1));
+  }
 }
 
 LoRaBase::~LoRaBase()
@@ -278,6 +303,7 @@ esp_err_t SX1278_LoRa::SetupModule(uint8_t aAddress, uint32_t aFrq, uint16_t aPr
                                    uint16_t aSyncWord, SpreadingFactor aSpreadingFactor, LoRaCodingRate aCodingRate, int8_t aTxPower)
 {
   mAddress = aAddress;
+  CloseSPI();
   mInitialized = false;
   esp_err_t ret;
   ret = Init();
@@ -790,15 +816,44 @@ SX1262_LoRa::SX1262_LoRa(LoRaBoardTypes aBoard) : LoRaBase(aBoard)
 esp_err_t SX1262_LoRa::ChipCommand(uint8_t *aParams, uint8_t aParamLength)
 {
   // Byte0 = SX1262-Opcode
-  esp_err_t ret;
+  const uint8_t MaxTrans = 32;
+  esp_err_t ret = ESP_OK;
   spi_transaction_t t = {};
   t.flags = 0;
-  t.length = 8 * aParamLength;
-  t.tx_buffer = aParams;
-  t.rx_buffer = SPIRecBuf;
+  // t.length = 8 * aParamLength;
+  // t.tx_buffer = aParams;
+  // t.rx_buffer = SPIRecBuf;
 
+  uint8_t FullTransfers = aParamLength / MaxTrans;
+  uint8_t RestBytes = aParamLength % MaxTrans;
   gpio_set_level((gpio_num_t)PinConfig->ChipSelect, 0);
-  ret = spi_device_transmit(mhSpi, &t);
+  uint8_t i = 0;
+  for (i = 0; i < FullTransfers; i++)
+  {
+    t.rxlength = 0;
+    t.length = 8 * MaxTrans;
+    t.tx_buffer = aParams + i * MaxTrans;
+    t.rx_buffer = SPIRecBuf + i * MaxTrans;
+    ret = spi_device_transmit(mhSpi, &t);
+    if (ret != ESP_OK)
+    {
+      gpio_set_level((gpio_num_t)PinConfig->ChipSelect, 1);
+      return ret;
+    }
+  }
+  if (RestBytes > 0)
+  {
+    t.rxlength = 0;
+    t.length = 8 * RestBytes;
+    t.tx_buffer = aParams + i * MaxTrans;
+    t.rx_buffer = SPIRecBuf + i * MaxTrans;
+    ret = spi_device_transmit(mhSpi, &t);
+    if (ret != ESP_OK)
+    {
+      gpio_set_level((gpio_num_t)PinConfig->ChipSelect, 1);
+      return ret;
+    }
+  }
   gpio_set_level((gpio_num_t)PinConfig->ChipSelect, 1);
   if (aParams != NULL && aParamLength != 0)
     memcpy(aParams, SPIRecBuf, aParamLength); // Für Lesekommandos
@@ -812,8 +867,8 @@ esp_err_t SX1262_LoRa::SetRadioMode(RadioMode aRM, uint32_t aTimeout)
 
   // Zu allererst immer in den Standby gehen!
   Params[0] = Opcodes::OP_SET_STANDBY;
-  Params[1] = 0;
-  ret = ChipCommand(Params, 2); // Standby mit 13 MHz RC-Oszillator
+  Params[1] = 0; // STDBY_RC
+  ret = ChipCommand(Params, 2);
   if (ret != ESP_OK)
     return ret;
 
@@ -832,15 +887,15 @@ esp_err_t SX1262_LoRa::SetRadioMode(RadioMode aRM, uint32_t aTimeout)
   case RM_RX_ENABLE:
     Params[0] = Opcodes::OP_SET_RX;
     // Timeout Bit 23:0
-    Params[1] = (aTimeout >> 16); // MSB
-    Params[2] = (aTimeout >> 8) & 0x00FF;
+    Params[1] = (aTimeout >> 16) & 0xFF; // MSB
+    Params[2] = (aTimeout >> 8) & 0xFF;
     Params[3] = aTimeout & 0xFF;
     ret = ChipCommand(Params, 4);
     break;
   case RM_TX_ENABLE:
     Params[0] = Opcodes::OP_SET_TX;
     // Timeout Bit 23:0, 64000 = 1 s
-    Params[1] = (aTimeout >> 16); // MSB
+    Params[1] = (aTimeout >> 16) & 0xFF; // MSB
     Params[2] = (aTimeout >> 8) & 0xFF;
     Params[3] = aTimeout & 0xFF;
     ret = ChipCommand(Params, 4);
@@ -916,7 +971,7 @@ esp_err_t SX1262_LoRa::SetTxParams(RampTime aRampTime, int8_t aTXPower_DB)
 
 esp_err_t SX1262_LoRa::SetModulationParams(SpreadingFactor aSF, LoRaBandwidth aBW, LoRaCodingRate aCR, bool aLowDataRateOpt)
 {
-  uint8_t Params[9];
+  uint8_t Params[9] = {0};
   Params[0] = Opcodes::OP_SET_MOD_PARAMS;
   Params[1] = (uint8_t)aSF;
   Params[2] = (uint8_t)aBW;
@@ -927,7 +982,7 @@ esp_err_t SX1262_LoRa::SetModulationParams(SpreadingFactor aSF, LoRaBandwidth aB
 
 esp_err_t SX1262_LoRa::SetPacketParams(uint16_t aPreambleLength, bool aImplicitHeader, uint8_t aPayloadLength, bool aUseCRC)
 {
-  uint8_t Params[10];
+  uint8_t Params[10] = {0};
   Params[0] = Opcodes::OP_SET_PKG_PARAMS;
   // PreambleLength
   Params[1] = (aPreambleLength >> 8) & 0xFF;
@@ -950,7 +1005,7 @@ esp_err_t SX1262_LoRa::SetPacketParams(uint16_t aPreambleLength, bool aImplicitH
 
 esp_err_t SX1262_LoRa::SetCadParams(uint8_t aSymbolNum, uint8_t aDetPeak, uint8_t aDetMin, uint8_t aExitMode, uint32_t aTimeout)
 {
-  uint8_t Params[8];
+  uint8_t Params[8] = {0};
   Params[0] = Opcodes::OP_SET_CAD_PARAMS;
 
   Params[1] = aSymbolNum;
@@ -1025,10 +1080,11 @@ esp_err_t SX1262_LoRa::WriteBuffer(uint8_t aOffset, uint8_t *aParams, uint8_t aP
 esp_err_t SX1262_LoRa::GetIRQStatus(uint16_t &aStatus)
 {
   esp_err_t ret;
-  uint8_t Params[4] = {};
+  uint8_t Params[4] = {0};
   Params[0] = Opcodes::OP_GET_IRQ_STATUS;
   ret = ChipCommand(Params, sizeof(Params));
   aStatus = (Params[2] << 8) + Params[3];
+  //ESP_LOGI("LoRa", "GetIQRStatus: %d %d %d %d", Params[0], Params[1], Params[2], Params[3]);
   return ret;
 }
 
@@ -1060,20 +1116,110 @@ esp_err_t SX1262_LoRa::SetIRQParams(uint16_t aIRQMask, uint16_t DIO1Mask, uint16
   return ChipCommand(Params, sizeof(Params));
 }
 
+esp_err_t SX1262_LoRa::SetDio2AsRfSwitchCtrl(bool aOn)
+{
+  uint8_t Params[2];
+  Params[0] = Opcodes::OP_SET_DIO2_AS_RF_SWITCH_CTRL;
+  Params[1] = (uint8_t)aOn;
+  return ChipCommand(Params, sizeof(Params));
+}
+
+esp_err_t SX1262_LoRa::SetDio3AsTcxoCtrl(TXCO_Voltage aU, uint32_t aTimeout)
+{
+  uint8_t Params[5];
+  Params[0] = Opcodes::OP_SET_DIO3_AS_TCXO_CTRL;
+  Params[1] = (uint8_t)aU;
+  Params[2] = (aTimeout >> 16) & 0xFF;
+  Params[3] = (aTimeout >> 8) & 0xFF;
+  Params[4] = aTimeout & 0xFF;
+  return ChipCommand(Params, sizeof(Params));
+}
+
+esp_err_t SX1262_LoRa::SetCalibrateSections(uint8_t aCP)
+{
+  uint8_t Params[2];
+  Params[0] = Opcodes::OP_CALIBRATE;
+  Params[1] = aCP;
+  return ChipCommand(Params, sizeof(Params));
+}
+
+esp_err_t SX1262_LoRa::Calibrate(double aFrq_MHz)
+{
+  uint8_t Params[3];
+  Params[0] = Opcodes::OP_CALIBRATE_IMAGE;
+  if (aFrq_MHz > 900)
+  {
+    Params[1] = 0xE1;
+    Params[2] = 0xE9;
+  }
+  else if (aFrq_MHz > 850)
+  {
+    Params[1] = 0xD7;
+    Params[2] = 0xD8;
+  }
+  else if (aFrq_MHz > 770)
+  {
+    Params[1] = 0xC1;
+    Params[2] = 0xC5;
+  }
+  else if (aFrq_MHz > 460)
+  {
+    Params[1] = 0x75;
+    Params[2] = 0x81;
+  }
+  else if (aFrq_MHz > 425)
+  {
+    Params[1] = 0x6B;
+    Params[2] = 0x6F;
+  }
+  esp_err_t ret = ChipCommand(Params, sizeof(Params));
+  WaitBusy();
+  return ret;
+}
+
 esp_err_t SX1262_LoRa::SetupModule(uint8_t aAddress, uint32_t aFrq, uint16_t aPreambleLength, LoRaBandwidth aBandwidth,
                                    uint16_t aSyncWord, SpreadingFactor aSpreadingFactor, LoRaCodingRate aCodingRate, int8_t aTxPower)
 
 {
   mAddress = aAddress;
+  CloseSPI();
   mPreambleLength = aPreambleLength;
   mInitialized = false;
   esp_err_t ret;
   ret = SPIBusInit();
   if (ret != ESP_OK)
     return ret;
+
+  Reset();
+
   ret = SetRadioMode(RM_STANDBY, 0);
   if (ret != ESP_OK)
     return ret;
+
+  if (PinConfig->UseTXCO)
+  {
+    // Aufwachzeit TXCO in ms
+    ESP_LOGI("LoRa","Calibrating TXCO...");
+    const uint32_t TXCO_WakeupTime = 5;
+    SetDio3AsTcxoCtrl(TCXO_CTRL_1_8V, TXCO_WakeupTime << 6); // convert from ms to SX126x time base
+    uint8_t CalibParam = 0x7F;
+    SetCalibrateSections(CalibParam);
+    Calibrate(433);
+    ESP_LOGI("LoRa","Calibrating done!");
+  }
+
+  SetDio2AsRfSwitchCtrl(true);
+
+  // Testweise Register lesen
+  uint8_t p[4] = {};
+  ret = ReadReg(0x06BC, p, 4);
+  if (ret != ESP_OK)
+  {
+    ESP_LOGE("LoRa", "Register lesen fehlgeschlagen");
+    return ret;
+  }
+  ESP_LOGI("LoRa", "%d %d %d %d", p[0], p[1], p[2], p[3]);
+
   ret = SetPacketType(PACKET_TYPE_LORA);
   if (ret != ESP_OK)
     return ret;
@@ -1104,11 +1250,32 @@ esp_err_t SX1262_LoRa::SetupModule(uint8_t aAddress, uint32_t aFrq, uint16_t aPr
   return ret;
 }
 
+esp_err_t SX1262_LoRa::GetDeviceError(uint16_t &aErr)
+{
+  uint8_t Params[4] = {0};
+  memset(Params, 0, 4);
+  Params[0] = Opcodes::OP_GET_DEV_ERR;
+  esp_err_t ret = ChipCommand(Params, sizeof(Params));
+  aErr = Params[2] * 256 + Params[3];
+  return ret;
+}
+
+esp_err_t SX1262_LoRa::ClearDeviceError()
+{
+  uint8_t Params[2] = {0};
+  Params[0] = Opcodes::OP_CLR_DEV_ERR;
+  return ChipCommand(Params, sizeof(Params));
+}
+
 esp_err_t SX1262_LoRa::SendPacket(uint8_t *aBuf, uint8_t aSize)
 {
+  uint16_t ChipError = 0;
   esp_err_t ret;
-
+  ESP_LOGI("LoRa", "Sende LoRa Paket: %d bytes", aSize);
   ret = SetRadioMode(RadioMode::RM_STANDBY, 0);
+  if (ret != ESP_OK)
+    return ret;
+  ret = ClearDeviceError();
   if (ret != ESP_OK)
     return ret;
   // ESP_LOGI("lora","lora is idle");
@@ -1119,11 +1286,21 @@ esp_err_t SX1262_LoRa::SendPacket(uint8_t *aBuf, uint8_t aSize)
   ret = WriteBuffer(0, aBuf, aSize);
   if (ret != ESP_OK)
     return ret;
-  // ESP_LOGI("lora","FIFO is idle");
+  /*
+  uint8_t ReadBuf[256] = {};
+  ret = ReadBuffer(0, ReadBuf, aSize);
+  if (ret != ESP_OK)
+    return ret;
+  if (memcmp(aBuf, ReadBuf, aSize) != 0)
+    ESP_LOGE("LoRa", "Vergleich Puffer Lesen/Schreiben fehlgeschlagen!");
+  */
   ret = SetPacketParams(mPreambleLength, true, aSize, true);
   if (ret != ESP_OK)
     return ret;
   ret = ClearIRQStatus(0xFFFF);
+  if (ret != ESP_OK)
+    return ret;
+  ret = SetIRQParams(IRQFlags::TxDone | IRQFlags::RxDone | IRQFlags::CRCErr | IRQFlags::HeaderErr | IRQFlags::HeaderValid | IRQFlags::SyncWordValid | IRQFlags::Timeout, 0, 0, 0);
   if (ret != ESP_OK)
     return ret;
 
@@ -1132,24 +1309,39 @@ esp_err_t SX1262_LoRa::SendPacket(uint8_t *aBuf, uint8_t aSize)
   ret = SetRadioMode(RadioMode::RM_TX_ENABLE, 64000); // = 1 s Sendetimeout
   if (ret != ESP_OK)
     return ret;
+
+  // Wurde der Modus wirklich eingestellt?
   vTaskDelay(1);
 
   uint16_t iIRQStatus = 0;
   ret = GetIRQStatus(iIRQStatus);
   if (ret != ESP_OK)
     return ret;
-  // ESP_LOGI("lora","Reg: %d",reg);
-  // ESP_LOGI("lora","waiting for end of transmission");
+  //ESP_LOGI("LoRa", "iIRQStatus: %d", iIRQStatus);
+
+  //ESP_LOGI("LoRa", "Warte auf Paketende...");
   while ((iIRQStatus & IRQFlags::TxDone) == 0)
   {
     ret = GetIRQStatus(iIRQStatus);
     if (ret != ESP_OK)
       return ret;
+    /*
+    ret = GetDeviceError(ChipError);
+    if (ret != ESP_OK)
+      return ret;
+    ESP_LOGI("LoRa", "iIRQStatus: %d", iIRQStatus);
+    ESP_LOGI("LoRa", "ChipError: %d", ChipError);
+    */
     if (iIRQStatus & IRQFlags::Timeout)
+    {
+      ESP_LOGE("LoRa", "Sendetimeout!");
+      ClearIRQStatus(0xFFFF);
       return ESP_ERR_TIMEOUT;
-    vTaskDelay(1);
+    }
+
+    vTaskDelay(pdMS_TO_TICKS(1));
   };
-  // ESP_LOGI("lora","Sending done");
+  ClearIRQStatus(0xFFFF);
   return ret;
 }
 

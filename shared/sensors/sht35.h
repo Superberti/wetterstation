@@ -18,7 +18,7 @@ class SHT35
 {
 public:
 
-  SHT35(int aPort);
+  SHT35(i2c_port_t aPort);
 
   ~SHT35(void);
 
@@ -26,7 +26,7 @@ public:
   esp_err_t ReadSHT35(double & aTemp, double & aHum, bool & rCRC_Err);
 
 private:
-  int mPort;
+  i2c_port_t mPort;
   // CRC8-Berechnung
   const uint8_t poly = 0x31; // x8 + x5 + x4 + 1
   uint8_t ComputeChecksum(uint8_t* bytes, int len);

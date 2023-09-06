@@ -10,4 +10,5 @@ void ParseLoraPacket(uint8_t *buf, uint8_t len);
 esp_err_t InitLoRa(LoRaBase & aLoRa);
 int64_t GetTime_us();
 esp_err_t BuildCBORBuf(uint8_t *aBuf , uint16_t aMaxBufSize, uint16_t & aCBORBuildSize, uint32_t aPC, float aTemp_deg, float aHum_per, float aPress_mBar, float iVBatt_V);
+void BlinkLED(uint32_t aBlinkTime_ms, uint32_t aBlinkFrq_Hz);
 #endif

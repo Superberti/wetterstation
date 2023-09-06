@@ -96,6 +96,7 @@ struct LoraPacketHeader
 #define LORA_ADDR_CARPORT 2			// Carport-Wetterstation
 #define LORA_ADDR_BIKEPORT 3		// Fahrradschuppen
 #define LORA_ADDR_SYMPATEC 4    // Sympatec in Clausthal
+#define LORA_ADDR_SYMPATEC_2 5  // Sympatec in Clausthal, Sensor 2
 
 
 #endif

@@ -74,7 +74,7 @@ struct bmp390_calib_data
 class BMP390
 {
 protected:
-  int mPort;
+  i2c_port_t mPort;
   int mSDA_Pin;
   int mSCL_Pin;
   uint8_t mI2CAddr;
@@ -144,7 +144,7 @@ public:
   /// @param aI2CAddr I2C-Adresse
   /// @param aSDA_Pin GPIO-Nummer des SDA-Pins
   /// @param aSCL_Pin GPIO-Nummer des SCL-Pins
-  BMP390(int aPort, uint8_t aI2CAddr, int aSDA_Pin, int aSCL_Pin);
+  BMP390(i2c_port_t aPort, uint8_t aI2CAddr, int aSDA_Pin, int aSCL_Pin);
   ~BMP390(void);
 
   /// @brief Gibt es Messwerte, die gelesen werden können?

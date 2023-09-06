@@ -26,8 +26,6 @@
 #include "heltec_lite.h"
 #include "bmp390.h"
 
-
-
 using json = nlohmann::json;
 
 /*
@@ -35,17 +33,17 @@ using json = nlohmann::json;
  *
  * LILYGO_T3  // SX1276 mit OLED-Display und ESP32
  * HELTEC_ESP_LORA
- * HELTEC_STICK_V3  // SX1262 mit (ESP32-S3FN8) (erst mal nicht funktionsfähig, da neuer LoRa-Treiber notwendig!)
+ * HELTEC_STICK_V3  // SX1262 mit (ESP32-S3FN8)
  */
 
 // Welches Board wird verwendet?
 #define HELTEC_STICK_V3
 
 // Nur definieren, falls der SHT40 nicht angeschlossen ist, man aber trotzdem ein paar Daten haben möchte
-// #define FAKE_SHT40
+#define FAKE_SHT40
 
 /// BMP390 Luftdrucksensor angeschlossen
-#define USE_BMP390
+// #define USE_BMP390
 #define BMP390_SENSOR_ADDR 0x77 // Adresse BMP390 wenn SDO auf high, auf low = 0x76
 
 // ADC-Batteriespannungsmessung benutzen?
@@ -55,7 +53,7 @@ using json = nlohmann::json;
 #define LORA_ORT ORT_SYMPATEC
 // #define LORA_ORT ORT_ARBEITSZIMMER
 
-#define TAG "LORA_TEMP"
+#define TAG "HELTEC_TEMP"
 
 // Temperatursensor SHT40
 #define PIN_SDA_TEMP GPIO_NUM_13
@@ -90,7 +88,9 @@ void app_main_cpp()
   adc_oneshot_unit_init_cfg_t init_config1;
   init_config1.unit_id = ADC_UNIT_1;
   init_config1.ulp_mode = ADC_ULP_MODE_DISABLE;
-
+#ifdef HELTEC_STICK_V3
+  init_config1.clk_src = ADC_RTC_CLK_SRC_RC_FAST;
+#endif
   ESP_ERROR_CHECK(adc_oneshot_new_unit(&init_config1, &adc1_handle));
 #endif
   esp_err_t ret;
@@ -120,7 +120,7 @@ void app_main_cpp()
   }
 #ifdef LILYGO_T3
   bool UseDisplay = FirstBoot;
-  #define BOARD_LED GPIO_NUM_25
+#define BOARD_LED GPIO_NUM_25
 #else
   bool UseDisplay = false;
 #endif
@@ -135,27 +135,27 @@ void app_main_cpp()
 
 #if defined(LILYGO_T3)
   SX1278_LoRa LoRa(LilygoT3);
-  #define BOARD_LED GPIO_NUM_25
+#define BOARD_LED GPIO_NUM_25
 #ifdef USE_ADC
   AdcConfig.atten = ADC_ATTEN_DB_11;
 #endif
 #elif defined(HELTEC_ESP_LORA) // Nur die beiden Heltec-Boards haben die Reset-Leitung an einem RTC-Pin des ESP32!
   SX1278_LoRa LoRa(HeltecESPLoRa);
   rtc_gpio_hold_dis((gpio_num_t)LoRa.PinConfig->Reset);
-  #define BOARD_LED GPIO_NUM_25
+#define BOARD_LED GPIO_NUM_25
 #ifdef USE_ADC
   AdcConfig.atten = ADC_ATTEN_DB_0;
 #endif
 #elif defined(HELTEC_STICK_V3)
   SX1262_LoRa LoRa(HeltecWirelessStick_V3);
+  ESP_LOGI(TAG, "Lora reset pin: %d", LoRa.PinConfig->Reset);
   rtc_gpio_hold_dis((gpio_num_t)LoRa.PinConfig->Reset);
-  #define BOARD_LED GPIO_NUM_35
+#define BOARD_LED GPIO_NUM_35
 #ifdef USE_ADC
   AdcConfig.atten = ADC_ATTEN_DB_0;
 #endif
 #endif
 
-  // gpio_num_t LoraReset = (gpio_num_t)LoRa.PinConfig->Reset;
   gpio_num_t LoraLed = (gpio_num_t)LoRa.PinConfig->Led;
 
 #ifdef USE_ADC
@@ -165,7 +165,10 @@ void app_main_cpp()
   AdcConfig.bitwidth = ADC_BITWIDTH_DEFAULT;
   ESP_ERROR_CHECK(adc_oneshot_config_channel(adc1_handle, AdcChannel, &AdcConfig));
 #endif
+
+#ifndef HELTEC_STICK_V3
   rtc_gpio_hold_dis(LoraLed);
+#endif
   gpio_reset_pin(LoraLed);
   /* Set the GPIO as a push/pull output */
   gpio_set_direction(LoraLed, GPIO_MODE_OUTPUT);
@@ -173,13 +176,13 @@ void app_main_cpp()
 
   // Init Temperatursensor
   uint32_t iSerial = 0;
-  bool i2c_init_done=false;
+  bool i2c_init_done = false;
 #ifndef FAKE_SHT40
   SHT40 iTempSensor(I2C_NUM_0, PIN_SDA_TEMP, PIN_SCL_TEMP);
   ret = iTempSensor.Init(true);
   if (ret != ESP_OK)
     ESP_LOGE(TAG, "Fehler beim Initialisieren des SHT40: %d", ret);
-  i2c_init_done=true;
+  i2c_init_done = true;
   ret = iTempSensor.ReadSerial(iSerial, iCRCErr);
   ESP_LOGI(TAG, "SHT40 Seriennummer: %lu", iSerial);
   if (ret != ESP_OK)
@@ -188,7 +191,7 @@ void app_main_cpp()
     ESP_LOGE(TAG, "Fehler beim Lesen des SHT40 CRC (Seriennummer)");
 #endif
   int64_t EndTime = GetTime_us();
-  ESP_LOGI(TAG, "SSD1306 Init fertig nach %.1f ms", (EndTime - StartTime) / 1000.0);
+  // ESP_LOGI(TAG, "SSD1306 Init fertig nach %.1f ms", (EndTime - StartTime) / 1000.0);
   gpio_set_level(LoraLed, 0);
 
 // Temperatur und Luftdruck BMP390
@@ -210,6 +213,7 @@ void app_main_cpp()
   }
 #endif
 
+  //BlinkLED(2000, 10);
   // Parameter s. InitLoRa
   ret = InitLoRa(LoRa);
   if (ret != ESP_OK)
@@ -255,7 +259,7 @@ void app_main_cpp()
 
 #ifdef USE_BMP390
     ret = Bmp.ReadTempAndPressAsync(t, iPress_mBar);
-    iPress_mBar=Bmp.SeaLevelForAltitude(602, iPress_mBar);
+    iPress_mBar = Bmp.SeaLevelForAltitude(602, iPress_mBar);
     if (ret != ESP_OK)
       ESP_LOGE(TAG, "Fehler beim Lesen des BMP390: %d", ret);
     ESP_LOGI("BMP390", "Druck: %.2f mbar Temp: %.2f°C", iPress_mBar, t);
@@ -266,6 +270,8 @@ void app_main_cpp()
     // Der Kalibrierwert -0.448 muss für jedes Board neu nachgemessen werden, da die Referenzspannung des ESP32-ADCs einfach
     // nur grottig ist...
     double iVBatt_V = AdcMean / 4095 * 7.81 - 0.448;
+#elif defined(HELTEC_STICK_V3)
+    double iVBatt_V = AdcMean / 4095 * 7.81 * 100.0 / (100 + 390);
 #else
     double iVBatt_V = AdcMean / 4095 * 7.81 - 0.448;
 #endif
@@ -334,7 +340,9 @@ void app_main_cpp()
   // gpio_set_level(LoraReset, 0);
 
   // RTC-GPIO-Pins isolieren, damit die während des Deep-Sleeps nicht in der Gegen rumfloaten
-  rtc_gpio_isolate(LoraLed);
+#ifndef HELTEC_STICK_V3
+  rtc_gpio_isolate(LoraLed);  // HELTEC_STICK_V3 hat die LED auf GPIO35, das ist kein RTC-Pin!
+#endif
 
 // Der LoRa-Reset-Pin ist nur bei den Heltec-Modulen an einen RTC-GPIO angeschlossen!
 #if defined(HELTEC_ESP_LORA)
@@ -380,16 +388,16 @@ esp_err_t InitLoRa(LoRaBase &aLoRa)
   // Sendefrequenz: 434,54 MHz
   // Preambellänge: 14
   // Bandbreite 500 kHz
-  // Achtung: Damit auch der neuere SX1262 verwendet wird, muss man sich über die Sync-Words ein paar mehr
+  // Achtung: Damit auch der neuere SX1262 verwendet werden kann, muss man sich über die Sync-Words ein paar mehr
   // Gedanken machen. Der SX1262 hat 2 Bytes Sync, nicht nur 1 Byte. Damit sich trotzdem beide verstehen, muss man
   // folgendes beachten:
   // SX1276: Jedes Nibble unterschiedlich von 1-7, also z.B. 0x37 => 0xYZ (Y!=Z, Z und Y <8 && >0)
   // SX1262: 0Y4Z4, also hier 0x3474
-  // Sync-Byte: 0x37
+  // Sync-Byte: 0x37 (SX1276) oder 0x3474 (SX1262)
   // Spreading-Factor: 8 = 256 Chips/symbol
   // Coding-Rate: 6 = 4/6 = 1,5-facher FEC-Overhead
   // Tx-Power 2-17
-  return aLoRa.SetupModule(LORA_ADDR_GWHS, 434.54e6, 14, LoRaBase::LoRaBandwidth::LORA_BW_500, 0x37, LoRaBase::SpreadingFactor::SF8, LoRaBase::LoRaCodingRate::LORA_CR_4_6, 15);
+  return aLoRa.SetupModule(LORA_ADDR_SYMPATEC_2, 434.54e6, 14, LoRaBase::LoRaBandwidth::LORA_BW_500, 0x3474, LoRaBase::SpreadingFactor::SF8, LoRaBase::LoRaCodingRate::LORA_CR_4_6, 15);
 }
 
 int64_t GetTime_us()
@@ -417,6 +425,22 @@ void error(const char *format, ...)
     gpio_set_level(BOARD_LED, toggle);
     vTaskDelay(pdMS_TO_TICKS(100));
   }
+}
+
+void BlinkLED(uint32_t aBlinkTime_ms, uint32_t aBlinkFrq_Hz)
+{
+  if (aBlinkFrq_Hz == 0)
+    return;
+  int64_t StartTime = GetTime_us();
+  int wait_ms = 500 / aBlinkFrq_Hz;
+  int toggle = 0;
+  while (GetTime_us() - StartTime < aBlinkTime_ms * 1000)
+  {
+    toggle = 1 - toggle;
+    gpio_set_level(BOARD_LED, toggle);
+    vTaskDelay(pdMS_TO_TICKS(wait_ms));
+  }
+  gpio_set_level(BOARD_LED, 0);
 }
 
 esp_err_t BuildCBORBuf(uint8_t *aBuf, uint16_t aMaxBufSize, uint16_t &aCBORBuildSize, uint32_t aPC, float aTemp_deg, float aHum_per, float aPress_mBar, float iVBatt_V)
@@ -448,4 +472,3 @@ esp_err_t BuildCBORBuf(uint8_t *aBuf, uint16_t aMaxBufSize, uint16_t &aCBORBuild
 
   return ESP_OK;
 }
-

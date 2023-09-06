@@ -57,7 +57,7 @@ class SHT40
 {
 private:
   SHT40_COMMAND mReadMode;
-  int mPort;
+  i2c_port_t mPort;
   // CRC8-Berechnung
   const uint8_t poly = 0x31; // x8 + x5 + x4 + 1
   uint8_t ComputeChecksum(uint8_t* bytes, int len);
@@ -66,7 +66,7 @@ private:
   int mSCL_Pin;
 public:
 
-  SHT40(int aPort, int aSDA_Pin, int aSCL_Pin, SHT40_COMMAND aReadMode=SHT40_CMD_HPM);
+  SHT40(i2c_port_t aPort, int aSDA_Pin, int aSCL_Pin, SHT40_COMMAND aReadMode=SHT40_CMD_HPM);
   ~SHT40(void);
 
   esp_err_t Init(bool aDoI2CInit);
