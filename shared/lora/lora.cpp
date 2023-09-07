@@ -27,8 +27,6 @@ LoRa_PinConfiguration::LoRa_PinConfiguration(LoRaBoardTypes aBoard)
     DIO0 = 26;
     DIO1 = 33;
     Busy = 32;
-    Led = 25;
-    AdcChannel = 7;
     SPIChannel = SPI1_HOST;
     break;
   case HeltecESPLoRa:
@@ -40,8 +38,6 @@ LoRa_PinConfiguration::LoRa_PinConfiguration(LoRaBoardTypes aBoard)
     DIO0 = 33;
     DIO1 = 34;
     Busy = 0;
-    Led = 25;
-    AdcChannel = 0;
     SPIChannel = SPI1_HOST;
     break;
   case HeltecWirelessStick_V3:
@@ -53,8 +49,6 @@ LoRa_PinConfiguration::LoRa_PinConfiguration(LoRaBoardTypes aBoard)
     // DIO0 = 26;  // Der SX1262 hat nur DIO1-3. Angeschlossen ist aber nur DIO1
     DIO1 = 14;
     Busy = 13;
-    Led = 35;
-    AdcChannel = 0;
     SPIChannel = SPI2_HOST; // Der ESP32-S3 hat SPI0 und SPI1 intern mit dem Flash verdrahtet. Frei sind SPI2/3
     UseTXCO = true;         // Hat einen TXCO und keinen XTAL
     break;

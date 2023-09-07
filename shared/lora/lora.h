@@ -3,13 +3,7 @@
 #define __LORA_H__
 
 #include "driver/spi_master.h"
-
-enum LoRaBoardTypes
-{
-  LilygoT3,
-  HeltecESPLoRa,
-  HeltecWirelessStick_V3
-};
+#include "lorastructs.h"
 
 class LoRa_PinConfiguration
 {
@@ -22,8 +16,6 @@ public:
   uint8_t DIO0;
   uint8_t DIO1;
   uint8_t Busy;
-  uint8_t Led;
-  uint8_t AdcChannel;
   spi_host_device_t SPIChannel;
   bool UseTXCO;
   LoRa_PinConfiguration(LoRaBoardTypes aBoard);

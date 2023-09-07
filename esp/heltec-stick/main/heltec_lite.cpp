@@ -31,13 +31,13 @@ using json = nlohmann::json;
 /*
  * Boardauswahl: Ich verwende bisher mit diesem Code 3 verschiedene Boards. Bitte hier definieren
  *
- * LILYGO_T3  // SX1276 mit OLED-Display und ESP32
- * HELTEC_ESP_LORA
- * HELTEC_STICK_V3  // SX1262 mit (ESP32-S3FN8)
+ * LilygoT3  // SX1276 mit OLED-Display und ESP32
+ * HeltecESPLoRa
+ * HeltecWirelessStick_V3  // SX1262 mit (ESP32-S3FN8)
  */
 
 // Welches Board wird verwendet?
-#define HELTEC_STICK_V3
+static const LoRaBoardTypes BoardType = HeltecWirelessStick_V3;
 
 // Nur definieren, falls der SHT40 nicht angeschlossen ist, man aber trotzdem ein paar Daten haben möchte
 #define FAKE_SHT40
@@ -70,6 +70,8 @@ static RTC_DATA_ATTR struct timeval sleep_enter_time;
 static RTC_DATA_ATTR uint32_t SleepCounter;
 
 static bool FirstBoot = true;
+static int BoardLED = -1;
+static int AdcChannel = -1;
 
 extern "C"
 {
@@ -88,9 +90,9 @@ void app_main_cpp()
   adc_oneshot_unit_init_cfg_t init_config1;
   init_config1.unit_id = ADC_UNIT_1;
   init_config1.ulp_mode = ADC_ULP_MODE_DISABLE;
-#ifdef HELTEC_STICK_V3
-  init_config1.clk_src = ADC_RTC_CLK_SRC_RC_FAST;
-#endif
+  if (BoardType == HeltecWirelessStick_V3)
+    init_config1.clk_src = ADC_RTC_CLK_SRC_RC_FAST;
+
   ESP_ERROR_CHECK(adc_oneshot_new_unit(&init_config1, &adc1_handle));
 #endif
   esp_err_t ret;
@@ -118,13 +120,9 @@ void app_main_cpp()
     SleepCounter = 0;
   }
   }
-#ifdef LILYGO_T3
-  bool UseDisplay = FirstBoot;
-#define BOARD_LED GPIO_NUM_25
-#else
+
   bool UseDisplay = false;
-#endif
-  ESP_LOGI(TAG, "Using display %d", UseDisplay);
+
   struct timeval now;
   gettimeofday(&now, NULL);
   // int sleep_time_ms = (now.tv_sec - sleep_enter_time.tv_sec) * 1000 + (now.tv_usec - sleep_enter_time.tv_usec) / 1000;
@@ -133,46 +131,54 @@ void app_main_cpp()
   adc_oneshot_chan_cfg_t AdcConfig;
 #endif
 
-#if defined(LILYGO_T3)
-  SX1278_LoRa LoRa(LilygoT3);
-#define BOARD_LED GPIO_NUM_25
-#ifdef USE_ADC
-  AdcConfig.atten = ADC_ATTEN_DB_11;
-#endif
-#elif defined(HELTEC_ESP_LORA) // Nur die beiden Heltec-Boards haben die Reset-Leitung an einem RTC-Pin des ESP32!
-  SX1278_LoRa LoRa(HeltecESPLoRa);
-  rtc_gpio_hold_dis((gpio_num_t)LoRa.PinConfig->Reset);
-#define BOARD_LED GPIO_NUM_25
-#ifdef USE_ADC
-  AdcConfig.atten = ADC_ATTEN_DB_0;
-#endif
-#elif defined(HELTEC_STICK_V3)
-  SX1262_LoRa LoRa(HeltecWirelessStick_V3);
-  ESP_LOGI(TAG, "Lora reset pin: %d", LoRa.PinConfig->Reset);
-  rtc_gpio_hold_dis((gpio_num_t)LoRa.PinConfig->Reset);
-#define BOARD_LED GPIO_NUM_35
-#ifdef USE_ADC
-  AdcConfig.atten = ADC_ATTEN_DB_0;
-#endif
-#endif
-
-  gpio_num_t LoraLed = (gpio_num_t)LoRa.PinConfig->Led;
+  LoRaBase *LoRa;
+  if (BoardType == LilygoT3)
+  {
+    UseDisplay = FirstBoot;
+    BoardLED = 25;
+    AdcChannel = 7;
+    LoRa = new SX1278_LoRa(BoardType);
 
 #ifdef USE_ADC
-  adc_channel_t AdcChannel = (adc_channel_t)LoRa.PinConfig->AdcChannel;
+    AdcConfig.atten = ADC_ATTEN_DB_11;
+#endif
+  }
+  else if (BoardType == HeltecESPLoRa)
+  {
+    // Nur die beiden Heltec-Boards haben die Reset-Leitung an einem RTC-Pin des ESP32!
+    LoRa = new SX1278_LoRa(BoardType);
+    rtc_gpio_hold_dis((gpio_num_t)LoRa->PinConfig->Reset);
+    BoardLED = 25;
+#ifdef USE_ADC
+    AdcConfig.atten = ADC_ATTEN_DB_0;
+#endif
+  }
+  else if (BoardType == HeltecWirelessStick_V3)
+  {
+    LoRa = new SX1262_LoRa(HeltecWirelessStick_V3);
+    ESP_LOGI(TAG, "Lora reset pin: %d", LoRa->PinConfig->Reset);
+    rtc_gpio_hold_dis((gpio_num_t)LoRa->PinConfig->Reset);
+    BoardLED = 35;
+    AdcChannel = 0;
+#ifdef USE_ADC
+    AdcConfig.atten = ADC_ATTEN_DB_0;
+#endif
+  }
+  ESP_LOGI(TAG, "Using display %d", UseDisplay);
 
+#ifdef USE_ADC
   //-------------ADC1 Config---------------//
   AdcConfig.bitwidth = ADC_BITWIDTH_DEFAULT;
-  ESP_ERROR_CHECK(adc_oneshot_config_channel(adc1_handle, AdcChannel, &AdcConfig));
+  ESP_ERROR_CHECK(adc_oneshot_config_channel(adc1_handle, (adc_channel_t)AdcChannel, &AdcConfig));
 #endif
 
-#ifndef HELTEC_STICK_V3
-  rtc_gpio_hold_dis(LoraLed);
-#endif
-  gpio_reset_pin(LoraLed);
+  if (BoardType != HeltecWirelessStick_V3)
+    rtc_gpio_hold_dis((gpio_num_t)BoardLED);
+
+  gpio_reset_pin((gpio_num_t)BoardLED);
   /* Set the GPIO as a push/pull output */
-  gpio_set_direction(LoraLed, GPIO_MODE_OUTPUT);
-  gpio_set_level(LoraLed, 1);
+  gpio_set_direction((gpio_num_t)BoardLED, GPIO_MODE_OUTPUT);
+  gpio_set_level((gpio_num_t)BoardLED, 1);
 
   // Init Temperatursensor
   uint32_t iSerial = 0;
@@ -192,7 +198,7 @@ void app_main_cpp()
 #endif
   int64_t EndTime = GetTime_us();
   // ESP_LOGI(TAG, "SSD1306 Init fertig nach %.1f ms", (EndTime - StartTime) / 1000.0);
-  gpio_set_level(LoraLed, 0);
+  gpio_set_level((gpio_num_t)BoardLED, 0);
 
 // Temperatur und Luftdruck BMP390
 #ifdef USE_BMP390
@@ -213,9 +219,9 @@ void app_main_cpp()
   }
 #endif
 
-  //BlinkLED(2000, 10);
-  // Parameter s. InitLoRa
-  ret = InitLoRa(LoRa);
+  // BlinkLED(2000, 10);
+  //  Parameter s. InitLoRa
+  ret = InitLoRa(*LoRa);
   if (ret != ESP_OK)
     ESP_LOGE(TAG, "Fehler beim Initialisieren des LoRa Moduls: %d", ret);
   EndTime = GetTime_us();
@@ -245,13 +251,14 @@ void app_main_cpp()
     iTemp_deg = 20 + sin((SleepCounter * 6) / 360.0 * 2 * 3.141592) * 15;
     iHum_per = 50 + cos((SleepCounter * 3) / 360.0 * 2 * 3.141592) * 30;
 #endif
+
     double AdcMean = 0;
     int AdcValue = 0;
 #ifdef USE_ADC
     // Batteriespannung
     for (int i = 0; i < 64; i++)
     {
-      ESP_ERROR_CHECK(adc_oneshot_read(adc1_handle, AdcChannel, &AdcValue));
+      ESP_ERROR_CHECK(adc_oneshot_read(adc1_handle, (adc_channel_t)AdcChannel, &AdcValue));
       AdcMean += AdcValue;
     }
     AdcMean /= 64.0;
@@ -265,17 +272,49 @@ void app_main_cpp()
     ESP_LOGI("BMP390", "Druck: %.2f mbar Temp: %.2f°C", iPress_mBar, t);
 #endif
 
-#ifdef LILYGO_T3
-    // Referenzspannung 1.1V, Spannungsteiler 100K/100K, Abschwächung 11dB (Faktor 3.55) = 7.81 V bei Vollausschlag (4095)
-    // Der Kalibrierwert -0.448 muss für jedes Board neu nachgemessen werden, da die Referenzspannung des ESP32-ADCs einfach
-    // nur grottig ist...
-    double iVBatt_V = AdcMean / 4095 * 7.81 - 0.448;
-#elif defined(HELTEC_STICK_V3)
-    double iVBatt_V = AdcMean / 4095 * 7.81 * 100.0 / (100 + 390);
-#else
-    double iVBatt_V = AdcMean / 4095 * 7.81 - 0.448;
-#endif
+    double iVBatt_V = 0;
+    if (BoardType == LilygoT3)
+    {
+      // Referenzspannung 1.1V, Spannungsteiler 100K/100K, Abschwächung 11dB (Faktor 3.55) = 7.81 V bei Vollausschlag (4095)
+      // Der Kalibrierwert -0.448 muss für jedes Board neu nachgemessen werden, da die Referenzspannung des ESP32-ADCs einfach
+      // nur grottig ist...
+      iVBatt_V = AdcMean / 4095 * 7.81 - 0.448;
+    }
+    else if (BoardType == HeltecWirelessStick_V3)
+    {
+      iVBatt_V = AdcMean / 4095 * 7.81 * 100.0 / (100 + 390);
+      /*
+        #define VBAT_PIN 1
 
+  void VBAT_Init() {
+  pinMode(VBAT_PIN, INPUT);
+  adcAttachPin(VBAT_PIN);
+  analogReadResolution(10);
+
+  pinMode(37, OUTPUT); // ADC_Ctrl
+  }
+
+  #define BATTERY_SAMPLES 20
+
+  float readBattVoltage() {
+  digitalWrite(37, LOW); // ADC_Ctrl
+
+  uint32_t raw = 0;
+  for (int i = 0; i < BATTERY_SAMPLES; i++) {
+  raw += analogRead(VBAT_PIN);
+  }
+  raw = raw / BATTERY_SAMPLES;
+
+  digitalWrite(37, HIGH); // ADC_Ctrl
+
+  return 5.42 * (3.3 / 1024.0) * raw;
+  }
+      */
+    }
+    else
+    {
+      iVBatt_V = AdcMean / 4095 * 7.81 - 0.448;
+    }
     ESP_LOGI(TAG, "ADC raw value: %.0f = %.2f V", AdcMean, iVBatt_V);
 
 #ifndef USE_BMP390
@@ -292,21 +331,21 @@ void app_main_cpp()
     const int MaxRetries = 5;
     while (!SendOK && RetryCounter < MaxRetries)
     {
-      gpio_set_level(LoraLed, 1);
+      gpio_set_level((gpio_num_t)BoardLED, 1);
       int64_t ts = GetTime_us();
-      ret = LoRa.SendLoraMsg(CMD_CBORDATA, LoraBuf, iCBORBuildSize, SleepCounter);
+      ret = LoRa->SendLoraMsg(CMD_CBORDATA, LoraBuf, iCBORBuildSize, SleepCounter);
       SendOK = ret == ESP_OK;
       int64_t te = GetTime_us();
-      gpio_set_level(LoraLed, 0);
+      gpio_set_level((gpio_num_t)BoardLED, 0);
       ESP_LOGI(TAG, "Zeit fuer LoRa: %.1f ms. Paketgroesse: %u", double(te - ts) / 1000.0, iCBORBuildSize);
       if (!SendOK)
       {
         RetryCounter++;
         ESP_LOGE(TAG, "Fehler beim Senden eines LoRa-Paketes: %d Versuch: %d", ret, RetryCounter);
         ESP_LOGE(TAG, "Resette LORA-Modul...");
-        LoRa.Reset();
+        LoRa->Reset();
         vTaskDelay(pdMS_TO_TICKS(1000));
-        ret = InitLoRa(LoRa);
+        ret = InitLoRa(*LoRa);
         if (ret != ESP_OK)
           ESP_LOGI(TAG, "Fehler beim Initialisieren des LoRa Moduls: %d", ret);
         else
@@ -328,7 +367,7 @@ void app_main_cpp()
   }
 
   ESP_LOGI(TAG, "Schalte LoRa-Modem ab...");
-  LoRa.Close();
+  LoRa->Close();
 
   // Wenn man nur ca. alle 2 Minuten sendet, dann sollte ein 18650-Akku ein Jahr halten
   const int wakeup_time_sec = 105 + (esp_random() % 30);
@@ -340,43 +379,46 @@ void app_main_cpp()
   // gpio_set_level(LoraReset, 0);
 
   // RTC-GPIO-Pins isolieren, damit die während des Deep-Sleeps nicht in der Gegen rumfloaten
-#ifndef HELTEC_STICK_V3
-  rtc_gpio_isolate(LoraLed);  // HELTEC_STICK_V3 hat die LED auf GPIO35, das ist kein RTC-Pin!
-#endif
+  if (BoardType != HeltecWirelessStick_V3)
+    rtc_gpio_isolate((gpio_num_t)BoardLED); // HELTEC_STICK_V3 hat die LED auf GPIO35, das ist kein RTC-Pin!
 
-// Der LoRa-Reset-Pin ist nur bei den Heltec-Modulen an einen RTC-GPIO angeschlossen!
-#if defined(HELTEC_ESP_LORA)
-  rtc_gpio_isolate((gpio_num_t)LoRa.PinConfig->Reset);
-#elif defined(HELTEC_STICK_V3)
-  rtc_gpio_isolate((gpio_num_t)LoRa.PinConfig->Reset);
-#endif
+  // Der LoRa-Reset-Pin ist nur bei den Heltec-Modulen an einen RTC-GPIO angeschlossen!
+
+  if (BoardType == HeltecESPLoRa)
+    rtc_gpio_isolate((gpio_num_t)LoRa->PinConfig->Reset);
+  else if (BoardType == HeltecWirelessStick_V3)
+    rtc_gpio_isolate((gpio_num_t)LoRa->PinConfig->Reset);
 
   // Pins auf Input
-  gpio_set_direction(LoraLed, GPIO_MODE_INPUT);
-  gpio_set_direction((gpio_num_t)LoRa.PinConfig->ChipSelect, GPIO_MODE_INPUT);
-  gpio_set_direction((gpio_num_t)LoRa.PinConfig->Reset, GPIO_MODE_INPUT);
-  gpio_set_direction((gpio_num_t)LoRa.PinConfig->DIO0, GPIO_MODE_INPUT);
+  gpio_set_direction((gpio_num_t)BoardLED, GPIO_MODE_INPUT);
+  gpio_set_direction((gpio_num_t)LoRa->PinConfig->ChipSelect, GPIO_MODE_INPUT);
+  gpio_set_direction((gpio_num_t)LoRa->PinConfig->Reset, GPIO_MODE_INPUT);
+  gpio_set_direction((gpio_num_t)LoRa->PinConfig->DIO0, GPIO_MODE_INPUT);
   gpio_set_direction(PIN_SCL_TEMP, GPIO_MODE_INPUT);
   gpio_set_direction(PIN_SDA_TEMP, GPIO_MODE_INPUT);
-  gpio_set_direction((gpio_num_t)LoRa.PinConfig->Clock, GPIO_MODE_INPUT);
-  gpio_set_direction((gpio_num_t)LoRa.PinConfig->Miso, GPIO_MODE_INPUT);
-  gpio_set_direction((gpio_num_t)LoRa.PinConfig->Mosi, GPIO_MODE_INPUT);
+  gpio_set_direction((gpio_num_t)LoRa->PinConfig->Clock, GPIO_MODE_INPUT);
+  gpio_set_direction((gpio_num_t)LoRa->PinConfig->Miso, GPIO_MODE_INPUT);
+  gpio_set_direction((gpio_num_t)LoRa->PinConfig->Mosi, GPIO_MODE_INPUT);
 
   // Peripeherie-Spezialitäten Lilygo_T3
-#ifdef LILYGO_T3
-#define DISPL_I2C_SDA GPIO_NUM_21
-#define DISPL_I2C_SCL GPIO_NUM_22
-#define ADC_PIN GPIO_NUM_36
-  gpio_set_direction(DISPL_I2C_SDA, GPIO_MODE_INPUT);
-  gpio_set_direction(DISPL_I2C_SCL, GPIO_MODE_INPUT);
-  gpio_set_direction(SDCARD_MOSI, GPIO_MODE_INPUT);
-  gpio_set_direction(SDCARD_MISO, GPIO_MODE_INPUT);
-  gpio_set_direction(SDCARD_SCLK, GPIO_MODE_INPUT);
-  gpio_set_direction(SDCARD_CS, GPIO_MODE_INPUT);
-  gpio_set_direction(BOARD_LED, GPIO_MODE_INPUT);
-  gpio_set_direction(ADC_PIN, GPIO_MODE_INPUT);
-#endif
-
+  if (BoardType == LilygoT3)
+  {
+    // #define DISPL_I2C_SDA GPIO_NUM_21
+    // #define DISPL_I2C_SCL GPIO_NUM_22
+    // #define ADC_PIN GPIO_NUM_36
+    gpio_set_direction((gpio_num_t)21, GPIO_MODE_INPUT);
+    gpio_set_direction((gpio_num_t)22, GPIO_MODE_INPUT);
+    gpio_set_direction(SDCARD_MOSI, GPIO_MODE_INPUT);
+    gpio_set_direction(SDCARD_MISO, GPIO_MODE_INPUT);
+    gpio_set_direction(SDCARD_SCLK, GPIO_MODE_INPUT);
+    gpio_set_direction(SDCARD_CS, GPIO_MODE_INPUT);
+    gpio_set_direction((gpio_num_t)BoardLED, GPIO_MODE_INPUT);
+    gpio_set_direction((gpio_num_t)36, GPIO_MODE_INPUT);
+  }
+  else if (BoardType == HeltecWirelessStick_V3)
+  {
+    gpio_set_direction((gpio_num_t)1, GPIO_MODE_INPUT);
+  }
   gettimeofday(&sleep_enter_time, NULL);
   EndTime = GetTime_us();
   ESP_LOGI(TAG, "Gehe in Tiefschlaf nach %.1f ms", (EndTime - StartTime) / 1000.0);
@@ -422,7 +464,7 @@ void error(const char *format, ...)
   for (;;)
   {
     toggle = 1 - toggle;
-    gpio_set_level(BOARD_LED, toggle);
+    gpio_set_level((gpio_num_t)BoardLED, toggle);
     vTaskDelay(pdMS_TO_TICKS(100));
   }
 }
@@ -437,10 +479,10 @@ void BlinkLED(uint32_t aBlinkTime_ms, uint32_t aBlinkFrq_Hz)
   while (GetTime_us() - StartTime < aBlinkTime_ms * 1000)
   {
     toggle = 1 - toggle;
-    gpio_set_level(BOARD_LED, toggle);
+    gpio_set_level((gpio_num_t)BoardLED, toggle);
     vTaskDelay(pdMS_TO_TICKS(wait_ms));
   }
-  gpio_set_level(BOARD_LED, 0);
+  gpio_set_level((gpio_num_t)BoardLED, 0);
 }
 
 esp_err_t BuildCBORBuf(uint8_t *aBuf, uint16_t aMaxBufSize, uint16_t &aCBORBuildSize, uint32_t aPC, float aTemp_deg, float aHum_per, float aPress_mBar, float iVBatt_V)

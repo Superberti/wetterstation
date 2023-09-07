@@ -3,6 +3,13 @@
 
 #include <stdint.h>
 
+enum LoRaBoardTypes
+{
+  LilygoT3,
+  HeltecESPLoRa,
+  HeltecWirelessStick_V3
+};
+
 // Kennung für einen gültigen Paketheader
 #define PACKET_MAGIC 0x2008
 
