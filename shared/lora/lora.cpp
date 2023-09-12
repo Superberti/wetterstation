@@ -911,7 +911,7 @@ esp_err_t SX1262_LoRa::SetFrequency(uint32_t aFrequency)
   mFrequency = aFrequency;
   uint8_t Params[5];
   Params[0] = Opcodes::OP_SET_RF_FRQ;
-  uint32_t Chip_FRQ = (uint32_t)(((uint64_t)aFrequency * XTAL_FRQ) >> 25);
+  uint32_t Chip_FRQ = (uint32_t)(((uint64_t)aFrequency << 25) / XTAL_FRQ);
   Params[1] = (Chip_FRQ >> 24) & 0xFF;
   Params[2] = (Chip_FRQ >> 16) & 0xFF;
   Params[3] = (Chip_FRQ >> 8) & 0xFF;
