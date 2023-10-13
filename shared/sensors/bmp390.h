@@ -6,6 +6,8 @@
 #ifndef __BMP390_H__
 #define __BMP390_H__
 
+#include "driver/i2c.h"
+
 #define BMP390_ADDRESS (0x77) // Adresse, wenn OSD auf Masse. Bei 3.3 V ist die Adresse 0x76
 #define BMP390_CHIP_ID (0x60) // Feste Chip-ID
 

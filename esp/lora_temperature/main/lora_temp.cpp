@@ -143,17 +143,23 @@ void app_main_cpp()
 
 #if defined(LILYGO_T3)
   SX1278_LoRa LoRa(LilygoT3);
+  gpio_num_t LoraLed = GPIO_NUM_25;
+  adc_channel_t AdcChannel = (adc_channel_t)7;
 #ifdef USE_ADC
   AdcConfig.atten = ADC_ATTEN_DB_11;
 #endif
 #elif defined(HELTEC_ESP_LORA) // Nur die beiden Heltec-Boards haben die Reset-Leitung an einem RTC-Pin des ESP32!
   SX1278_LoRa LoRa(HeltecESPLoRa);
+  gpio_num_t LoraLed = GPIO_NUM_25;
+  adc_channel_t AdcChannel = (adc_channel_t)0;
   rtc_gpio_hold_dis((gpio_num_t)LoRa.PinConfig->Reset);
 #ifdef USE_ADC
   AdcConfig.atten = ADC_ATTEN_DB_0;
 #endif
 #elif defined(HELTEC_STICK_V3)
   SX1278_LoRa LoRa(HeltecWirelessStick_V3);
+  gpio_num_t LoraLed = GPIO_NUM_35;
+  adc_channel_t AdcChannel = (adc_channel_t)0;
   rtc_gpio_hold_dis((gpio_num_t)LoRa.PinConfig->Reset);
 #ifdef USE_ADC
   AdcConfig.atten = ADC_ATTEN_DB_0;
@@ -161,10 +167,10 @@ void app_main_cpp()
 #endif
 
   // gpio_num_t LoraReset = (gpio_num_t)LoRa.PinConfig->Reset;
-  gpio_num_t LoraLed = (gpio_num_t)LoRa.PinConfig->Led;
+  //gpio_num_t LoraLed = (gpio_num_t)LoRa.PinConfig->Led;
 
 #ifdef USE_ADC
-  adc_channel_t AdcChannel = (adc_channel_t)LoRa.PinConfig->AdcChannel;
+  
 
   //-------------ADC1 Config---------------//
   AdcConfig.bitwidth = ADC_BITWIDTH_DEFAULT;

@@ -5,7 +5,7 @@
 #ifndef __SHT40_H__
 #define __SHT40_H__
 
-
+#include "driver/i2c.h"
 /*!
  *  I2C ADDRESS/BITS/SETTINGS
  */
