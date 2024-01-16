@@ -58,15 +58,24 @@ using json = nlohmann::json;
 
 #define TAG "HAUPT-WS"
 
-// SDA - GPIO21 (DISPLAY)
-#define PIN_SDA_DISPL GPIO_NUM_21
+// Temperatursensor, Luftdruck und ADC am I2C-Bus0
+#define PIN_SDA_BUS0 GPIO_NUM_13
+#define PIN_SCL_BUS0 GPIO_NUM_14
 
-// SCL - GPIO22 (DISPLAY)
-#define PIN_SCL_DISPL GPIO_NUM_22
+// GPIOs (vorläufig)
+#define LORA_SEND_LED GPIO_NUM_15
+#define ERROR_LED GPIO_NUM_16
+#define READ_SENSOR_LED GPIO_NUM_18
+#define RAIN_COUNTER_INPUT GPIO_NUM_20
+#define LIGHTNING_INPUT GPIO_NUM_21
 
-// Temperatursensor SHT40
-#define PIN_SDA_TEMP GPIO_NUM_13
-#define PIN_SCL_TEMP GPIO_NUM_14
+// Nokia 5110-Display am SPI
+
+#define DISPLAY_DIN GPIO_NUM_23 // MOSI
+#define DISPLAY_CLK GPIO_NUM_18 // SCK
+#define DISPLAY_CE GPIO_NUM_15  // Chip Enable
+#define DISPLAY_DC GPIO_NUM_27  // Umschaltung Config/Daten
+#define DISPLAY_RST GPIO_NUM_26 // Reset
 
 u8g2_t u8g2; // a structure which will contain all the data for one display
 
@@ -80,35 +89,24 @@ extern "C"
 
 void app_main_cpp()
 {
-
   esp_err_t ret;
   float iTemp_deg, iHum_per;
   double iPress_mBar, t;
   bool iCRCErr;
   int64_t StartTime = GetTime_us();
-
   struct timeval now;
+
+  // Initialisierung I2C und GPIO
+  InitGPIO();
+
+  gpio_set_level(ERROR_LED, 1);
+  InitI2C(I2C_NUM_0, PIN_SDA_BUS0, PIN_SCL_BUS0);
+
   gettimeofday(&now, NULL);
-
-  SX1278_LoRa LoRa(HeltecESPLoRa);
-  gpio_num_t LoraLed = GPIO_NUM_25;
-  adc_channel_t AdcChannel = (adc_channel_t)0;
-  rtc_gpio_hold_dis((gpio_num_t)LoRa.PinConfig->Reset);
-
-  gpio_reset_pin(LoraLed);
-  /* Set the GPIO as a push/pull output */
-  gpio_set_direction(LoraLed, GPIO_MODE_OUTPUT);
-  gpio_set_level(LoraLed, 1);
 
   // Init Temperatursensor
   uint32_t iSerial = 0;
-  bool i2c_init_done = false;
-
-  SHT40 iTempSensor(I2C_NUM_0, PIN_SDA_TEMP, PIN_SCL_TEMP);
-  ret = iTempSensor.Init(true);
-  if (ret != ESP_OK)
-    ESP_LOGE(TAG, "Fehler beim Initialisieren des SHT40: %d", ret);
-  i2c_init_done = true;
+  SHT40 iTempSensor(I2C_NUM_0);
   ret = iTempSensor.ReadSerial(iSerial, iCRCErr);
   ESP_LOGI(TAG, "SHT40 Seriennummer: %lu", iSerial);
   if (ret != ESP_OK)
@@ -116,15 +114,14 @@ void app_main_cpp()
   if (iCRCErr)
     ESP_LOGE(TAG, "Fehler beim Lesen des SHT40 CRC (Seriennummer)");
 
-  InitSSD1306_u8g2();
+  InitNokia_u8g2();
   int64_t EndTime = GetTime_us();
   ESP_LOGI(TAG, "SSD1306 Init fertig nach %.1f ms", (EndTime - StartTime) / 1000.0);
-  gpio_set_level(LoraLed, 0);
 
-// Temperatur und Luftdruck BMP390
-#ifdef USE_BMP390
-  BMP390 Bmp(I2C_NUM_0, BMP390_SENSOR_ADDR, PIN_SDA_TEMP, PIN_SCL_TEMP);
-  ret = Bmp.Init(!i2c_init_done); // I2C wurde schon vom SHT40 initialisiert
+  // Temperatur und Luftdruck BMP390
+
+  BMP390 Bmp(I2C_NUM_0, BMP390_SENSOR_ADDR);
+  ret = Bmp.Init();
   if (ret != ESP_OK)
     ESP_LOGE(TAG, "Fehler beim Initialisieren des BMP390: %d", ret);
   else
@@ -138,13 +135,14 @@ void app_main_cpp()
       ESP_LOGI(TAG, "Aktuelle Temperatur: %.2f°C. Luftdruck(raw): %.1f mbar", t, iPress_mBar);
       */
   }
-#endif
 
+  SX1278_LoRa LoRa(HeltecESPLoRa);
   // Parameter s. InitLoRa
   ret = InitLoRa(LoRa);
   if (ret != ESP_OK)
     ESP_LOGE(TAG, "Fehler beim Initialisieren des LoRa Moduls: %d", ret);
   EndTime = GetTime_us();
+  gpio_set_level(ERROR_LED, 0);
   ESP_LOGI(TAG, "LoRa Init fertig nach %.1f ms", (EndTime - StartTime) / 1000.0);
 
   // vTaskDelay(2000 / portTICK_PERIOD_MS);
@@ -158,7 +156,7 @@ void app_main_cpp()
   if (ret != ESP_OK)
     ESP_LOGE(TAG, "Fehler beim Starten des BMP390: %d", ret);
 
-  int counter=0;
+  int counter = 0;
   for (;;)
   {
     ret = Bmp.ReadTempAndPressAsync(t, iPress_mBar);
@@ -186,12 +184,12 @@ void app_main_cpp()
     char DisplayBuf[256] = {};
     while (!SendOK && RetryCounter < MaxRetries)
     {
-      gpio_set_level(LoraLed, 1);
+      gpio_set_level(LORA_SEND_LED, 1);
       int64_t ts = GetTime_us();
       ret = LoRa.SendLoraMsg(CMD_CBORDATA, LoraBuf, iCBORBuildSize, counter);
       SendOK = ret == ESP_OK;
       int64_t te = GetTime_us();
-      gpio_set_level(LoraLed, 0);
+      gpio_set_level(LORA_SEND_LED, 0);
       ESP_LOGI(TAG, "Zeit fuer LoRa: %.1f ms. Paketgroesse: %u", double(te - ts) / 1000.0, iCBORBuildSize);
       if (!SendOK)
       {
@@ -216,8 +214,8 @@ void app_main_cpp()
     ESP_LOGI(TAG, "LoRa gesendet nach %.1f ms", (EndTime - StartTime) / 1000.0);
 
     u8g2_ClearBuffer(&u8g2);
-    //sprintf(DisplayBuf, "[%lu] Vbatt: %.2f V", counter, iVBatt_V);
-    //u8g2_DrawStr(&u8g2, 2, 14, DisplayBuf);
+    // sprintf(DisplayBuf, "[%lu] Vbatt: %.2f V", counter, iVBatt_V);
+    // u8g2_DrawStr(&u8g2, 2, 14, DisplayBuf);
 
     sprintf(DisplayBuf, "Temp: %.2f%cC[%.2f]", iTemp_deg, 176, t);
     u8g2_DrawStr(&u8g2, 2, 28, DisplayBuf);
@@ -238,6 +236,70 @@ void app_main_cpp()
   u8g2_SetPowerSave(&u8g2, 1);
   ESP_LOGI(TAG, "Schalte LoRa-Modem ab...");
   LoRa.Close();
+}
+
+esp_err_t InitGPIO()
+{
+  // Outputs
+  uint64_t OutputBitMask = (1ULL << LORA_SEND_LED) | (1ULL << ERROR_LED) | (1ULL << READ_SENSOR_LED);
+  gpio_config_t ConfigOutput = {};
+  ConfigOutput.pin_bit_mask = OutputBitMask;
+  ConfigOutput.mode = GPIO_MODE_OUTPUT;
+  ConfigOutput.pull_up_en = GPIO_PULLUP_DISABLE;
+  ConfigOutput.pull_down_en = GPIO_PULLDOWN_ENABLE;
+  ConfigOutput.intr_type = GPIO_INTR_DISABLE;
+  gpio_config(&ConfigOutput);
+
+  // Inputs
+  return ESP_OK;
+  uint64_t InputBitMask = (1ULL << RAIN_COUNTER_INPUT);
+  gpio_config_t ConfigInput = {};
+  ConfigInput.pin_bit_mask = InputBitMask;
+  ConfigInput.mode = GPIO_MODE_INPUT;
+  ConfigInput.pull_up_en = GPIO_PULLUP_ENABLE;
+  ConfigInput.pull_down_en = GPIO_PULLDOWN_DISABLE;
+  ConfigInput.intr_type = GPIO_INTR_DISABLE;
+  gpio_config(&ConfigInput);
+
+  InputBitMask = (1ULL << LIGHTNING_INPUT);
+  ConfigInput.pin_bit_mask = InputBitMask;
+  ConfigInput.mode = GPIO_MODE_INPUT;
+  ConfigInput.pull_up_en = GPIO_PULLUP_ENABLE;
+  ConfigInput.pull_down_en = GPIO_PULLDOWN_DISABLE;
+  ConfigInput.intr_type = GPIO_INTR_POSEDGE;
+  gpio_config(&ConfigInput);
+
+  // install gpio isr service
+  gpio_install_isr_service(0);
+  // hook isr handler for specific gpio pin
+  gpio_isr_handler_add(LIGHTNING_INPUT, gpio_isr_handler, (void *)LIGHTNING_INPUT);
+}
+
+static void IRAM_ATTR gpio_isr_handler(void *arg)
+{
+  // Input-IRQ Gewittersensor
+  uint32_t gpio_num = (uint32_t)arg;
+  //xQueueSendFromISR(gpio_evt_queue, &gpio_num, NULL);
+}
+
+esp_err_t InitI2C(i2c_port_t aPort, int aSDA_Pin, int aSCL_Pin)
+{
+  if (aPort > 1)
+    return ESP_ERR_INVALID_ARG;
+  esp_err_t ret;
+
+  i2c_config_t conf;
+  conf.mode = I2C_MODE_MASTER;
+  conf.sda_io_num = aSDA_Pin;
+  conf.sda_pullup_en = GPIO_PULLUP_ENABLE;
+  conf.scl_io_num = aSCL_Pin;
+  conf.scl_pullup_en = GPIO_PULLUP_ENABLE;
+  conf.master.clk_speed = 100000; // Fast Mode, 1000000;  // Fast Mode Plus=1MHz
+  conf.clk_flags = 0;
+  ret = i2c_param_config(aPort, &conf);
+  if (ret != ESP_OK)
+    return ret;
+  return i2c_driver_install(aPort, conf.mode, 0, 0, 0);
 }
 
 esp_err_t InitLoRa(SX1278_LoRa &aLoRa)
@@ -279,7 +341,7 @@ void error(const char *format, ...)
   for (;;)
   {
     toggle = 1 - toggle;
-    gpio_set_level(GPIO_NUM_25, toggle);
+    gpio_set_level(ERROR_LED, toggle);
     vTaskDelay(pdMS_TO_TICKS(100));
   }
 }
@@ -290,12 +352,13 @@ esp_err_t BuildCBORBuf(uint8_t *aBuf, uint16_t aMaxBufSize, uint16_t &aCBORBuild
       {
           {POS_TAG, LORA_ORT},
           {DATA_TAG,
-           {{PC_TAG, aPC},
-            {TEMP_TAG, {{VAL_TAG, aTemp_deg}}},
-            {HUM_TAG, {{VAL_TAG, aHum_per}}},
-            {PRESS_TAG, {{VAL_TAG, aPress_mBar}}},
-            //{VOL_TAG, {{VAL_TAG, iVBatt_V}}}
-            }}};
+           {
+               {PC_TAG, aPC},
+               {TEMP_TAG, {{VAL_TAG, aTemp_deg}}},
+               {HUM_TAG, {{VAL_TAG, aHum_per}}},
+               {PRESS_TAG, {{VAL_TAG, aPress_mBar}}},
+               //{VOL_TAG, {{VAL_TAG, iVBatt_V}}}
+           }}};
 
   // serialize it to CBOR
   std::vector<std::uint8_t> v = json::to_cbor(j);
@@ -315,11 +378,14 @@ esp_err_t BuildCBORBuf(uint8_t *aBuf, uint16_t aMaxBufSize, uint16_t &aCBORBuild
   return ESP_OK;
 }
 
-void InitSSD1306_u8g2()
+void InitNokia_u8g2()
 {
   u8g2_esp32_hal_t u8g2_esp32_hal = U8G2_ESP32_HAL_DEFAULT;
-  u8g2_esp32_hal.sda = PIN_SDA_DISPL;
-  u8g2_esp32_hal.scl = PIN_SCL_DISPL;
+  u8g2_esp32_hal.clk = DISPLAY_CLK;
+  u8g2_esp32_hal.mosi = DISPLAY_DIN;
+  u8g2_esp32_hal.cs = DISPLAY_CE;
+  u8g2_esp32_hal.reset = DISPLAY_RST;
+  u8g2_esp32_hal.dc = DISPLAY_DC;
   u8g2_esp32_hal_init(u8g2_esp32_hal);
 
   /*
@@ -328,14 +394,11 @@ void InitSSD1306_u8g2()
     gpio_set_level(PIN_DISP_RESET, 1);
   */
 
-  u8g2_Setup_ssd1306_i2c_128x64_noname_f(
-      &u8g2,
-      U8G2_R0,
-      u8g2_esp32_i2c_byte_cb,
-      u8g2_esp32_gpio_and_delay_cb); // init u8g2 structure
-  u8x8_SetI2CAddress(&u8g2.u8x8, 0x78);
+  // Nokia 5110 Display
 
-  ESP_LOGI(TAG, "u8g2_InitDisplay");
+  u8g2_Setup_pcd8544_84x48_1(&u8g2, U8G2_R0, u8g2_esp32_i2c_byte_cb, u8g2_esp32_gpio_and_delay_cb);
+
+  ESP_LOGI(TAG, "Nokia5110 display init...");
   u8g2_InitDisplay(&u8g2); // send init sequence to the display, display is in sleep mode after this,
 
   ESP_LOGI(TAG, "u8g2_SetPowerSave");
@@ -343,17 +406,5 @@ void InitSSD1306_u8g2()
   ESP_LOGI(TAG, "u8g2_ClearBuffer");
   u8g2_ClearBuffer(&u8g2);
   u8g2_SendBuffer(&u8g2);
-  /*
-    ESP_LOGI(TAG, "u8g2_DrawBox");
-    u8g2_DrawBox(&u8g2, 0, 26, 80, 6);
-    u8g2_DrawFrame(&u8g2, 0, 26, 100, 6);
-
-    ESP_LOGI(TAG, "u8g2_SetFont");
-    u8g2_SetFont(&u8g2, u8g2_font_ncenB10_tr);
-    ESP_LOGI(TAG, "u8g2_DrawStr");
-    u8g2_DrawStr(&u8g2, 2, 17, "Hi Oliver!");
-    ESP_LOGI(TAG, "u8g2_SendBuffer");
-    u8g2_SendBuffer(&u8g2);
-  */
-  ESP_LOGI(TAG, "SSD 1306 display initialized!");
+  ESP_LOGI(TAG, "Nokia5110 display initialized!");
 }

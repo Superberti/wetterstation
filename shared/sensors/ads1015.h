@@ -63,21 +63,17 @@ class ADS1015
 {
 private:
   i2c_port_t mPort;
-  int mSDA_Pin ;
-  int mSCL_Pin;
-  bool mInitI2C;
-  bool mOpened;
   uint8_t mI2CAddr;
-public:
-
-  ADS1015(i2c_port_t aPort, uint8_t aI2CAddr, int aSDA_Pin, int aSCL_Pin);
-  ~ADS1015(void);
-
-  esp_err_t Init(bool aInitI2C, bool aContinuousMode, ADC_MP aInputMux, FSC_RANGE aFullScale, ADC_SPEED aSpeed); 
-  void Close();
   esp_err_t ReadRegister16(ADC_REGISTER aReg, uint16_t & aRegVal);
   esp_err_t WriteRegister16(ADC_REGISTER aReg, uint16_t aRegVal);
-  esp_err_t ReadADC(uint16_t & aADCValue);
+  int64_t GetTime_us();
+  esp_err_t ConvReady(bool &aConvReady);
+public:
+
+  ADS1015(i2c_port_t aPort, uint8_t aI2CAddr);
+  ~ADS1015(void);
+
+  esp_err_t ReadADC(ADC_MP aInputMux, FSC_RANGE aFullScale, ADC_SPEED aSpeed, uint16_t & aADCValue);
 };
 
 #endif

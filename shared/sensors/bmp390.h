@@ -144,10 +144,11 @@ public:
   /// @brief Konstruktor BMP390-Sensor
   /// @param aPort I2C-Port des ESP32
   /// @param aI2CAddr I2C-Adresse
-  /// @param aSDA_Pin GPIO-Nummer des SDA-Pins
-  /// @param aSCL_Pin GPIO-Nummer des SCL-Pins
-  BMP390(i2c_port_t aPort, uint8_t aI2CAddr, int aSDA_Pin, int aSCL_Pin);
+  BMP390(i2c_port_t aPort, uint8_t aI2CAddr);
   ~BMP390(void);
+
+  /// @brief BMP390-Sensor initialisieren und Kalibrierdaten lesen
+  esp_err_t Init();
 
   /// @brief Gibt es Messwerte, die gelesen werden können?
   /// @return Messwerte lesbar
@@ -170,11 +171,6 @@ public:
   /// @param rPress_mbar Wartet, bis die Daten anliegen. Timeout bei 1 s
   /// @return Status
   esp_err_t ReadTempAndPressAsync(double &rTemp_C, double &rPress_mbar, bool aWaitForData = true);
-
-  /// @brief Sensor initialisieren
-  /// @param aDoI2CInit I2C-Schnittstelle mitinitialisieren. Bei mehreren Geräten am Bus sollte immer der zuerst benutzte Sensor die Schnittstelle initialisieren.
-  /// @return Status
-  esp_err_t Init(bool aDoI2CInit);
 
   /// @brief Sensor Soft-Reset
   /// @param  
