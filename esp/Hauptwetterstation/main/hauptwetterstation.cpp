@@ -24,6 +24,8 @@
 #include "esp_wifi.h"
 #include "hauptwetterstation.h"
 #include "bmp390.h"
+#include "ads1015.h"
+
 extern "C"
 {
 #include <u8g2.h>
@@ -53,7 +55,7 @@ using json = nlohmann::json;
 #define BMP390_SENSOR_ADDR 0x77 // Adresse BMP390 wenn SDO auf high, auf low = 0x76
 
 // An welchem Ort befindet sich der Sensor? (s. lorastructs.h)
-#define LORA_ORT ORT_SYMPATEC
+#define LORA_ORT ORT_CARPORT
 // #define LORA_ORT ORT_ARBEITSZIMMER
 
 #define TAG "HAUPT-WS"
@@ -77,6 +79,10 @@ using json = nlohmann::json;
 #define DISPLAY_DC GPIO_NUM_27  // Umschaltung Config/Daten
 #define DISPLAY_RST GPIO_NUM_26 // Reset
 
+// Input-Pins am ADC
+#define ADC_INPUT_LUXMETER AIN0
+#define ADC_INPUT_WINDDIR AIN1
+
 u8g2_t u8g2; // a structure which will contain all the data for one display
 
 extern "C"
@@ -87,11 +93,17 @@ extern "C"
   }
 }
 
+// Sensorik, global
+SHT40 Sht(I2C_NUM_0);
+BMP390 Bmp(I2C_NUM_0, BMP390_SENSOR_ADDR);
+ADS1015 Ads(I2C_NUM_0, ADC1015_ADDR_VDD);
+
 void app_main_cpp()
 {
+  SensorData SD = {};
+  SensorStatus SST = {};
+
   esp_err_t ret;
-  float iTemp_deg, iHum_per;
-  double iPress_mBar, t;
   bool iCRCErr;
   int64_t StartTime = GetTime_us();
   struct timeval now;
@@ -106,36 +118,27 @@ void app_main_cpp()
 
   // Init Temperatursensor
   uint32_t iSerial = 0;
-  SHT40 iTempSensor(I2C_NUM_0);
-  ret = iTempSensor.ReadSerial(iSerial, iCRCErr);
+
+  ret = Sht.ReadSerial(iSerial, iCRCErr);
   ESP_LOGI(TAG, "SHT40 Seriennummer: %lu", iSerial);
   if (ret != ESP_OK)
     ESP_LOGE(TAG, "Fehler beim Lesen der Seriennummer des SHT40: %d", ret);
   if (iCRCErr)
     ESP_LOGE(TAG, "Fehler beim Lesen des SHT40 CRC (Seriennummer)");
 
-  InitNokia_u8g2();
   int64_t EndTime = GetTime_us();
   ESP_LOGI(TAG, "SSD1306 Init fertig nach %.1f ms", (EndTime - StartTime) / 1000.0);
 
   // Temperatur und Luftdruck BMP390
-
-  BMP390 Bmp(I2C_NUM_0, BMP390_SENSOR_ADDR);
   ret = Bmp.Init();
   if (ret != ESP_OK)
     ESP_LOGE(TAG, "Fehler beim Initialisieren des BMP390: %d", ret);
   else
   {
     ESP_LOGI(TAG, "BMP390 Init OK");
-    /*
-    ret = Bmp.ReadTempAndPress(t, iPress_mBar);
-    if (ret != ESP_OK)
-      ESP_LOGE(TAG, "Fehler beim Auslesen des BMP390: %d", ret);
-    else
-      ESP_LOGI(TAG, "Aktuelle Temperatur: %.2f°C. Luftdruck(raw): %.1f mbar", t, iPress_mBar);
-      */
   }
 
+  // LoRa-Modul
   SX1278_LoRa LoRa(HeltecESPLoRa);
   // Parameter s. InitLoRa
   ret = InitLoRa(LoRa);
@@ -145,8 +148,7 @@ void app_main_cpp()
   gpio_set_level(ERROR_LED, 0);
   ESP_LOGI(TAG, "LoRa Init fertig nach %.1f ms", (EndTime - StartTime) / 1000.0);
 
-  // vTaskDelay(2000 / portTICK_PERIOD_MS);
-
+  InitNokia_u8g2();
   u8g2_ClearDisplay(&u8g2);
   u8g2_SetFont(&u8g2, u8g2_font_crox1h_tf);
 
@@ -156,24 +158,15 @@ void app_main_cpp()
   if (ret != ESP_OK)
     ESP_LOGE(TAG, "Fehler beim Starten des BMP390: %d", ret);
 
-  int counter = 0;
+  SD.PC = 0;
+  SD.SensorErrCount = 0;
+
   for (;;)
   {
-    ret = Bmp.ReadTempAndPressAsync(t, iPress_mBar);
-    if (ret != ESP_OK)
-      ESP_LOGE(TAG, "Fehler beim Lesen des BMP390: %d", ret);
-    iPress_mBar = Bmp.SeaLevelForAltitude(602, iPress_mBar);
-    ESP_LOGI("BMP390", "Druck: %.2f mbar Temp: %.2f°C", iPress_mBar, t);
-
-    ret = iTempSensor.Read(iTemp_deg, iHum_per, iCRCErr);
-    ESP_LOGI("SHT40", "Temp.: %.2f LF: %.2f %%", iTemp_deg, iHum_per);
-    if (ret != ESP_OK)
-      ESP_LOGE(TAG, "Fehler beim Lesen der Temperatur/Luftfeuchtigkeit des SHT40: %d", ret);
-    if (iCRCErr)
-      ESP_LOGE(TAG, "Fehler beim Lesen des SHT40 CRC (T/L)");
+    GetSensorData(SD, SST);
 
     iCBORBuildSize = 0;
-    BuildCBORBuf(LoraBuf, sizeof(LoraBuf), iCBORBuildSize, counter, iTemp_deg, iHum_per, (float)iPress_mBar);
+    BuildCBORBuf(LoraBuf, sizeof(LoraBuf), iCBORBuildSize, SD);
     if (iCBORBuildSize > sizeof(LoraBuf))
       ESP_LOGE(TAG, "LoRa Buffer overflow...:%d", iCBORBuildSize);
 
@@ -186,7 +179,7 @@ void app_main_cpp()
     {
       gpio_set_level(LORA_SEND_LED, 1);
       int64_t ts = GetTime_us();
-      ret = LoRa.SendLoraMsg(CMD_CBORDATA, LoraBuf, iCBORBuildSize, counter);
+      ret = LoRa.SendLoraMsg(CMD_CBORDATA, LoraBuf, iCBORBuildSize, SD.PC);
       SendOK = ret == ESP_OK;
       int64_t te = GetTime_us();
       gpio_set_level(LORA_SEND_LED, 0);
@@ -212,30 +205,137 @@ void app_main_cpp()
 
     EndTime = GetTime_us();
     ESP_LOGI(TAG, "LoRa gesendet nach %.1f ms", (EndTime - StartTime) / 1000.0);
+    /*
+        u8g2_ClearBuffer(&u8g2);
+        // sprintf(DisplayBuf, "[%lu] Vbatt: %.2f V", counter, iVBatt_V);
+        // u8g2_DrawStr(&u8g2, 2, 14, DisplayBuf);
 
-    u8g2_ClearBuffer(&u8g2);
-    // sprintf(DisplayBuf, "[%lu] Vbatt: %.2f V", counter, iVBatt_V);
-    // u8g2_DrawStr(&u8g2, 2, 14, DisplayBuf);
+        sprintf(DisplayBuf, "Temp: %.2f%cC[%.2f]", SD.Temp_deg, 176, t);
+        u8g2_DrawStr(&u8g2, 2, 28, DisplayBuf);
 
-    sprintf(DisplayBuf, "Temp: %.2f%cC[%.2f]", iTemp_deg, 176, t);
-    u8g2_DrawStr(&u8g2, 2, 28, DisplayBuf);
+        sprintf(DisplayBuf, "Feuchte: %.2f %%", SD.Hum_per);
+        u8g2_DrawStr(&u8g2, 2, 42, DisplayBuf);
 
-    sprintf(DisplayBuf, "Feuchte: %.2f %%", iHum_per);
-    u8g2_DrawStr(&u8g2, 2, 42, DisplayBuf);
+        sprintf(DisplayBuf, "Druck: %.2f mBar", SD.Press_mBar);
+        u8g2_DrawStr(&u8g2, 2, 56, DisplayBuf);
 
-    sprintf(DisplayBuf, "Druck: %.2f mBar", iPress_mBar);
-    u8g2_DrawStr(&u8g2, 2, 56, DisplayBuf);
-
-    u8g2_SendBuffer(&u8g2);
-
+        u8g2_SendBuffer(&u8g2);
+    */
     vTaskDelay(5000 / portTICK_PERIOD_MS);
-    counter++;
+    SD.PC++;
   }
 
   // Hier kommt man eigentlich nicht hin...
   u8g2_SetPowerSave(&u8g2, 1);
   ESP_LOGI(TAG, "Schalte LoRa-Modem ab...");
   LoRa.Close();
+}
+
+void GetSensorData(SensorData &aData, SensorStatus &aStatus)
+{
+  const int MaxRetries = 5;
+  esp_err_t ret;
+  double p, t;
+  bool iCRCErr;
+  uint16_t ADCVal;
+  int RetryCounter = 0;
+
+  // BMP390
+  do
+  {
+    ret = Bmp.ReadTempAndPressAsync(t, p);
+    if (ret != ESP_OK)
+    {
+      aStatus.BMP390Err++;
+      ESP_LOGE(TAG, "Fehler beim Lesen des BMP390: %d, Versuch %d", ret, RetryCounter + 1);
+      Bmp.StartReadTempAndPress();
+    }
+    aData.Temp_deg = t;
+    aData.Press_mBar = Bmp.SeaLevelForAltitude(210, p);
+    RetryCounter++;
+  } while (ret != ESP_OK && RetryCounter < MaxRetries);
+  if (ret != ESP_OK)
+  {
+    ESP_LOGE(TAG, "BMP390: Wiederholtes Lesen des Sensors fehlgeschlagen!");
+    aData.Temp_deg = -100;
+    aData.Press_mBar = -1;
+  }
+  else
+  {
+    ESP_LOGI("BMP390", "Druck: %.2f mbar Temp: %.2f°C", aData.Press_mBar, aData.Temp_deg);
+  }
+
+  // SHT40 (wir verwenden die Temperatur vom SHT, die ist genauer!)
+  RetryCounter = 0;
+  do
+  {
+    ret = Sht.Read(aData.Temp_deg, aData.Hum_per, iCRCErr);
+    if (ret != ESP_OK)
+    {
+      aStatus.SHT40Err++;
+      ESP_LOGE(TAG, "Fehler beim Lesen der Temperatur/Luftfeuchtigkeit des SHT40: %d, Versuch %d", ret, RetryCounter + 1);
+    }
+    else if (iCRCErr)
+    {
+      aStatus.SHT40Err++;
+      ESP_LOGE(TAG, "Fehler beim Lesen des SHT40 CRC (T/L), Versuch %d", RetryCounter + 1);
+      ret = ESP_ERR_INVALID_CRC;
+    }
+    RetryCounter++;
+  } while (ret != ESP_OK && RetryCounter < MaxRetries);
+  if (ret != ESP_OK)
+  {
+    ESP_LOGE(TAG, "BMP390: Wiederholtes Lesen des Sensors fehlgeschlagen!");
+    aData.Temp_deg = -100;
+    aData.Hum_per = -1;
+  }
+  else
+  {
+    ESP_LOGI("SHT40", "Temp.: %.2f LF: %.2f %%", aData.Temp_deg, aData.Hum_per);
+  }
+
+  ADC_MP InputPin;
+  // ADC_INPUT_LUXMETER AIN0
+  // ADC_INPUT_WINDDIR AIN1
+  //  ADS1015
+  for (int i = 4; i < 6; i++) // 2 Eingänge des ADCs lesen
+  {
+    InputPin = (ADC_MP)i;
+    RetryCounter = 0;
+    do
+    {
+      ret = Ads.ReadADC(InputPin, FSR_4_096, SPEED_128, ADCVal);
+      if (ret != ESP_OK)
+      {
+        aStatus.ADS1015Err++;
+        ESP_LOGE(TAG, "Fehler beim Lesen des ADS1015: %d, Versuch %d", ret, RetryCounter + 1);
+      }
+      RetryCounter++;
+    } while (ret != ESP_OK && RetryCounter < MaxRetries);
+    if (ret != ESP_OK)
+    {
+      ESP_LOGE(TAG, "ADS1015: Wiederholtes Lesen des Sensors fehlgeschlagen!");
+      if (InputPin == ADC_INPUT_LUXMETER)
+        aData.Brightness_lux = -1;
+      else if (InputPin == ADC_INPUT_WINDDIR)
+        aData.WindDir_deg = -1;
+    }
+    else
+    {
+      ESP_LOGI("ADS1015", "Pin %d, ADC-Wert: %d", i, ADCVal);
+      if (InputPin == ADC_INPUT_LUXMETER)
+      {
+        aData.Brightness_lux = ADCVal / 2500.0; // Milliwatt pro Quadratmeter?
+      }
+      else if (InputPin == ADC_INPUT_WINDDIR)
+      {
+        // Sensor geht von 0-5 V, 0=0°, 5 V=360°
+        // Verwendet wird ein Spannungsteiler 1:1, d.h. es kommen max. 2,5V am Eingang an
+        // FullScale ist bei 4,096 V erreicht = 4096 ADC-Einheiten (12 Bit-ADC), also 1 mV == 1 ADC
+        aData.WindDir_deg = std::min(359.999, 360.0 * ADCVal / 2500.0);
+      }
+    }
+  }
 }
 
 esp_err_t InitGPIO()
@@ -279,7 +379,7 @@ static void IRAM_ATTR gpio_isr_handler(void *arg)
 {
   // Input-IRQ Gewittersensor
   uint32_t gpio_num = (uint32_t)arg;
-  //xQueueSendFromISR(gpio_evt_queue, &gpio_num, NULL);
+  // xQueueSendFromISR(gpio_evt_queue, &gpio_num, NULL);
 }
 
 esp_err_t InitI2C(i2c_port_t aPort, int aSDA_Pin, int aSCL_Pin)
@@ -346,18 +446,24 @@ void error(const char *format, ...)
   }
 }
 
-esp_err_t BuildCBORBuf(uint8_t *aBuf, uint16_t aMaxBufSize, uint16_t &aCBORBuildSize, uint32_t aPC, float aTemp_deg, float aHum_per, float aPress_mBar)
+esp_err_t BuildCBORBuf(uint8_t *aBuf, uint16_t aMaxBufSize, uint16_t &aCBORBuildSize, const SensorData &aData)
 {
   json j =
       {
           {POS_TAG, LORA_ORT},
           {DATA_TAG,
            {
-               {PC_TAG, aPC},
-               {TEMP_TAG, {{VAL_TAG, aTemp_deg}}},
-               {HUM_TAG, {{VAL_TAG, aHum_per}}},
-               {PRESS_TAG, {{VAL_TAG, aPress_mBar}}},
-               //{VOL_TAG, {{VAL_TAG, iVBatt_V}}}
+               {PC_TAG, aData.PC},
+               {TEMP_TAG, {{VAL_TAG, aData.Temp_deg}}},
+               {HUM_TAG, {{VAL_TAG, aData.Hum_per}}},
+               {PRESS_TAG, {{VAL_TAG, aData.Press_mBar}}},
+               {ILLU_TAG, {{VAL_TAG, aData.Brightness_lux}}},
+               {FLASH_TAG, {{VAL_TAG, aData.Flashes_h}}},
+               {WINDSPEED_TAG, {{VAL_TAG, aData.WindSpeed_m_s}}},
+               {WINDDIR_TAG, {{VAL_TAG, aData.WindDir_deg}}},
+               {RAIN_TAG, {{VAL_TAG, aData.Rain_l_qm_d}}},
+               {HUM_DET_TAG, {{VAL_TAG, aData.HumDetected}}},
+               {SENS_ERR_TAG, {{VAL_TAG, aData.SensorErrCount}}},
            }}};
 
   // serialize it to CBOR

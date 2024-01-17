@@ -77,6 +77,18 @@ struct LoraPacketHeader
 #define DATA_TAG "DATA"
 // Watt (Solar)
 #define POWER_TAG "P"
+// Blitze pro Stunde
+#define FLASH_TAG "BL"
+// Windgeschwindigkeit in m/s
+#define WINDSPEED_TAG "WG"
+// Windrichtung in Grad
+#define WINDDIR_TAG "WR"
+// Tagesregenmenge in Liter pro Quadratmeter und Tag
+#define RAIN_TAG "RM"
+// Feuchtesensor spricht an (0/1)
+#define HUM_DET_TAG "FD"
+// Sensorfehlerzähler
+#define SENS_ERR_TAG "SFZ"
 
 // Orte
 #define ORT_SCHUPPEN_SCHATTEN "SCHU_SCHA"
