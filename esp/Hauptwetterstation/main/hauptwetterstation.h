@@ -12,8 +12,8 @@ struct SensorData
   float Press_mBar; 
   float WindSpeed_m_s; 
   uint16_t WindDir_deg;
-  int Flashes_h;
-  float Rain_l_qm_d; 
+  uint16_t Flashes_h;
+  float Rain_mm_qm_h; 
   float Brightness_lux;
   bool HumDetected; 
   uint32_t SensorErrCount;

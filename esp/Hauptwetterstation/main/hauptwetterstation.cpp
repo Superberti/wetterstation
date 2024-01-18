@@ -68,8 +68,11 @@ using json = nlohmann::json;
 #define LORA_SEND_LED GPIO_NUM_15
 #define ERROR_LED GPIO_NUM_16
 #define READ_SENSOR_LED GPIO_NUM_18
-#define RAIN_COUNTER_INPUT GPIO_NUM_20
+
+// Inputs (Counter)
+#define RAIN_INPUT GPIO_NUM_20
 #define LIGHTNING_INPUT GPIO_NUM_21
+#define WINDSPEED_INPUT GPIO_NUM_22
 
 // Nokia 5110-Display am SPI
 
@@ -98,6 +101,11 @@ SHT40 Sht(I2C_NUM_0);
 BMP390 Bmp(I2C_NUM_0, BMP390_SENSOR_ADDR);
 ADS1015 Ads(I2C_NUM_0, ADC1015_ADDR_VDD);
 
+// Counter-Globals für die IRQs
+volatile uint32_t gWindspeedCounter = 0;
+volatile uint32_t gRainCounter = 0;
+volatile uint32_t gFlashCounter = 0;
+
 void app_main_cpp()
 {
   SensorData SD = {};
@@ -122,20 +130,39 @@ void app_main_cpp()
   ret = Sht.ReadSerial(iSerial, iCRCErr);
   ESP_LOGI(TAG, "SHT40 Seriennummer: %lu", iSerial);
   if (ret != ESP_OK)
-    ESP_LOGE(TAG, "Fehler beim Lesen der Seriennummer des SHT40: %d", ret);
+  {
+    SST.SkipSHT40 = true;
+    ESP_LOGE(TAG, "Fehler beim Lesen der Seriennummer des SHT40: %d. Sensor ausgeschaltet!", ret);
+  }
   if (iCRCErr)
-    ESP_LOGE(TAG, "Fehler beim Lesen des SHT40 CRC (Seriennummer)");
-
-  int64_t EndTime = GetTime_us();
-  ESP_LOGI(TAG, "SSD1306 Init fertig nach %.1f ms", (EndTime - StartTime) / 1000.0);
+  {
+    SST.SkipSHT40 = true;
+    ESP_LOGE(TAG, "Fehler beim Lesen des SHT40 CRC (Seriennummer). Sensor ausgeschaltet");
+  }
 
   // Temperatur und Luftdruck BMP390
   ret = Bmp.Init();
   if (ret != ESP_OK)
+  {
+    SST.SkipBMP390 = true;
     ESP_LOGE(TAG, "Fehler beim Initialisieren des BMP390: %d", ret);
+  }
   else
   {
     ESP_LOGI(TAG, "BMP390 Init OK");
+  }
+
+  // ADC testweise auslesen
+  uint16_t ADCVal;
+  ret = Ads.ReadADC(AIN0, FSR_4_096, SPEED_128, ADCVal);
+  if (ret != ESP_OK)
+  {
+    SST.SkipADS1015 = true;
+    ESP_LOGE(TAG, "Fehler beim Initialisieren des ADS1015: %d", ret);
+  }
+  else
+  {
+    ESP_LOGI(TAG, "ADS1015 Init OK. ADCVal = %d", ADCVal);
   }
 
   // LoRa-Modul
@@ -144,13 +171,17 @@ void app_main_cpp()
   ret = InitLoRa(LoRa);
   if (ret != ESP_OK)
     ESP_LOGE(TAG, "Fehler beim Initialisieren des LoRa Moduls: %d", ret);
-  EndTime = GetTime_us();
+  else
+  {
+    ESP_LOGI(TAG, "ALoRa Modul OK!");
+  }
   gpio_set_level(ERROR_LED, 0);
-  ESP_LOGI(TAG, "LoRa Init fertig nach %.1f ms", (EndTime - StartTime) / 1000.0);
-
   InitNokia_u8g2();
   u8g2_ClearDisplay(&u8g2);
-  u8g2_SetFont(&u8g2, u8g2_font_crox1h_tf);
+  u8g2_SetFont(&u8g2, u8g2_font_6x10_tf);
+
+  int64_t EndTime = GetTime_us();
+  ESP_LOGI(TAG, "Init fertig nach %.1f ms", (EndTime - StartTime) / 1000.0);
 
   uint8_t LoraBuf[255];
   uint16_t iCBORBuildSize;
@@ -161,9 +192,72 @@ void app_main_cpp()
   SD.PC = 0;
   SD.SensorErrCount = 0;
 
+  int64_t StartHourTime = GetTime_us();
+  int64_t StartWindTime = StartTime;
+  int64_t CurrentTime = StartTime;
+  int64_t TimePast;
   for (;;)
   {
+    // Hauptschleife läuft ca. jede Sekunde durch
     GetSensorData(SD, SST);
+
+    // Counter auslesen
+    uint32_t FlashCounter, RainCounter, WindspeedCounter;
+    gpio_intr_disable(RAIN_INPUT);
+    RainCounter = gRainCounter;
+    gpio_intr_enable(RAIN_INPUT);
+
+    gpio_intr_disable(WINDSPEED_INPUT);
+    WindspeedCounter = gWindspeedCounter;
+    gpio_intr_enable(WINDSPEED_INPUT);
+
+    gpio_intr_disable(LIGHTNING_INPUT);
+    FlashCounter = gFlashCounter;
+    gpio_intr_enable(LIGHTNING_INPUT);
+
+    CurrentTime = GetTime_us();
+
+    // Die Windgeschwindigkeit wird erst ausgewertet, wenn der Windspeedzähler mehr als 10 Impulse gezählt hat,
+    // damit die Genauigkeit nicht zu schlecht wird. Hat sich der Counter 10 s lang nicht gerührt, dann gehen wir von Flaute aus.
+    if (SD.PC > 0)
+    {
+      // Eine Tick-Frequenz von einem Hertz enstpricht einer Windgeschwindigkeit vonn (500/499) m/s = 1,002004008 m/s
+      TimePast = CurrentTime - StartWindTime;
+      float TimePast_s = TimePast / 1.0E6;
+      if (WindspeedCounter > 10 || TimePast >= 1E6 * 10)
+      {
+        StartWindTime = CurrentTime;
+        // Windgeschwindigkeit auswerten
+        gpio_intr_disable(WINDSPEED_INPUT);
+        gWindspeedCounter = 0;
+        gpio_intr_enable(WINDSPEED_INPUT);
+        SD.WindSpeed_m_s = (WindspeedCounter / TimePast_s) * (500.0 / 499.0);
+        ESP_LOGI(TAG, "Windgeschw.: %.1f m/s",SD.WindSpeed_m_s);
+      }
+    }
+
+    // Jede Stunde die Counter speichern und zurücksetzen
+    if (CurrentTime - StartHourTime > 1E6 * 3600)
+    {
+      ESP_LOGI(TAG, "Zähler werden ausgewertet und zurückgesetzt.");
+      StartHourTime = CurrentTime;
+      // Zähler zurücksetzen
+      gpio_intr_disable(RAIN_INPUT);
+      gRainCounter = 0;
+      gpio_intr_enable(RAIN_INPUT);
+
+      gpio_intr_disable(LIGHTNING_INPUT);
+      gFlashCounter = 0;
+      gpio_intr_enable(LIGHTNING_INPUT);
+
+      // DAVIS Regenmesser: Ein Zähler der Regenwippe entsprechen 4,22 cm³, was einer Regenmenge 0,2 mm/m² entspricht
+      // Wir geben das als mm / (m² * h) aus
+      SD.Rain_mm_qm_h = RainCounter * 0.02;
+      ESP_LOGI(TAG, "Regenmenge: %.3f mm/m²h",SD.Rain_mm_qm_h);
+      // Blitze pro Stunde
+      SD.Flashes_h = FlashCounter;
+      ESP_LOGI(TAG, "Blitze: %d Blitze pro Stunde",SD.Flashes_h);
+    }
 
     iCBORBuildSize = 0;
     BuildCBORBuf(LoraBuf, sizeof(LoraBuf), iCBORBuildSize, SD);
@@ -178,12 +272,12 @@ void app_main_cpp()
     while (!SendOK && RetryCounter < MaxRetries)
     {
       gpio_set_level(LORA_SEND_LED, 1);
-      int64_t ts = GetTime_us();
+
       ret = LoRa.SendLoraMsg(CMD_CBORDATA, LoraBuf, iCBORBuildSize, SD.PC);
       SendOK = ret == ESP_OK;
       int64_t te = GetTime_us();
       gpio_set_level(LORA_SEND_LED, 0);
-      ESP_LOGI(TAG, "Zeit fuer LoRa: %.1f ms. Paketgroesse: %u", double(te - ts) / 1000.0, iCBORBuildSize);
+      //ESP_LOGI(TAG, "Zeit fuer LoRa: %.1f ms. Paketgroesse: %u", double(te - ts) / 1000.0, iCBORBuildSize);
       if (!SendOK)
       {
         RetryCounter++;
@@ -205,6 +299,7 @@ void app_main_cpp()
 
     EndTime = GetTime_us();
     ESP_LOGI(TAG, "LoRa gesendet nach %.1f ms", (EndTime - StartTime) / 1000.0);
+
     /*
         u8g2_ClearBuffer(&u8g2);
         // sprintf(DisplayBuf, "[%lu] Vbatt: %.2f V", counter, iVBatt_V);
@@ -221,7 +316,7 @@ void app_main_cpp()
 
         u8g2_SendBuffer(&u8g2);
     */
-    vTaskDelay(5000 / portTICK_PERIOD_MS);
+    vTaskDelay(1000 / portTICK_PERIOD_MS);
     SD.PC++;
   }
 
@@ -231,32 +326,43 @@ void app_main_cpp()
   LoRa.Close();
 }
 
-void GetSensorData(SensorData &aData, SensorStatus &aStatus)
+void GetSensorData(SensorData &aData, SensorStatus &SST)
 {
   const int MaxRetries = 5;
-  esp_err_t ret;
+  esp_err_t ret = ESP_OK;
   double p, t;
   bool iCRCErr;
   uint16_t ADCVal;
   int RetryCounter = 0;
 
   // BMP390
-  do
+  if (!SST.SkipBMP390)
   {
-    ret = Bmp.ReadTempAndPressAsync(t, p);
-    if (ret != ESP_OK)
+    do
     {
-      aStatus.BMP390Err++;
-      ESP_LOGE(TAG, "Fehler beim Lesen des BMP390: %d, Versuch %d", ret, RetryCounter + 1);
-      Bmp.StartReadTempAndPress();
-    }
-    aData.Temp_deg = t;
-    aData.Press_mBar = Bmp.SeaLevelForAltitude(210, p);
-    RetryCounter++;
-  } while (ret != ESP_OK && RetryCounter < MaxRetries);
-  if (ret != ESP_OK)
+      ret = Bmp.ReadTempAndPressAsync(t, p);
+      if (ret != ESP_OK)
+      {
+        SST.BMP390Err++;
+        ESP_LOGE(TAG, "Fehler beim Lesen des BMP390: %d, Versuch %d", ret, RetryCounter + 1);
+        Bmp.StartReadTempAndPress();
+      }
+      aData.Temp_deg = t;
+      aData.Press_mBar = Bmp.SeaLevelForAltitude(210, p);
+      RetryCounter++;
+      if (ret != ESP_OK)
+        vTaskDelay(100 / portTICK_PERIOD_MS);
+    } while (ret != ESP_OK && RetryCounter < MaxRetries);
+  }
+  if (ret != ESP_OK || SST.SkipBMP390)
   {
-    ESP_LOGE(TAG, "BMP390: Wiederholtes Lesen des Sensors fehlgeschlagen!");
+    if (SST.SkipBMP390)
+      ESP_LOGI(TAG, "BMP390 wird übersprungen...");
+    else
+    {
+      ESP_LOGE(TAG, "BMP390: Wiederholtes Lesen des Sensors fehlgeschlagen! Sensor wird ab jetzt übersprungen!");
+      SST.SkipBMP390 = true;
+    }
     aData.Temp_deg = -100;
     aData.Press_mBar = -1;
   }
@@ -267,25 +373,36 @@ void GetSensorData(SensorData &aData, SensorStatus &aStatus)
 
   // SHT40 (wir verwenden die Temperatur vom SHT, die ist genauer!)
   RetryCounter = 0;
-  do
+  if (!SST.SkipSHT40)
   {
-    ret = Sht.Read(aData.Temp_deg, aData.Hum_per, iCRCErr);
-    if (ret != ESP_OK)
+    do
     {
-      aStatus.SHT40Err++;
-      ESP_LOGE(TAG, "Fehler beim Lesen der Temperatur/Luftfeuchtigkeit des SHT40: %d, Versuch %d", ret, RetryCounter + 1);
-    }
-    else if (iCRCErr)
-    {
-      aStatus.SHT40Err++;
-      ESP_LOGE(TAG, "Fehler beim Lesen des SHT40 CRC (T/L), Versuch %d", RetryCounter + 1);
-      ret = ESP_ERR_INVALID_CRC;
-    }
-    RetryCounter++;
-  } while (ret != ESP_OK && RetryCounter < MaxRetries);
-  if (ret != ESP_OK)
+      ret = Sht.Read(aData.Temp_deg, aData.Hum_per, iCRCErr);
+      if (ret != ESP_OK)
+      {
+        SST.SHT40Err++;
+        ESP_LOGE(TAG, "Fehler beim Lesen der Temperatur/Luftfeuchtigkeit des SHT40: %d, Versuch %d", ret, RetryCounter + 1);
+      }
+      else if (iCRCErr)
+      {
+        SST.SHT40Err++;
+        ESP_LOGE(TAG, "Fehler beim Lesen des SHT40 CRC (T/L), Versuch %d", RetryCounter + 1);
+        ret = ESP_ERR_INVALID_CRC;
+      }
+      RetryCounter++;
+      if (ret != ESP_OK)
+        vTaskDelay(100 / portTICK_PERIOD_MS);
+    } while (ret != ESP_OK && RetryCounter < MaxRetries);
+  }
+  if (ret != ESP_OK || SST.SkipSHT40)
   {
-    ESP_LOGE(TAG, "BMP390: Wiederholtes Lesen des Sensors fehlgeschlagen!");
+    if (SST.SkipSHT40)
+      ESP_LOGI(TAG, "SHT40 wird übersprungen...");
+    else
+    {
+      ESP_LOGE(TAG, "SHT40: Wiederholtes Lesen des Sensors fehlgeschlagen! Sensor wird ab jetzt übersprungen!");
+      SST.SkipSHT40 = true;
+    }
     aData.Temp_deg = -100;
     aData.Hum_per = -1;
   }
@@ -295,46 +412,56 @@ void GetSensorData(SensorData &aData, SensorStatus &aStatus)
   }
 
   ADC_MP InputPin;
-  // ADC_INPUT_LUXMETER AIN0
-  // ADC_INPUT_WINDDIR AIN1
-  //  ADS1015
-  for (int i = 4; i < 6; i++) // 2 Eingänge des ADCs lesen
+
+  if (!SST.SkipADS1015)
   {
-    InputPin = (ADC_MP)i;
-    RetryCounter = 0;
-    do
+    for (int i = 4; i < 6; i++) // 2 Eingänge des ADCs lesen
     {
-      ret = Ads.ReadADC(InputPin, FSR_4_096, SPEED_128, ADCVal);
+      InputPin = (ADC_MP)i;
+      RetryCounter = 0;
+      do
+      {
+        ret = Ads.ReadADC(InputPin, FSR_4_096, SPEED_128, ADCVal);
+        if (ret != ESP_OK)
+        {
+          SST.ADS1015Err++;
+          ESP_LOGE(TAG, "Fehler beim Lesen des ADS1015: %d, Versuch %d", ret, RetryCounter + 1);
+        }
+        RetryCounter++;
+        if (ret != ESP_OK)
+          vTaskDelay(100 / portTICK_PERIOD_MS);
+      } while (ret != ESP_OK && RetryCounter < MaxRetries);
       if (ret != ESP_OK)
       {
-        aStatus.ADS1015Err++;
-        ESP_LOGE(TAG, "Fehler beim Lesen des ADS1015: %d, Versuch %d", ret, RetryCounter + 1);
+        ESP_LOGE(TAG, "ADS1015: Wiederholtes Lesen des Sensors fehlgeschlagen! Sensor wird ab jetzt übersprungen!");
+        SST.SkipADS1015 = true;
+        if (InputPin == ADC_INPUT_LUXMETER)
+          aData.Brightness_lux = -1;
+        else if (InputPin == ADC_INPUT_WINDDIR)
+          aData.WindDir_deg = -1;
       }
-      RetryCounter++;
-    } while (ret != ESP_OK && RetryCounter < MaxRetries);
-    if (ret != ESP_OK)
-    {
-      ESP_LOGE(TAG, "ADS1015: Wiederholtes Lesen des Sensors fehlgeschlagen!");
-      if (InputPin == ADC_INPUT_LUXMETER)
-        aData.Brightness_lux = -1;
-      else if (InputPin == ADC_INPUT_WINDDIR)
-        aData.WindDir_deg = -1;
-    }
-    else
-    {
-      ESP_LOGI("ADS1015", "Pin %d, ADC-Wert: %d", i, ADCVal);
-      if (InputPin == ADC_INPUT_LUXMETER)
+      else
       {
-        aData.Brightness_lux = ADCVal / 2500.0; // Milliwatt pro Quadratmeter?
-      }
-      else if (InputPin == ADC_INPUT_WINDDIR)
-      {
-        // Sensor geht von 0-5 V, 0=0°, 5 V=360°
-        // Verwendet wird ein Spannungsteiler 1:1, d.h. es kommen max. 2,5V am Eingang an
-        // FullScale ist bei 4,096 V erreicht = 4096 ADC-Einheiten (12 Bit-ADC), also 1 mV == 1 ADC
-        aData.WindDir_deg = std::min(359.999, 360.0 * ADCVal / 2500.0);
+        ESP_LOGI("ADS1015", "Pin %d, ADC-Wert: %d", i, ADCVal);
+        if (InputPin == ADC_INPUT_LUXMETER)
+        {
+          aData.Brightness_lux = ADCVal / 2500.0; // Milliwatt pro Quadratmeter?
+        }
+        else if (InputPin == ADC_INPUT_WINDDIR)
+        {
+          // Sensor geht von 0-5 V, 0=0°, 5 V=360°
+          // Verwendet wird ein Spannungsteiler 1:1, d.h. es kommen max. 2,5V am Eingang an
+          // FullScale ist bei 4,096 V erreicht = 4096 ADC-Einheiten (12 Bit-ADC), also 1 mV == 1 ADC
+          aData.WindDir_deg = std::min(359.999, 360.0 * ADCVal / 2500.0);
+        }
       }
     }
+  }
+  else
+  {
+    aData.Brightness_lux = -1;
+    aData.WindDir_deg = -1;
+    ESP_LOGI(TAG, "ADS1015 wird übersprungen...");
   }
 }
 
@@ -352,16 +479,8 @@ esp_err_t InitGPIO()
 
   // Inputs
   return ESP_OK;
-  uint64_t InputBitMask = (1ULL << RAIN_COUNTER_INPUT);
+  uint64_t InputBitMask = (1ULL << RAIN_INPUT) | (1ULL << LIGHTNING_INPUT) | (1ULL << WINDSPEED_INPUT);
   gpio_config_t ConfigInput = {};
-  ConfigInput.pin_bit_mask = InputBitMask;
-  ConfigInput.mode = GPIO_MODE_INPUT;
-  ConfigInput.pull_up_en = GPIO_PULLUP_ENABLE;
-  ConfigInput.pull_down_en = GPIO_PULLDOWN_DISABLE;
-  ConfigInput.intr_type = GPIO_INTR_DISABLE;
-  gpio_config(&ConfigInput);
-
-  InputBitMask = (1ULL << LIGHTNING_INPUT);
   ConfigInput.pin_bit_mask = InputBitMask;
   ConfigInput.mode = GPIO_MODE_INPUT;
   ConfigInput.pull_up_en = GPIO_PULLUP_ENABLE;
@@ -372,14 +491,30 @@ esp_err_t InitGPIO()
   // install gpio isr service
   gpio_install_isr_service(0);
   // hook isr handler for specific gpio pin
+  gpio_isr_handler_add(RAIN_INPUT, gpio_isr_handler, (void *)RAIN_INPUT);
   gpio_isr_handler_add(LIGHTNING_INPUT, gpio_isr_handler, (void *)LIGHTNING_INPUT);
+  gpio_isr_handler_add(WINDSPEED_INPUT, gpio_isr_handler, (void *)WINDSPEED_INPUT);
 }
 
 static void IRAM_ATTR gpio_isr_handler(void *arg)
 {
-  // Input-IRQ Gewittersensor
-  uint32_t gpio_num = (uint32_t)arg;
+  // Input-IRQ Windgeschw., Regen und Blitze
+  gpio_num_t InputPin = (gpio_num_t)((uint32_t)arg);
   // xQueueSendFromISR(gpio_evt_queue, &gpio_num, NULL);
+  switch (InputPin)
+  {
+  case RAIN_INPUT:
+    gRainCounter++;
+    break;
+  case LIGHTNING_INPUT:
+    gFlashCounter++;
+    break;
+  case WINDSPEED_INPUT:
+    gWindspeedCounter++;
+    break;
+  default:
+    break;
+  }
 }
 
 esp_err_t InitI2C(i2c_port_t aPort, int aSDA_Pin, int aSCL_Pin)
@@ -461,7 +596,7 @@ esp_err_t BuildCBORBuf(uint8_t *aBuf, uint16_t aMaxBufSize, uint16_t &aCBORBuild
                {FLASH_TAG, {{VAL_TAG, aData.Flashes_h}}},
                {WINDSPEED_TAG, {{VAL_TAG, aData.WindSpeed_m_s}}},
                {WINDDIR_TAG, {{VAL_TAG, aData.WindDir_deg}}},
-               {RAIN_TAG, {{VAL_TAG, aData.Rain_l_qm_d}}},
+               {RAIN_TAG, {{VAL_TAG, aData.Rain_mm_qm_h}}},
                {HUM_DET_TAG, {{VAL_TAG, aData.HumDetected}}},
                {SENS_ERR_TAG, {{VAL_TAG, aData.SensorErrCount}}},
            }}};
