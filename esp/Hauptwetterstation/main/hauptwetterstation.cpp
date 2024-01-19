@@ -232,7 +232,7 @@ void app_main_cpp()
         gWindspeedCounter = 0;
         gpio_intr_enable(WINDSPEED_INPUT);
         SD.WindSpeed_m_s = (WindspeedCounter / TimePast_s) * (500.0 / 499.0);
-        ESP_LOGI(TAG, "Windgeschw.: %.1f m/s",SD.WindSpeed_m_s);
+        ESP_LOGI(TAG, "Windgeschw.: %.1f m/s", SD.WindSpeed_m_s);
       }
     }
 
@@ -253,10 +253,10 @@ void app_main_cpp()
       // DAVIS Regenmesser: Ein Zähler der Regenwippe entsprechen 4,22 cm³, was einer Regenmenge 0,2 mm/m² entspricht
       // Wir geben das als mm / (m² * h) aus
       SD.Rain_mm_qm_h = RainCounter * 0.02;
-      ESP_LOGI(TAG, "Regenmenge: %.3f mm/m²h",SD.Rain_mm_qm_h);
+      ESP_LOGI(TAG, "Regenmenge: %.3f mm/m²h", SD.Rain_mm_qm_h);
       // Blitze pro Stunde
       SD.Flashes_h = FlashCounter;
-      ESP_LOGI(TAG, "Blitze: %d Blitze pro Stunde",SD.Flashes_h);
+      ESP_LOGI(TAG, "Blitze: %d Blitze pro Stunde", SD.Flashes_h);
     }
 
     iCBORBuildSize = 0;
@@ -268,7 +268,7 @@ void app_main_cpp()
     int RetryCounter = 0;
     bool SendOK = false;
     const int MaxRetries = 5;
-    char DisplayBuf[256] = {};
+
     while (!SendOK && RetryCounter < MaxRetries)
     {
       gpio_set_level(LORA_SEND_LED, 1);
@@ -277,7 +277,7 @@ void app_main_cpp()
       SendOK = ret == ESP_OK;
       int64_t te = GetTime_us();
       gpio_set_level(LORA_SEND_LED, 0);
-      //ESP_LOGI(TAG, "Zeit fuer LoRa: %.1f ms. Paketgroesse: %u", double(te - ts) / 1000.0, iCBORBuildSize);
+      // ESP_LOGI(TAG, "Zeit fuer LoRa: %.1f ms. Paketgroesse: %u", double(te - ts) / 1000.0, iCBORBuildSize);
       if (!SendOK)
       {
         RetryCounter++;
@@ -300,22 +300,37 @@ void app_main_cpp()
     EndTime = GetTime_us();
     ESP_LOGI(TAG, "LoRa gesendet nach %.1f ms", (EndTime - StartTime) / 1000.0);
 
-    /*
-        u8g2_ClearBuffer(&u8g2);
-        // sprintf(DisplayBuf, "[%lu] Vbatt: %.2f V", counter, iVBatt_V);
-        // u8g2_DrawStr(&u8g2, 2, 14, DisplayBuf);
+// Bei dem verwendeten Font (6 breit x 10 hoch) kommen wir beim Nokia Display auf
+// 4 Zeilen a 14 Zeichen
+#define DISPLAY_CHARS_PER_LINE 14
+#define LINE_HEIGHT 11
+#define DISPLAY_LINES 4
+#define DISPLAY_BUF_LINES 15
 
-        sprintf(DisplayBuf, "Temp: %.2f%cC[%.2f]", SD.Temp_deg, 176, t);
-        u8g2_DrawStr(&u8g2, 2, 28, DisplayBuf);
+    // Anzuzeigender Bereich des gesamten Display-Buffers
+    int ViewLineStart = 0;
+    int ViewLineEnd = 3;
 
-        sprintf(DisplayBuf, "Feuchte: %.2f %%", SD.Hum_per);
-        u8g2_DrawStr(&u8g2, 2, 42, DisplayBuf);
+    char DisplayBuf[DISPLAY_BUF_LINES][DISPLAY_CHARS_PER_LINE + 1] = {};
+    snprintf(DisplayBuf[0], DISPLAY_CHARS_PER_LINE, "T: %.2f%cC", SD.Temp_deg, 176);
+    snprintf(DisplayBuf[1], DISPLAY_CHARS_PER_LINE, "H: %.2f %%", SD.Hum_per);
+    snprintf(DisplayBuf[2], DISPLAY_CHARS_PER_LINE, "P: %.2f mBar", SD.Press_mBar);
+    snprintf(DisplayBuf[3], DISPLAY_CHARS_PER_LINE, "W: %.2f m/s", SD.WindSpeed_m_s);
+    snprintf(DisplayBuf[4], DISPLAY_CHARS_PER_LINE, "R: %.2f mm", SD.Rain_mm_qm_h);
+    snprintf(DisplayBuf[5], DISPLAY_CHARS_PER_LINE, "B: %.2f lux", SD.Brightness_lux);
+    snprintf(DisplayBuf[6], DISPLAY_CHARS_PER_LINE, "SErr: %lu", SST.SHT40Err);
+    snprintf(DisplayBuf[7], DISPLAY_CHARS_PER_LINE, "BErr: %lu", SST.BMP390Err);
+    snprintf(DisplayBuf[8], DISPLAY_CHARS_PER_LINE, "AErr: %lu", SST.ADS1015Err);
+    snprintf(DisplayBuf[9], DISPLAY_CHARS_PER_LINE, "DErr: %lu", SST.NokiaDisplayErr);
 
-        sprintf(DisplayBuf, "Druck: %.2f mBar", SD.Press_mBar);
-        u8g2_DrawStr(&u8g2, 2, 56, DisplayBuf);
+    u8g2_ClearBuffer(&u8g2);
 
-        u8g2_SendBuffer(&u8g2);
-    */
+    for (int i = ViewLineStart; i <= ViewLineEnd; i++)
+    {
+      u8g2_DrawStr(&u8g2, 0, LINE_HEIGHT*(i-ViewLineStart), DisplayBuf[i]);
+    }
+    u8g2_SendBuffer(&u8g2);
+
     vTaskDelay(1000 / portTICK_PERIOD_MS);
     SD.PC++;
   }
