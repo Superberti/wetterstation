@@ -50,6 +50,18 @@ LoRa_PinConfiguration::LoRa_PinConfiguration(LoRaBoardTypes aBoard)
       Led=35;
       AdcChannel=0;
     break;
+    case DevKitC_V4:
+      ChipSelect=18;
+      Reset=14;
+      Miso=19;
+      Mosi=27;
+      Clock=5;
+      DIO0=33;
+	    DIO1=34;
+	    Busy=0;//(n.B.)
+      Led=25;//(n.B.)
+      AdcChannel=0;
+    break;
   }
 }
 
