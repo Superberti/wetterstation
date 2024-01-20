@@ -5,7 +5,7 @@
 #ifndef __SHT40_H__
 #define __SHT40_H__
 
-
+#include "driver/i2c.h"
 /*!
  *  I2C ADDRESS/BITS/SETTINGS
  */
@@ -57,7 +57,7 @@ class SHT40
 {
 private:
   SHT40_COMMAND mReadMode;
-  int mPort;
+  i2c_port_t mPort;
   // CRC8-Berechnung
   const uint8_t poly = 0x31; // x8 + x5 + x4 + 1
   uint8_t ComputeChecksum(uint8_t* bytes, int len);
@@ -66,14 +66,10 @@ private:
   int mSCL_Pin;
 public:
 
-  SHT40(int aPort, int aSDA_Pin, int aSCL_Pin, SHT40_COMMAND aReadMode=SHT40_CMD_HPM);
+  SHT40(i2c_port_t aPort, SHT40_COMMAND aReadMode=SHT40_CMD_HPM);
   ~SHT40(void);
-
-  esp_err_t Init(bool aDoI2CInit);
-  void Close();
   esp_err_t Read(float & aTemp, float & aHum, bool & rCRC_Err);
   esp_err_t ReadSerial(uint32_t & aSerialNo, bool &rCRC_Err);
-
 };
 
 #endif

@@ -12,38 +12,14 @@
 #define ACK_CHECK_EN 0x1  /*!< I2C master will check ack from slave*/
 #define ACK_CHECK_DIS 0x0 /*!< I2C master will not check ack from slave */
 
-SHT40::SHT40(int aPort, int aSDA_Pin, int aSCL_Pin, SHT40_COMMAND aReadMode)
+SHT40::SHT40(i2c_port_t aPort, SHT40_COMMAND aReadMode)
 {
   mReadMode = aReadMode;
   mPort = aPort;
-  mSDA_Pin = aSDA_Pin;
-  mSCL_Pin = aSCL_Pin;
 }
 
 SHT40::~SHT40(void)
 {
-}
-
-esp_err_t SHT40::Init(bool aDoI2CInit)
-{
-  if (aDoI2CInit)
-  {
-    if (mPort > 1)
-      return ESP_ERR_INVALID_ARG;
-
-    i2c_config_t conf;
-    conf.mode = I2C_MODE_MASTER;
-    conf.sda_io_num = mSDA_Pin;
-    conf.sda_pullup_en = GPIO_PULLUP_ENABLE;
-    conf.scl_io_num = mSCL_Pin;
-    conf.scl_pullup_en = GPIO_PULLUP_ENABLE;
-    conf.master.clk_speed = 100000; // Fast Mode, 1000000;  // Fast Mode Plus=1MHz
-    conf.clk_flags = 0;
-    i2c_param_config(mPort, &conf);
-    return i2c_driver_install(mPort, conf.mode, 0, 0, 0);
-  }
-  else
-    return ESP_OK;
 }
 
 // SHT40-Sensor auslesen

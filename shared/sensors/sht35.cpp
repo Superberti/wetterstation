@@ -12,7 +12,7 @@
 #define ACK_CHECK_EN 0x1                        /*!< I2C master will check ack from slave*/
 #define ACK_CHECK_DIS 0x0                       /*!< I2C master will not check ack from slave */
 
-SHT35::SHT35(int aPort)
+SHT35::SHT35(i2c_port_t aPort)
 {
   mPort=aPort;
 }

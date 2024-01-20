@@ -3,6 +3,13 @@
 
 #include <stdint.h>
 
+enum LoRaBoardTypes
+{
+  LilygoT3,
+  HeltecESPLoRa,
+  HeltecWirelessStick_V3
+};
+
 // Kennung für einen gültigen Paketheader
 #define PACKET_MAGIC 0x2008
 
@@ -70,6 +77,18 @@ struct LoraPacketHeader
 #define DATA_TAG "DATA"
 // Watt (Solar)
 #define POWER_TAG "P"
+// Blitze pro Stunde
+#define FLASH_TAG "BL"
+// Windgeschwindigkeit in m/s
+#define WINDSPEED_TAG "WG"
+// Windrichtung in Grad
+#define WINDDIR_TAG "WR"
+// Tagesregenmenge in Liter pro Quadratmeter und Tag
+#define RAIN_TAG "RM"
+// Feuchtesensor spricht an (0/1)
+#define HUM_DET_TAG "FD"
+// Sensorfehlerzähler
+#define SENS_ERR_TAG "SFZ"
 
 // Orte
 #define ORT_SCHUPPEN_SCHATTEN "SCHU_SCHA"
@@ -96,6 +115,7 @@ struct LoraPacketHeader
 #define LORA_ADDR_CARPORT 2			// Carport-Wetterstation
 #define LORA_ADDR_BIKEPORT 3		// Fahrradschuppen
 #define LORA_ADDR_SYMPATEC 4    // Sympatec in Clausthal
+#define LORA_ADDR_SYMPATEC_2 5  // Sympatec in Clausthal, Sensor 2
 
 
 #endif
