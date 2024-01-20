@@ -50,6 +50,30 @@ using json = nlohmann::json;
  * Display: Nokia 5110-Display (Philips PCD8544)
  */
 
+/*
+ * Pindefinitionen:
+ * BMP390 und ADS1015, SCL -> 12 (I2C-0)
+ * BMP390 und ADS1015, SDA -> 13 (I2C-0)
+ * Lautsprecher -> 32
+ * Lora SX1278, ChipSelect -> 18;
+ * Lora SX1278, Reset -> 14;
+ * Lora SX1278, Miso -> 19;
+ * Lora SX1278, Mosi -> 27;
+ * Lora SX1278, Clock -> 5;
+ * Lora SX1278, DIO0 -> 33;
+ * Lora SX1278, DIO1 -> 34;
+ * Nokia5110, DIN -> 23 (MOSI)
+ * Nokia5110, CLK -> 22 (SCK)
+ * Nokia5110, CE -> 21 (CE)
+ * Nokia5110, DC -> 25 (Umschaltung Config/Daten)
+ * Nokia5110, RST -> 26 (Reset)
+ * SHT40, SCL -> 11 (I2C-1)
+ * SHT40, SDA -> 10 (I2C-1)
+ * RAIN_INPUT -> 36
+ * LIGHTNING_INPUT -> 39
+ * WINDSPEED_INPUT -> 34
+ */
+
 /// BMP390 Luftdrucksensor angeschlossen
 #define USE_BMP390
 #define BMP390_SENSOR_ADDR 0x77 // Adresse BMP390 wenn SDO auf high, auf low = 0x76
@@ -64,22 +88,24 @@ using json = nlohmann::json;
 #define PIN_SDA_BUS0 GPIO_NUM_13
 #define PIN_SCL_BUS0 GPIO_NUM_14
 
+#define PIN_SDA_BUS1 GPIO_NUM_10
+#define PIN_SCL_BUS1 GPIO_NUM_11
+
 // GPIOs (vorläufig)
-#define LORA_SEND_LED GPIO_NUM_15
-#define ERROR_LED GPIO_NUM_16
-#define READ_SENSOR_LED GPIO_NUM_18
+//#define LORA_SEND_LED GPIO_NUM_15
+//#define ERROR_LED GPIO_NUM_16
+//#define READ_SENSOR_LED GPIO_NUM_18
 
 // Inputs (Counter)
-#define RAIN_INPUT GPIO_NUM_20
-#define LIGHTNING_INPUT GPIO_NUM_21
-#define WINDSPEED_INPUT GPIO_NUM_22
+#define RAIN_INPUT GPIO_NUM_36
+#define LIGHTNING_INPUT GPIO_NUM_39
+#define WINDSPEED_INPUT GPIO_NUM_34
 
 // Nokia 5110-Display am SPI
-
 #define DISPLAY_DIN GPIO_NUM_23 // MOSI
-#define DISPLAY_CLK GPIO_NUM_18 // SCK
-#define DISPLAY_CE GPIO_NUM_15  // Chip Enable
-#define DISPLAY_DC GPIO_NUM_27  // Umschaltung Config/Daten
+#define DISPLAY_CLK GPIO_NUM_22 // SCK
+#define DISPLAY_CE GPIO_NUM_21  // Chip Enable
+#define DISPLAY_DC GPIO_NUM_25  // Umschaltung Config/Daten
 #define DISPLAY_RST GPIO_NUM_26 // Reset
 
 // Input-Pins am ADC
