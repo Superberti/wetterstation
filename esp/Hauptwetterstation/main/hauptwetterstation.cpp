@@ -92,9 +92,9 @@ using json = nlohmann::json;
 #define PIN_SCL_BUS1 GPIO_NUM_11
 
 // GPIOs (vorläufig)
-//#define LORA_SEND_LED GPIO_NUM_15
-//#define ERROR_LED GPIO_NUM_16
-//#define READ_SENSOR_LED GPIO_NUM_18
+#define LORA_SEND_LED GPIO_NUM_6
+#define ERROR_LED GPIO_NUM_7
+#define READ_SENSOR_LED GPIO_NUM_8
 
 // Inputs (Counter)
 #define RAIN_INPUT GPIO_NUM_36

@@ -61,8 +61,6 @@ LoRa_PinConfiguration::LoRa_PinConfiguration(LoRaBoardTypes aBoard)
       DIO0=33;
 	    DIO1=34;
 	    Busy=0;//(n.B.)
-      Led=25;//(n.B.)
-      AdcChannel=0;
     break;
   }
 }

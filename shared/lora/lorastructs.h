@@ -7,7 +7,8 @@ enum LoRaBoardTypes
 {
   LilygoT3,
   HeltecESPLoRa,
-  HeltecWirelessStick_V3
+  HeltecWirelessStick_V3,
+  DevKitC_V4
 };
 
 // Kennung für einen gültigen Paketheader
