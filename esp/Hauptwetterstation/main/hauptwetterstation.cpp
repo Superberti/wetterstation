@@ -525,7 +525,7 @@ esp_err_t InitGPIO()
 {
 // Outputs
 #define OutputBitMask (1ULL << LORA_SEND_LED) | (1ULL << ERROR_LED) | (1ULL << READ_SENSOR_LED);
-//#define OutputBitMask (1ULL << LORA_SEND_LED);
+
   gpio_config_t ConfigOutput = {};
   ConfigOutput.pin_bit_mask = OutputBitMask;
   ConfigOutput.mode = GPIO_MODE_OUTPUT;
