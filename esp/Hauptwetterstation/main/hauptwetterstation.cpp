@@ -25,6 +25,7 @@
 #include "hauptwetterstation.h"
 #include "bmp390.h"
 #include "ads1015.h"
+#include "rtc_wdt.h"
 
 extern "C"
 {
@@ -52,7 +53,7 @@ using json = nlohmann::json;
 
 /*
  * Pindefinitionen:
- * BMP390 und ADS1015, SCL -> 12 (I2C-0)
+ * BMP390 und ADS1015, SCL -> 4 (I2C-0)
  * BMP390 und ADS1015, SDA -> 13 (I2C-0)
  * Lautsprecher -> 32
  * Lora SX1278, ChipSelect -> 18;
@@ -61,14 +62,14 @@ using json = nlohmann::json;
  * Lora SX1278, Mosi -> 27;
  * Lora SX1278, Clock -> 5;
  * Lora SX1278, DIO0 -> 33;
- * Lora SX1278, DIO1 -> 34;
+ *
  * Nokia5110, DIN -> 23 (MOSI)
  * Nokia5110, CLK -> 22 (SCK)
  * Nokia5110, CE -> 21 (CE)
  * Nokia5110, DC -> 25 (Umschaltung Config/Daten)
  * Nokia5110, RST -> 26 (Reset)
- * SHT40, SCL -> 11 (I2C-1)
- * SHT40, SDA -> 10 (I2C-1)
+ * SHT40, SCL -> 16 (I2C-1)
+ * SHT40, SDA -> 17 (I2C-1)
  * RAIN_INPUT -> 36
  * LIGHTNING_INPUT -> 39
  * WINDSPEED_INPUT -> 34
@@ -86,10 +87,10 @@ using json = nlohmann::json;
 
 // Temperatursensor, Luftdruck und ADC am I2C-Bus0
 #define PIN_SDA_BUS0 GPIO_NUM_13
-#define PIN_SCL_BUS0 GPIO_NUM_14
+#define PIN_SCL_BUS0 GPIO_NUM_4
 
-#define PIN_SDA_BUS1 GPIO_NUM_10
-#define PIN_SCL_BUS1 GPIO_NUM_11
+#define PIN_SDA_BUS1 GPIO_NUM_17
+#define PIN_SCL_BUS1 GPIO_NUM_16
 
 // GPIOs (vorläufig)
 #define LORA_SEND_LED GPIO_NUM_6
@@ -134,6 +135,9 @@ volatile uint32_t gFlashCounter = 0;
 
 void app_main_cpp()
 {
+  rtc_wdt_protect_off();
+  rtc_wdt_disable();
+  ESP_LOGI(TAG, "Starte Hauptwetterstation V1.0");
   SensorData SD = {};
   SensorStatus SST = {};
 
@@ -142,10 +146,18 @@ void app_main_cpp()
   int64_t StartTime = GetTime_us();
   struct timeval now;
 
+  for (int i = 0; i < 5; i++)
+  {
+    ESP_LOGI(TAG, "Kleine Pause:%d", i);
+    vTaskDelay(pdMS_TO_TICKS(1000));
+  }
   // Initialisierung I2C und GPIO
+  ESP_LOGI(TAG, "GPIO init...");
   InitGPIO();
+  ESP_LOGI(TAG, "I2C init...");
 
   gpio_set_level(ERROR_LED, 1);
+
   InitI2C(I2C_NUM_0, PIN_SDA_BUS0, PIN_SCL_BUS0);
 
   gettimeofday(&now, NULL);
@@ -353,7 +365,7 @@ void app_main_cpp()
 
     for (int i = ViewLineStart; i <= ViewLineEnd; i++)
     {
-      u8g2_DrawStr(&u8g2, 0, LINE_HEIGHT*(i-ViewLineStart), DisplayBuf[i]);
+      u8g2_DrawStr(&u8g2, 0, LINE_HEIGHT * (i - ViewLineStart), DisplayBuf[i]);
     }
     u8g2_SendBuffer(&u8g2);
 
@@ -508,15 +520,22 @@ void GetSensorData(SensorData &aData, SensorStatus &SST)
 
 esp_err_t InitGPIO()
 {
-  // Outputs
-  uint64_t OutputBitMask = (1ULL << LORA_SEND_LED) | (1ULL << ERROR_LED) | (1ULL << READ_SENSOR_LED);
+// Outputs
+#define OutputBitMask (1ULL << LORA_SEND_LED) | (1ULL << ERROR_LED) | (1ULL << READ_SENSOR_LED);
+//#define OutputBitMask (1ULL << LORA_SEND_LED);
   gpio_config_t ConfigOutput = {};
   ConfigOutput.pin_bit_mask = OutputBitMask;
   ConfigOutput.mode = GPIO_MODE_OUTPUT;
   ConfigOutput.pull_up_en = GPIO_PULLUP_DISABLE;
-  ConfigOutput.pull_down_en = GPIO_PULLDOWN_ENABLE;
+  ConfigOutput.pull_down_en = GPIO_PULLDOWN_DISABLE;
   ConfigOutput.intr_type = GPIO_INTR_DISABLE;
-  gpio_config(&ConfigOutput);
+  esp_err_t error = gpio_config(&ConfigOutput);
+
+  if (error != ESP_OK)
+  {
+    ESP_LOGE(TAG, "Fehler bei InitGPIO: %d",error);
+    return error;
+  }
 
   // Inputs
   return ESP_OK;
