@@ -73,6 +73,9 @@ using json = nlohmann::json;
  * RAIN_INPUT -> 36
  * LIGHTNING_INPUT -> 39
  * WINDSPEED_INPUT -> 34
+ * LORA_SEND_LED -> 0
+ * ERROR_LED -> 2
+ * READ_SENSOR_LED -> 15
  */
 
 /// BMP390 Luftdrucksensor angeschlossen
@@ -93,9 +96,9 @@ using json = nlohmann::json;
 #define PIN_SCL_BUS1 GPIO_NUM_16
 
 // GPIOs (vorläufig)
-#define LORA_SEND_LED GPIO_NUM_6
-#define ERROR_LED GPIO_NUM_7
-#define READ_SENSOR_LED GPIO_NUM_8
+#define LORA_SEND_LED GPIO_NUM_0
+#define ERROR_LED GPIO_NUM_2
+#define READ_SENSOR_LED GPIO_NUM_15
 
 // Inputs (Counter)
 #define RAIN_INPUT GPIO_NUM_36
