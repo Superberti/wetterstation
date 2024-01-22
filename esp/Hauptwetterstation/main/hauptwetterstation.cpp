@@ -56,6 +56,8 @@ using json = nlohmann::json;
  * BMP390 und ADS1015, SCL -> 4 (I2C-0)
  * BMP390 und ADS1015, SDA -> 13 (I2C-0)
  * Lautsprecher -> 32
+ * 
+ * Lora ist auf SPI3
  * Lora SX1278, ChipSelect -> 18;
  * Lora SX1278, Reset -> 14;
  * Lora SX1278, Miso -> 19;
@@ -63,6 +65,7 @@ using json = nlohmann::json;
  * Lora SX1278, Clock -> 5;
  * Lora SX1278, DIO0 -> 33;
  *
+ * Display ist auf SPI2
  * Nokia5110, DIN -> 23 (MOSI)
  * Nokia5110, CLK -> 22 (SCK)
  * Nokia5110, CE -> 21 (CE)
@@ -148,12 +151,12 @@ void app_main_cpp()
   bool iCRCErr;
   int64_t StartTime = GetTime_us();
   struct timeval now;
-
+  /*
   for (int i = 0; i < 5; i++)
   {
     ESP_LOGI(TAG, "Kleine Pause:%d", i);
     vTaskDelay(pdMS_TO_TICKS(1000));
-  }
+  }*/
   // Initialisierung I2C und GPIO
   ESP_LOGI(TAG, "GPIO init...");
   InitGPIO();
@@ -186,7 +189,7 @@ void app_main_cpp()
   if (ret != ESP_OK)
   {
     SST.SkipBMP390 = true;
-    ESP_LOGE(TAG, "Fehler beim Initialisieren des BMP390: %d", ret);
+    ESP_LOGE(TAG, "Fehler beim Initialisieren des BMP390: %d. Sensor ausgeschaltet!", ret);
   }
   else
   {
@@ -199,7 +202,7 @@ void app_main_cpp()
   if (ret != ESP_OK)
   {
     SST.SkipADS1015 = true;
-    ESP_LOGE(TAG, "Fehler beim Initialisieren des ADS1015: %d", ret);
+    ESP_LOGE(TAG, "Fehler beim Initialisieren des ADS1015: %d. Sensor ausgeschaltet!", ret);
   }
   else
   {
@@ -207,14 +210,14 @@ void app_main_cpp()
   }
 
   // LoRa-Modul
-  SX1278_LoRa LoRa(HeltecESPLoRa);
+  SX1278_LoRa LoRa(DevKitC_V4);
   // Parameter s. InitLoRa
   ret = InitLoRa(LoRa);
   if (ret != ESP_OK)
     ESP_LOGE(TAG, "Fehler beim Initialisieren des LoRa Moduls: %d", ret);
   else
   {
-    ESP_LOGI(TAG, "ALoRa Modul OK!");
+    ESP_LOGI(TAG, "LoRa-Modul Init OK!");
   }
   gpio_set_level(ERROR_LED, 0);
   InitNokia_u8g2();
@@ -226,9 +229,9 @@ void app_main_cpp()
 
   uint8_t LoraBuf[255];
   uint16_t iCBORBuildSize;
-  ret = Bmp.StartReadTempAndPress();
-  if (ret != ESP_OK)
-    ESP_LOGE(TAG, "Fehler beim Starten des BMP390: %d", ret);
+  //ret = Bmp.StartReadTempAndPress();
+  //if (ret != ESP_OK)
+    //ESP_LOGE(TAG, "Fehler beim Starten des BMP390: %d", ret);
 
   SD.PC = 0;
   SD.SensorErrCount = 0;
@@ -372,7 +375,7 @@ void app_main_cpp()
     }
     u8g2_SendBuffer(&u8g2);
 
-    vTaskDelay(1000 / portTICK_PERIOD_MS);
+    vTaskDelay(5000 / portTICK_PERIOD_MS);
     SD.PC++;
   }
 
@@ -396,12 +399,12 @@ void GetSensorData(SensorData &aData, SensorStatus &SST)
   {
     do
     {
-      ret = Bmp.ReadTempAndPressAsync(t, p);
+      ret = Bmp.ReadTempAndPress(t, p);
       if (ret != ESP_OK)
       {
         SST.BMP390Err++;
         ESP_LOGE(TAG, "Fehler beim Lesen des BMP390: %d, Versuch %d", ret, RetryCounter + 1);
-        Bmp.StartReadTempAndPress();
+        //Bmp.StartReadTempAndPress();
       }
       aData.Temp_deg = t;
       aData.Press_mBar = Bmp.SeaLevelForAltitude(210, p);
@@ -691,16 +694,9 @@ void InitNokia_u8g2()
   u8g2_esp32_hal.reset = DISPLAY_RST;
   u8g2_esp32_hal.dc = DISPLAY_DC;
   u8g2_esp32_hal_init(u8g2_esp32_hal);
-
-  /*
-    gpio_set_level(PIN_DISP_RESET, 0);
-    vTaskDelay(pdMS_TO_TICKS(50));
-    gpio_set_level(PIN_DISP_RESET, 1);
-  */
-
   // Nokia 5110 Display
 
-  u8g2_Setup_pcd8544_84x48_1(&u8g2, U8G2_R0, u8g2_esp32_i2c_byte_cb, u8g2_esp32_gpio_and_delay_cb);
+  u8g2_Setup_pcd8544_84x48_1(&u8g2, U8G2_R0, u8g2_esp32_spi_byte_cb, u8g2_esp32_gpio_and_delay_cb);
 
   ESP_LOGI(TAG, "Nokia5110 display init...");
   u8g2_InitDisplay(&u8g2); // send init sequence to the display, display is in sleep mode after this,

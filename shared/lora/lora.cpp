@@ -13,8 +13,10 @@
 // Quarzfrequenz aller Module
 #define XTAL_FRQ 32000000
 
+// Der ESP32 hat SPI0 und SPI1 intern mit dem Flash verdrahtet. Frei sind SPI2/3
 LoRa_PinConfiguration::LoRa_PinConfiguration(LoRaBoardTypes aBoard)
 {
+  ESP_LOGI("LORA:", "Selected board: %d",(int)aBoard);
   UseTXCO = false;
   switch (aBoard)
   {
@@ -27,7 +29,7 @@ LoRa_PinConfiguration::LoRa_PinConfiguration(LoRaBoardTypes aBoard)
     DIO0 = 26;
     DIO1 = 33;
     Busy = 32;
-    SPIChannel = SPI1_HOST;
+    SPIChannel = SPI2_HOST;
     break;
   case HeltecESPLoRa:
     ChipSelect = 18;
@@ -38,7 +40,7 @@ LoRa_PinConfiguration::LoRa_PinConfiguration(LoRaBoardTypes aBoard)
     DIO0 = 33;
     DIO1 = 34;
     Busy = 0;
-    SPIChannel = SPI1_HOST;
+    SPIChannel = SPI2_HOST;
     break;
   case HeltecWirelessStick_V3:
     ChipSelect = 8;
@@ -49,7 +51,7 @@ LoRa_PinConfiguration::LoRa_PinConfiguration(LoRaBoardTypes aBoard)
     // DIO0 = 26;  // Der SX1262 hat nur DIO1-3. Angeschlossen ist aber nur DIO1
     DIO1 = 14;
     Busy = 13;
-    SPIChannel = SPI2_HOST; // Der ESP32-S3 hat SPI0 und SPI1 intern mit dem Flash verdrahtet. Frei sind SPI2/3
+    SPIChannel = SPI2_HOST; 
     UseTXCO = true;         // Hat einen TXCO und keinen XTAL
     break;
     case DevKitC_V4:
@@ -59,7 +61,8 @@ LoRa_PinConfiguration::LoRa_PinConfiguration(LoRaBoardTypes aBoard)
       Mosi=27;
       Clock=5;
       DIO0=33;
-	    DIO1=34;
+	    DIO1=0;
+      SPIChannel = SPI3_HOST;
 	    Busy=0;//(n.B.)
     break;
   }
@@ -92,6 +95,7 @@ esp_err_t LoRaBase::SPIBusInit()
   bus.quadwp_io_num = -1;
   bus.quadhd_io_num = -1;
   bus.max_transfer_sz = 0;
+  ESP_LOGI("LORA:", "Init LoRa SPI. Channel: %d",PinConfig->SPIChannel);
   ret = spi_bus_initialize(PinConfig->SPIChannel, &bus, 0 /*SPI_DMA_CH_AUTO*/); // ohne DMA max. 32 Bytes gleichzeitig per SPI!
   if (ret != ESP_OK)
     return ret;
@@ -102,6 +106,7 @@ esp_err_t LoRaBase::SPIBusInit()
   dev.queue_size = 1;
   dev.flags = 0;
   dev.pre_cb = NULL;
+  ESP_LOGI("LORA:", "AddDevice LoRa SPI. Channel: %d",PinConfig->SPIChannel);
   ret = spi_bus_add_device(PinConfig->SPIChannel, &dev, &mhSpi);
   if (ret != ESP_OK)
     return ret;
