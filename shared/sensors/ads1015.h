@@ -7,7 +7,7 @@
 
 #include "driver/i2c.h"
 /*!
- * I2C-Adresse. Der ADDR-Pin muss mit GND,VDD oder SCL verbunden werden (notfalls auch SDA). 
+ * I2C-Adresse. Der ADDR-Pin muss mit GND,VDD oder SCL verbunden werden (notfalls auch SDA).
  * Dadurch ergeben sich vier Adressen:
  */
 #define ADC1015_ADDR_GND (0x48)
@@ -18,9 +18,9 @@
 // Vorverstärker Spannungsbereich (muss aber immer <= Versorgungsspannung sein!)
 enum FSC_RANGE
 {
-  FSR_6_144=0,  // 6,144 V
+  FSR_6_144 = 0, // 6,144 V
   FSR_4_096,
-  FSR_2_048,  // default
+  FSR_2_048, // default
   FSR_1_024,
   FSR_0_512,
   FSR_0_256
@@ -29,7 +29,7 @@ enum FSC_RANGE
 // Pin-Multiplexing
 enum ADC_MP
 {
-  AIN0_AND_AIN1=0,  // Differentiell, Pin AIN0 und 1, default
+  AIN0_AND_AIN1 = 0, // Differentiell, Pin AIN0 und 1, default
   AIN0_AND_AIN3,
   AIN1_AND_AIN3,
   AIN2_AND_AIN3,
@@ -42,7 +42,7 @@ enum ADC_MP
 // ADC-Konversionsrate
 enum ADC_SPEED
 {
-  SPEED_128=0,  // 128 Samples per second
+  SPEED_128 = 0, // 128 Samples per second
   SPEED_250,
   SPEED_490,
   SPEED_920,
@@ -54,9 +54,9 @@ enum ADC_SPEED
 enum ADC_REGISTER
 {
   REG_CONVERSION = 0,
-  REG_CONFIG,
-  REG_THRESH_LO,
-  REG_THRESH_HI,
+  REG_CONFIG = 1,
+  REG_THRESH_LO = 2,
+  REG_THRESH_HI = 3,
 };
 
 class ADS1015
@@ -64,16 +64,16 @@ class ADS1015
 private:
   i2c_port_t mPort;
   uint8_t mI2CAddr;
-  esp_err_t ReadRegister16(ADC_REGISTER aReg, uint16_t & aRegVal);
+  esp_err_t ReadRegister16(ADC_REGISTER aReg, uint16_t &aRegVal);
   esp_err_t WriteRegister16(ADC_REGISTER aReg, uint16_t aRegVal);
   int64_t GetTime_us();
   esp_err_t ConvReady(bool &aConvReady);
-public:
 
+public:
   ADS1015(i2c_port_t aPort, uint8_t aI2CAddr);
   ~ADS1015(void);
 
-  esp_err_t ReadADC(ADC_MP aInputMux, FSC_RANGE aFullScale, ADC_SPEED aSpeed, uint16_t & aADCValue);
+  esp_err_t ReadADC(ADC_MP aInputMux, FSC_RANGE aFullScale, ADC_SPEED aSpeed, uint16_t &aADCValue);
 };
 
 #endif

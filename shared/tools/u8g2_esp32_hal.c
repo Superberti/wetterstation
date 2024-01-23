@@ -77,7 +77,7 @@ uint8_t u8g2_esp32_spi_byte_cb(u8x8_t* u8x8,
 
       spi_device_interface_config_t dev_config={};
       
-      dev_config.clock_speed_hz = 1000000;
+      dev_config.clock_speed_hz = 4000000;
       dev_config.spics_io_num = u8g2_esp32_hal.cs;
       dev_config.queue_size = 200;
       // ESP_LOGI(TAG, "... Adding device bus.");

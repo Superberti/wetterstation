@@ -81,8 +81,6 @@ using json = nlohmann::json;
  * READ_SENSOR_LED -> 15
  */
 
-/// BMP390 Luftdrucksensor angeschlossen
-#define USE_BMP390
 #define BMP390_SENSOR_ADDR 0x77 // Adresse BMP390 wenn SDO auf high, auf low = 0x76
 
 // An welchem Ort befindet sich der Sensor? (s. lorastructs.h)
@@ -198,7 +196,7 @@ void app_main_cpp()
 
   // ADC testweise auslesen
   uint16_t ADCVal;
-  ret = Ads.ReadADC(AIN0, FSR_4_096, SPEED_128, ADCVal);
+  ret = Ads.ReadADC(AIN0, FSR_4_096, SPEED_250, ADCVal);
   if (ret != ESP_OK)
   {
     SST.SkipADS1015 = true;
@@ -346,7 +344,7 @@ void app_main_cpp()
 
 // Bei dem verwendeten Font (6 breit x 10 hoch) kommen wir beim Nokia Display auf
 // 4 Zeilen a 14 Zeichen
-#define DISPLAY_CHARS_PER_LINE 14
+#define DISPLAY_CHARS_PER_LINE 15
 #define LINE_HEIGHT 11
 #define DISPLAY_LINES 4
 #define DISPLAY_BUF_LINES 15
@@ -366,12 +364,20 @@ void app_main_cpp()
     snprintf(DisplayBuf[7], DISPLAY_CHARS_PER_LINE, "BErr: %lu", SST.BMP390Err);
     snprintf(DisplayBuf[8], DISPLAY_CHARS_PER_LINE, "AErr: %lu", SST.ADS1015Err);
     snprintf(DisplayBuf[9], DISPLAY_CHARS_PER_LINE, "DErr: %lu", SST.NokiaDisplayErr);
-
+/*
+    u8g2_ClearDisplay(&u8g2);
+    u8g2_SetFont(&u8g2, u8g2_font_crox1h_tf);
     u8g2_ClearBuffer(&u8g2);
-
+    u8g2_SendBuffer(&u8g2);
+    char TestBuf[100]={};
+    sprintf(TestBuf,"Hello World");
+    u8g2_DrawStr(&u8g2, 20, 20, TestBuf);
+    vTaskDelay(1000 / portTICK_PERIOD_MS);
+    */
+    u8g2_ClearBuffer(&u8g2);
     for (int i = ViewLineStart; i <= ViewLineEnd; i++)
     {
-      u8g2_DrawStr(&u8g2, 0, LINE_HEIGHT * (i - ViewLineStart), DisplayBuf[i]);
+      u8g2_DrawStr(&u8g2, 0, LINE_HEIGHT * (i - ViewLineStart+1)-1, DisplayBuf[i]);
     }
     u8g2_SendBuffer(&u8g2);
 
@@ -462,7 +468,7 @@ void GetSensorData(SensorData &aData, SensorStatus &SST)
       ESP_LOGE(TAG, "SHT40: Wiederholtes Lesen des Sensors fehlgeschlagen! Sensor wird ab jetzt übersprungen!");
       SST.SkipSHT40 = true;
     }
-    aData.Temp_deg = -100;
+    // Temperatur wird dann vom BMP390 genommen!
     aData.Hum_per = -1;
   }
   else
@@ -480,7 +486,7 @@ void GetSensorData(SensorData &aData, SensorStatus &SST)
       RetryCounter = 0;
       do
       {
-        ret = Ads.ReadADC(InputPin, FSR_4_096, SPEED_128, ADCVal);
+        ret = Ads.ReadADC(InputPin, FSR_4_096, SPEED_1600, ADCVal);
         if (ret != ESP_OK)
         {
           SST.ADS1015Err++;
@@ -693,10 +699,10 @@ void InitNokia_u8g2()
   u8g2_esp32_hal.cs = DISPLAY_CE;
   u8g2_esp32_hal.reset = DISPLAY_RST;
   u8g2_esp32_hal.dc = DISPLAY_DC;
-  u8g2_esp32_hal_init(u8g2_esp32_hal);
+  u8g2_esp32_hal_init(u8g2_esp32_hal); 
   // Nokia 5110 Display
 
-  u8g2_Setup_pcd8544_84x48_1(&u8g2, U8G2_R0, u8g2_esp32_spi_byte_cb, u8g2_esp32_gpio_and_delay_cb);
+  u8g2_Setup_pcd8544_84x48_f(&u8g2, U8G2_R0, u8g2_esp32_spi_byte_cb, u8g2_esp32_gpio_and_delay_cb);
 
   ESP_LOGI(TAG, "Nokia5110 display init...");
   u8g2_InitDisplay(&u8g2); // send init sequence to the display, display is in sleep mode after this,
