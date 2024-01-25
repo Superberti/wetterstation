@@ -497,7 +497,8 @@ void GetSensorData(SensorData &aData, SensorStatus &SST)
       RetryCounter = 0;
       do
       {
-        ret = Ads.ReadADC(InputPin, FSR_4_096, SPEED_1600, ADCVal);
+        // Single-ended bedeutet FSR_2_048 = 0..4,096 V
+        ret = Ads.ReadADC(InputPin, FSR_2_048, SPEED_1600, ADCVal);
         if (ret != ESP_OK)
         {
           SST.ADS1015Err++;
