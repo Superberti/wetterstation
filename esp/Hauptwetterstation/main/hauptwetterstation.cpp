@@ -26,6 +26,7 @@
 #include "bmp390.h"
 #include "ads1015.h"
 #include "rtc_wdt.h"
+#include "esp_check.h"
 
 extern "C"
 {
@@ -56,7 +57,7 @@ using json = nlohmann::json;
  * BMP390 und ADS1015, SCL -> 4 (I2C-0)
  * BMP390 und ADS1015, SDA -> 13 (I2C-0)
  * Lautsprecher -> 32
- * 
+ *
  * Lora ist auf SPI3
  * Lora SX1278, ChipSelect -> 18;
  * Lora SX1278, Reset -> 14;
@@ -74,7 +75,7 @@ using json = nlohmann::json;
  * SHT40, SCL -> 16 (I2C-1)
  * SHT40, SDA -> 17 (I2C-1)
  * RAIN_INPUT -> 36
- * LIGHTNING_INPUT -> 39
+ * FLASH_INPUT -> 39
  * WINDSPEED_INPUT -> 34
  * LORA_SEND_LED -> 0
  * ERROR_LED -> 2
@@ -103,7 +104,7 @@ using json = nlohmann::json;
 
 // Inputs (Counter)
 #define RAIN_INPUT GPIO_NUM_36
-#define LIGHTNING_INPUT GPIO_NUM_39
+#define FLASH_INPUT GPIO_NUM_39
 #define WINDSPEED_INPUT GPIO_NUM_34
 
 // Nokia 5110-Display am SPI
@@ -227,120 +228,131 @@ void app_main_cpp()
 
   uint8_t LoraBuf[255];
   uint16_t iCBORBuildSize;
-  //ret = Bmp.StartReadTempAndPress();
-  //if (ret != ESP_OK)
-    //ESP_LOGE(TAG, "Fehler beim Starten des BMP390: %d", ret);
+  // ret = Bmp.StartReadTempAndPress();
+  // if (ret != ESP_OK)
+  // ESP_LOGE(TAG, "Fehler beim Starten des BMP390: %d", ret);
 
   SD.PC = 0;
   SD.SensorErrCount = 0;
 
   int64_t StartHourTime = GetTime_us();
-  int64_t StartWindTime = StartTime;
-  int64_t CurrentTime = StartTime;
+  int64_t StartWindTime = StartHourTime;
+  int64_t StartSecondTime = StartHourTime;
+  int64_t StartLoraTime = StartHourTime;
+  int64_t CurrentTime = StartHourTime;
   int64_t TimePast;
+  const int64_t LoRaUpdateTime = 10E6; // LoRa Sendung alle 10 s
   for (;;)
   {
-    // Hauptschleife läuft ca. jede Sekunde durch
-    GetSensorData(SD, SST);
-
-    // Counter auslesen
-    uint32_t FlashCounter, RainCounter, WindspeedCounter;
-    gpio_intr_disable(RAIN_INPUT);
-    RainCounter = gRainCounter;
-    gpio_intr_enable(RAIN_INPUT);
-
-    gpio_intr_disable(WINDSPEED_INPUT);
-    WindspeedCounter = gWindspeedCounter;
-    gpio_intr_enable(WINDSPEED_INPUT);
-
-    gpio_intr_disable(LIGHTNING_INPUT);
-    FlashCounter = gFlashCounter;
-    gpio_intr_enable(LIGHTNING_INPUT);
-
     CurrentTime = GetTime_us();
 
-    // Die Windgeschwindigkeit wird erst ausgewertet, wenn der Windspeedzähler mehr als 10 Impulse gezählt hat,
-    // damit die Genauigkeit nicht zu schlecht wird. Hat sich der Counter 10 s lang nicht gerührt, dann gehen wir von Flaute aus.
-    if (SD.PC > 0)
+    // Jede Sekunde Sensoren auslesen
+    if (CurrentTime - StartSecondTime > 1E6)
     {
-      // Eine Tick-Frequenz von einem Hertz enstpricht einer Windgeschwindigkeit vonn (500/499) m/s = 1,002004008 m/s
-      TimePast = CurrentTime - StartWindTime;
-      float TimePast_s = TimePast / 1.0E6;
-      if (WindspeedCounter > 10 || TimePast >= 1E6 * 10)
-      {
-        StartWindTime = CurrentTime;
-        // Windgeschwindigkeit auswerten
-        gpio_intr_disable(WINDSPEED_INPUT);
-        gWindspeedCounter = 0;
-        gpio_intr_enable(WINDSPEED_INPUT);
-        SD.WindSpeed_m_s = (WindspeedCounter / TimePast_s) * (500.0 / 499.0);
-        ESP_LOGI(TAG, "Windgeschw.: %.1f m/s", SD.WindSpeed_m_s);
-      }
-    }
+      StartSecondTime = CurrentTime;
+      ESP_LOGI(TAG, "Sensoren werden abgefragt:");
+      GetSensorData(SD, SST);
 
-    // Jede Stunde die Counter speichern und zurücksetzen
-    if (CurrentTime - StartHourTime > 1E6 * 3600)
-    {
-      ESP_LOGI(TAG, "Zähler werden ausgewertet und zurückgesetzt.");
-      StartHourTime = CurrentTime;
-      // Zähler zurücksetzen
+      // Counter auslesen
+      uint32_t FlashCounter, RainCounter, WindspeedCounter;
       gpio_intr_disable(RAIN_INPUT);
-      gRainCounter = 0;
+      RainCounter = gRainCounter;
       gpio_intr_enable(RAIN_INPUT);
 
-      gpio_intr_disable(LIGHTNING_INPUT);
-      gFlashCounter = 0;
-      gpio_intr_enable(LIGHTNING_INPUT);
+      gpio_intr_disable(WINDSPEED_INPUT);
+      WindspeedCounter = gWindspeedCounter;
+      gpio_intr_enable(WINDSPEED_INPUT);
 
-      // DAVIS Regenmesser: Ein Zähler der Regenwippe entsprechen 4,22 cm³, was einer Regenmenge 0,2 mm/m² entspricht
-      // Wir geben das als mm / (m² * h) aus
-      SD.Rain_mm_qm_h = RainCounter * 0.02;
-      ESP_LOGI(TAG, "Regenmenge: %.3f mm/m²h", SD.Rain_mm_qm_h);
-      // Blitze pro Stunde
-      SD.Flashes_h = FlashCounter;
-      ESP_LOGI(TAG, "Blitze: %d Blitze pro Stunde", SD.Flashes_h);
-    }
+      gpio_intr_disable(FLASH_INPUT);
+      FlashCounter = gFlashCounter;
+      gpio_intr_enable(FLASH_INPUT);
 
-    iCBORBuildSize = 0;
-    BuildCBORBuf(LoraBuf, sizeof(LoraBuf), iCBORBuildSize, SD);
-    if (iCBORBuildSize > sizeof(LoraBuf))
-      ESP_LOGE(TAG, "LoRa Buffer overflow...:%d", iCBORBuildSize);
-
-    // LoRa-Paket senden
-    int RetryCounter = 0;
-    bool SendOK = false;
-    const int MaxRetries = 5;
-
-    while (!SendOK && RetryCounter < MaxRetries)
-    {
-      gpio_set_level(LORA_SEND_LED, 1);
-
-      ret = LoRa.SendLoraMsg(CMD_CBORDATA, LoraBuf, iCBORBuildSize, SD.PC);
-      SendOK = ret == ESP_OK;
-      int64_t te = GetTime_us();
-      gpio_set_level(LORA_SEND_LED, 0);
-      // ESP_LOGI(TAG, "Zeit fuer LoRa: %.1f ms. Paketgroesse: %u", double(te - ts) / 1000.0, iCBORBuildSize);
-      if (!SendOK)
+      // Die Windgeschwindigkeit wird erst ausgewertet, wenn der Windspeedzähler mehr als 10 Impulse gezählt hat,
+      // damit die Genauigkeit nicht zu schlecht wird. Hat sich der Counter 10 s lang nicht gerührt, dann gehen wir von Flaute aus.
+      if (SD.PC > 0)
       {
-        RetryCounter++;
-        ESP_LOGE(TAG, "Fehler beim Senden eines LoRa-Paketes: %d Versuch: %d", ret, RetryCounter);
-        ESP_LOGE(TAG, "Resette LORA-Modul...");
-        LoRa.Reset();
-        vTaskDelay(pdMS_TO_TICKS(1000));
-        ret = InitLoRa(LoRa);
-        if (ret != ESP_OK)
-          ESP_LOGI(TAG, "Fehler beim Initialisieren des LoRa Moduls: %d", ret);
-        else
-          ESP_LOGI(TAG, "Re-Init LORA erfolgreich");
+        // Eine Tick-Frequenz von einem Hertz enstpricht einer Windgeschwindigkeit vonn (500/499) m/s = 1,002004008 m/s
+        TimePast = CurrentTime - StartWindTime;
+        float TimePast_s = TimePast / 1.0E6;
+        if (WindspeedCounter > 10 || TimePast >= 1E6 * 10)
+        {
+          StartWindTime = CurrentTime;
+          // Windgeschwindigkeit auswerten
+          gpio_intr_disable(WINDSPEED_INPUT);
+          gWindspeedCounter = 0;
+          gpio_intr_enable(WINDSPEED_INPUT);
+          SD.WindSpeed_m_s = (WindspeedCounter / TimePast_s) * (500.0 / 499.0);
+          ESP_LOGI(TAG, "Windgeschw.: %.1f m/s", SD.WindSpeed_m_s);
+        }
       }
-    }
-    if (!SendOK)
-    {
-      ESP_LOGE(TAG, "Wiederholtes Senden fehlgeschlagen!");
-    }
 
-    EndTime = GetTime_us();
-    ESP_LOGI(TAG, "LoRa gesendet nach %.1f ms", (EndTime - StartTime) / 1000.0);
+      // Jede Stunde die Counter speichern und zurücksetzen
+      if (CurrentTime - StartHourTime > 1E6 * 3600)
+      {
+        ESP_LOGI(TAG, "Zähler werden ausgewertet und zurückgesetzt.");
+        StartHourTime = CurrentTime;
+        // Zähler zurücksetzen
+        gpio_intr_disable(RAIN_INPUT);
+        gRainCounter = 0;
+        gpio_intr_enable(RAIN_INPUT);
+
+        gpio_intr_disable(FLASH_INPUT);
+        gFlashCounter = 0;
+        gpio_intr_enable(FLASH_INPUT);
+
+        // DAVIS Regenmesser: Ein Zähler der Regenwippe entsprechen 4,22 cm³, was einer Regenmenge 0,2 mm/m² entspricht
+        // Wir geben das als mm / (m² * h) aus
+        SD.Rain_mm_qm_h = RainCounter * 0.02;
+        ESP_LOGI(TAG, "Regenmenge: %.3f mm/m²h", SD.Rain_mm_qm_h);
+        // Blitze pro Stunde
+        SD.Flashes_h = FlashCounter;
+        ESP_LOGI(TAG, "Blitze: %d Blitze pro Stunde", SD.Flashes_h);
+      }
+
+      if (CurrentTime - StartLoraTime > LoRaUpdateTime)
+      {
+        StartLoraTime = CurrentTime;
+        iCBORBuildSize = 0;
+        BuildCBORBuf(LoraBuf, sizeof(LoraBuf), iCBORBuildSize, SD);
+        if (iCBORBuildSize > sizeof(LoraBuf))
+          ESP_LOGE(TAG, "LoRa Buffer overflow...:%d", iCBORBuildSize);
+
+        // LoRa-Paket senden
+        int RetryCounter = 0;
+        bool SendOK = false;
+        const int MaxRetries = 5;
+
+        while (!SendOK && RetryCounter < MaxRetries)
+        {
+          gpio_set_level(LORA_SEND_LED, 1);
+
+          ret = LoRa.SendLoraMsg(CMD_CBORDATA, LoraBuf, iCBORBuildSize, SD.PC);
+          SendOK = ret == ESP_OK;
+          int64_t te = GetTime_us();
+          gpio_set_level(LORA_SEND_LED, 0);
+          // ESP_LOGI(TAG, "Zeit fuer LoRa: %.1f ms. Paketgroesse: %u", double(te - ts) / 1000.0, iCBORBuildSize);
+          if (!SendOK)
+          {
+            RetryCounter++;
+            ESP_LOGE(TAG, "Fehler beim Senden eines LoRa-Paketes: %d Versuch: %d", ret, RetryCounter);
+            ESP_LOGE(TAG, "Resette LORA-Modul...");
+            LoRa.Reset();
+            vTaskDelay(pdMS_TO_TICKS(1000));
+            ret = InitLoRa(LoRa);
+            if (ret != ESP_OK)
+              ESP_LOGI(TAG, "Fehler beim Initialisieren des LoRa Moduls: %d", ret);
+            else
+              ESP_LOGI(TAG, "Re-Init LORA erfolgreich");
+          }
+        }
+        if (!SendOK)
+        {
+          ESP_LOGE(TAG, "Wiederholtes Senden fehlgeschlagen!");
+        }
+
+        EndTime = GetTime_us();
+        ESP_LOGI(TAG, "LoRa gesendet nach %.1f ms", (EndTime - StartTime) / 1000.0);
+      }
 
 // Bei dem verwendeten Font (6 breit x 10 hoch) kommen wir beim Nokia Display auf
 // 4 Zeilen a 14 Zeichen
@@ -349,41 +361,40 @@ void app_main_cpp()
 #define DISPLAY_LINES 4
 #define DISPLAY_BUF_LINES 15
 
-    // Anzuzeigender Bereich des gesamten Display-Buffers
-    int ViewLineStart = 0;
-    int ViewLineEnd = 3;
+      // Anzuzeigender Bereich des gesamten Display-Buffers
+      int ViewLineStart = 0;
+      int ViewLineEnd = 3;
 
-    char DisplayBuf[DISPLAY_BUF_LINES][DISPLAY_CHARS_PER_LINE + 1] = {};
-    snprintf(DisplayBuf[0], DISPLAY_CHARS_PER_LINE, "T: %.2f%cC", SD.Temp_deg, 176);
-    snprintf(DisplayBuf[1], DISPLAY_CHARS_PER_LINE, "H: %.2f %%", SD.Hum_per);
-    snprintf(DisplayBuf[2], DISPLAY_CHARS_PER_LINE, "P: %.2f mBar", SD.Press_mBar);
-    snprintf(DisplayBuf[3], DISPLAY_CHARS_PER_LINE, "W: %.2f m/s", SD.WindSpeed_m_s);
-    snprintf(DisplayBuf[4], DISPLAY_CHARS_PER_LINE, "R: %.2f mm", SD.Rain_mm_qm_h);
-    snprintf(DisplayBuf[5], DISPLAY_CHARS_PER_LINE, "B: %.2f lux", SD.Brightness_lux);
-    snprintf(DisplayBuf[6], DISPLAY_CHARS_PER_LINE, "SErr: %lu", SST.SHT40Err);
-    snprintf(DisplayBuf[7], DISPLAY_CHARS_PER_LINE, "BErr: %lu", SST.BMP390Err);
-    snprintf(DisplayBuf[8], DISPLAY_CHARS_PER_LINE, "AErr: %lu", SST.ADS1015Err);
-    snprintf(DisplayBuf[9], DISPLAY_CHARS_PER_LINE, "DErr: %lu", SST.NokiaDisplayErr);
-/*
-    u8g2_ClearDisplay(&u8g2);
-    u8g2_SetFont(&u8g2, u8g2_font_crox1h_tf);
-    u8g2_ClearBuffer(&u8g2);
-    u8g2_SendBuffer(&u8g2);
-    char TestBuf[100]={};
-    sprintf(TestBuf,"Hello World");
-    u8g2_DrawStr(&u8g2, 20, 20, TestBuf);
-    vTaskDelay(1000 / portTICK_PERIOD_MS);
-    */
-    u8g2_ClearBuffer(&u8g2);
-    for (int i = ViewLineStart; i <= ViewLineEnd; i++)
-    {
-      u8g2_DrawStr(&u8g2, 0, LINE_HEIGHT * (i - ViewLineStart+1)-1, DisplayBuf[i]);
-    }
-    u8g2_SendBuffer(&u8g2);
+      char DisplayBuf[DISPLAY_BUF_LINES][DISPLAY_CHARS_PER_LINE + 1] = {};
+      // snprintf(DisplayBuf[0], DISPLAY_CHARS_PER_LINE, "T: %.2f%cC", SD.Temp_deg, 176);
+      // snprintf(DisplayBuf[1], DISPLAY_CHARS_PER_LINE, "H: %.2f %%", SD.Hum_per);
+      // snprintf(DisplayBuf[2], DISPLAY_CHARS_PER_LINE, "P: %.2f mBar", SD.Press_mBar);
+      snprintf(DisplayBuf[3], DISPLAY_CHARS_PER_LINE, "W: %.2f m/s", SD.WindSpeed_m_s);
+      snprintf(DisplayBuf[4], DISPLAY_CHARS_PER_LINE, "R: %.2f mm", SD.Rain_mm_qm_h);
+      snprintf(DisplayBuf[5], DISPLAY_CHARS_PER_LINE, "B: %.2f lux", SD.Brightness_lux);
+      snprintf(DisplayBuf[6], DISPLAY_CHARS_PER_LINE, "SErr: %lu", SST.SHT40Err);
+      snprintf(DisplayBuf[7], DISPLAY_CHARS_PER_LINE, "BErr: %lu", SST.BMP390Err);
+      snprintf(DisplayBuf[8], DISPLAY_CHARS_PER_LINE, "AErr: %lu", SST.ADS1015Err);
+      snprintf(DisplayBuf[9], DISPLAY_CHARS_PER_LINE, "DErr: %lu", SST.NokiaDisplayErr);
 
-    vTaskDelay(5000 / portTICK_PERIOD_MS);
-    SD.PC++;
-  }
+      snprintf(DisplayBuf[0], DISPLAY_CHARS_PER_LINE, "Wind: %lu", WindspeedCounter);
+      snprintf(DisplayBuf[1], DISPLAY_CHARS_PER_LINE, "Regen: %lu", RainCounter);
+      snprintf(DisplayBuf[2], DISPLAY_CHARS_PER_LINE, "Blitz: %lu", FlashCounter);
+      snprintf(DisplayBuf[3], DISPLAY_CHARS_PER_LINE, "Durchlauf: %lu", SD.PC);
+
+      u8g2_ClearBuffer(&u8g2);
+      for (int i = ViewLineStart; i <= ViewLineEnd; i++)
+      {
+        u8g2_DrawStr(&u8g2, 0, LINE_HEIGHT * (i - ViewLineStart + 1) - 1, DisplayBuf[i]);
+      }
+      u8g2_SendBuffer(&u8g2);
+
+      // vTaskDelay(5000 / portTICK_PERIOD_MS);
+      SD.PC++;
+
+    } // Ende sekündliche Sensorenabfrage
+
+  } // Ende Hauptschleife
 
   // Hier kommt man eigentlich nicht hin...
   u8g2_SetPowerSave(&u8g2, 1);
@@ -410,7 +421,7 @@ void GetSensorData(SensorData &aData, SensorStatus &SST)
       {
         SST.BMP390Err++;
         ESP_LOGE(TAG, "Fehler beim Lesen des BMP390: %d, Versuch %d", ret, RetryCounter + 1);
-        //Bmp.StartReadTempAndPress();
+        // Bmp.StartReadTempAndPress();
       }
       aData.Temp_deg = t;
       aData.Press_mBar = Bmp.SeaLevelForAltitude(210, p);
@@ -532,8 +543,8 @@ void GetSensorData(SensorData &aData, SensorStatus &SST)
 
 esp_err_t InitGPIO()
 {
-// Outputs
-#define OutputBitMask (1ULL << LORA_SEND_LED) | (1ULL << ERROR_LED) | (1ULL << READ_SENSOR_LED);
+  // Outputs
+  const uint64_t OutputBitMask = (1ULL << LORA_SEND_LED) | (1ULL << ERROR_LED) | (1ULL << READ_SENSOR_LED);
 
   gpio_config_t ConfigOutput = {};
   ConfigOutput.pin_bit_mask = OutputBitMask;
@@ -541,31 +552,25 @@ esp_err_t InitGPIO()
   ConfigOutput.pull_up_en = GPIO_PULLUP_DISABLE;
   ConfigOutput.pull_down_en = GPIO_PULLDOWN_DISABLE;
   ConfigOutput.intr_type = GPIO_INTR_DISABLE;
-  esp_err_t error = gpio_config(&ConfigOutput);
-
-  if (error != ESP_OK)
-  {
-    ESP_LOGE(TAG, "Fehler bei InitGPIO: %d",error);
-    return error;
-  }
+  ESP_RETURN_ON_ERROR(gpio_config(&ConfigOutput), TAG, "Fehler bei Init output GPIO");
 
   // Inputs
-  return ESP_OK;
-  uint64_t InputBitMask = (1ULL << RAIN_INPUT) | (1ULL << LIGHTNING_INPUT) | (1ULL << WINDSPEED_INPUT);
+  const uint64_t InputBitMask = (1ULL << RAIN_INPUT) | (1ULL << FLASH_INPUT) | (1ULL << WINDSPEED_INPUT);
   gpio_config_t ConfigInput = {};
   ConfigInput.pin_bit_mask = InputBitMask;
   ConfigInput.mode = GPIO_MODE_INPUT;
-  ConfigInput.pull_up_en = GPIO_PULLUP_ENABLE;
+  ConfigInput.pull_up_en = GPIO_PULLUP_DISABLE;     // die Input-only Pins 34, 36, 39 haben keinen internen Pullup, dann braucht man den auch nicht einschalten!
   ConfigInput.pull_down_en = GPIO_PULLDOWN_DISABLE;
-  ConfigInput.intr_type = GPIO_INTR_POSEDGE;
-  gpio_config(&ConfigInput);
+  ConfigInput.intr_type = GPIO_INTR_NEGEDGE;
+  ESP_RETURN_ON_ERROR(gpio_config(&ConfigInput), TAG, "Fehler bei Init input GPIO");
 
   // install gpio isr service
-  gpio_install_isr_service(0);
+  ESP_RETURN_ON_ERROR(gpio_install_isr_service(0), TAG, "Fehler bei Init input GPIO");
   // hook isr handler for specific gpio pin
-  gpio_isr_handler_add(RAIN_INPUT, gpio_isr_handler, (void *)RAIN_INPUT);
-  gpio_isr_handler_add(LIGHTNING_INPUT, gpio_isr_handler, (void *)LIGHTNING_INPUT);
-  gpio_isr_handler_add(WINDSPEED_INPUT, gpio_isr_handler, (void *)WINDSPEED_INPUT);
+  ESP_RETURN_ON_ERROR(gpio_isr_handler_add(RAIN_INPUT, gpio_isr_handler, (void *)RAIN_INPUT), TAG, "Fehler RAIN_INPUT IRQ");
+  ESP_RETURN_ON_ERROR(gpio_isr_handler_add(FLASH_INPUT, gpio_isr_handler, (void *)FLASH_INPUT), TAG, "Fehler bei FLASH_INPUT IRQ");
+  ESP_RETURN_ON_ERROR(gpio_isr_handler_add(WINDSPEED_INPUT, gpio_isr_handler, (void *)WINDSPEED_INPUT), TAG, "Fehler bei WINDSPEED_INPUT IRQ");
+  return ESP_OK;
 }
 
 static void IRAM_ATTR gpio_isr_handler(void *arg)
@@ -578,7 +583,7 @@ static void IRAM_ATTR gpio_isr_handler(void *arg)
   case RAIN_INPUT:
     gRainCounter++;
     break;
-  case LIGHTNING_INPUT:
+  case FLASH_INPUT:
     gFlashCounter++;
     break;
   case WINDSPEED_INPUT:
@@ -699,7 +704,7 @@ void InitNokia_u8g2()
   u8g2_esp32_hal.cs = DISPLAY_CE;
   u8g2_esp32_hal.reset = DISPLAY_RST;
   u8g2_esp32_hal.dc = DISPLAY_DC;
-  u8g2_esp32_hal_init(u8g2_esp32_hal); 
+  u8g2_esp32_hal_init(u8g2_esp32_hal);
   // Nokia 5110 Display
 
   u8g2_Setup_pcd8544_84x48_f(&u8g2, U8G2_R0, u8g2_esp32_spi_byte_cb, u8g2_esp32_gpio_and_delay_cb);
