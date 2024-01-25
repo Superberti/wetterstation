@@ -46,11 +46,10 @@ esp_err_t ADS1015::ReadADC(ADC_MP aInputMux, FSC_RANGE aFullScale, ADC_SPEED aSp
   esp_err_t ret;
   uint16_t Config;
   ReadRegister16(REG_CONFIG, Config);
-  
 
   // Init ADS1015 (die 0x3 am Ende schaltet den Komperator ab...)
   Config = (1 << 15) | (aInputMux << 12) | (aFullScale << 9) | (1 << 8) | (aSpeed << 5) | 0x3;
-  
+
   // Konfiguration schreiben und Konversion starten
   ret = WriteRegister16(REG_CONFIG, Config);
   if (ret != ESP_OK)
@@ -73,12 +72,12 @@ esp_err_t ADS1015::ReadADC(ADC_MP aInputMux, FSC_RANGE aFullScale, ADC_SPEED aSp
     if (cvr)
     {
       // Konversionsergebnis vom ADC lesen
-      aADCValue = 0;
       double TimePast = (GetTime_us() - StartTime) / 1.0E6;
       ESP_LOGI("ADS1015", "Zeit für ADC: %.3f s", TimePast);
       return ReadRegister16(REG_CONVERSION, aADCValue);
+      aADCValue = aADCValue >> 4; // Die vier ersten LSBs haben keine Bedeutung!
     }
-    
+
     vTaskDelay(10 / portTICK_PERIOD_MS);
   }
   return ESP_ERR_TIMEOUT;
