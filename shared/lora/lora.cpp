@@ -217,13 +217,15 @@ void LoRaBase::WaitBusy()
   uint32_t timeout = 0;
   while (gpio_get_level((gpio_num_t)PinConfig->Busy) == 1)
   {
+    int Busy=gpio_get_level(GPIO_NUM_13);
+    //ESP_LOGI("LoRa", "LoRa busy level: %d", Busy);
     timeout++;
     if (timeout > 1000)
     {
       ESP_LOGE("LoRa", "WaitBusy timeout!");
       break;
     }
-    vTaskDelay(pdMS_TO_TICKS(1));
+    vTaskDelay(pdMS_TO_TICKS(10));
   }
 }
 

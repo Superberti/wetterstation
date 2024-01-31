@@ -125,6 +125,8 @@ void app_main_cpp()
   int counter=0;
   for (;;)
   {
+    //int Busy=gpio_get_level(GPIO_NUM_13);
+    //ESP_LOGI(TAG, "LoRa busy level: %d", Busy);
     // LoRa-Paket senden
     int RetryCounter = 0;
     bool SendOK = false;
