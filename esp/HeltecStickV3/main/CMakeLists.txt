@@ -1,2 +1,2 @@
-idf_component_register(SRCS "heltec_lite.cpp"
+idf_component_register(SRCS "HeltecStick.cpp"
                     INCLUDE_DIRS "." "../../../shared/")

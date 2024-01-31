@@ -73,7 +73,7 @@ uint8_t u8g2_esp32_spi_byte_cb(u8x8_t* u8x8,
       bus_config.quadwp_io_num = -1;                 // Not used
       bus_config.quadhd_io_num = -1;                 // Not used
       //ESP_LOGI(TAG, "... Initializing bus.");
-      ESP_ERROR_CHECK(spi_bus_initialize(HSPI_HOST, &bus_config, 1));
+      ESP_ERROR_CHECK(spi_bus_initialize(HSPI_HOST, &bus_config, SPI_DMA_CH_AUTO));
 
       spi_device_interface_config_t dev_config={};
       
