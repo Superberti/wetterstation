@@ -9,6 +9,9 @@
 #include "lorastructs.h"
 #include "lora.h"
 #include "../tools/tools.h"
+#include "esp_check.h"
+
+static void LoraReceivedHandler(void *arg);
 
 // Quarzfrequenz aller Module
 #define XTAL_FRQ 32000000
@@ -16,7 +19,7 @@
 // Der ESP32 hat SPI0 und SPI1 intern mit dem Flash verdrahtet. Frei sind SPI2/3
 LoRa_PinConfiguration::LoRa_PinConfiguration(LoRaBoardTypes aBoard)
 {
-  ESP_LOGI("LORA:", "Selected board: %d",(int)aBoard);
+  ESP_LOGI("LORA:", "Selected board: %d", (int)aBoard);
   UseTXCO = false;
   switch (aBoard)
   {
@@ -51,19 +54,19 @@ LoRa_PinConfiguration::LoRa_PinConfiguration(LoRaBoardTypes aBoard)
     // DIO0 = 26;  // Der SX1262 hat nur DIO1-3. Angeschlossen ist aber nur DIO1
     DIO1 = 14;
     Busy = 13;
-    SPIChannel = SPI2_HOST; 
-    UseTXCO = true;         // Hat einen TXCO und keinen XTAL
+    SPIChannel = SPI2_HOST;
+    UseTXCO = true; // Hat einen TXCO und keinen XTAL
     break;
-    case DevKitC_V4:
-      ChipSelect=18;
-      Reset=14;
-      Miso=19;
-      Mosi=27;
-      Clock=5;
-      DIO0=33;
-	    DIO1=0;
-      SPIChannel = SPI3_HOST;
-	    Busy=0;//(n.B.)
+  case DevKitC_V4:
+    ChipSelect = 18;
+    Reset = 14;
+    Miso = 19;
+    Mosi = 27;
+    Clock = 5;
+    DIO0 = 33;
+    DIO1 = 0;
+    SPIChannel = SPI3_HOST;
+    Busy = 0; //(n.B.)
     break;
   }
 }
@@ -77,16 +80,43 @@ LoRaBase::LoRaBase(LoRaBoardTypes aBoard)
 esp_err_t LoRaBase::SPIBusInit()
 {
   esp_err_t ret;
-  /*
-   * Configure CPU hardware to communicate with the radio chip
-   */
-  gpio_reset_pin((gpio_num_t)PinConfig->Reset);
-  gpio_set_direction((gpio_num_t)PinConfig->Reset, GPIO_MODE_OUTPUT);
-  gpio_reset_pin((gpio_num_t)PinConfig->ChipSelect);
-  gpio_set_direction((gpio_num_t)PinConfig->ChipSelect, GPIO_MODE_OUTPUT);
-  gpio_reset_pin((gpio_num_t)PinConfig->Busy);
-  gpio_set_direction((gpio_num_t)PinConfig->Busy, GPIO_MODE_INPUT);
-  gpio_pulldown_en((gpio_num_t)PinConfig->Busy);
+
+  // GPIO-Init
+
+  // Outputs
+  const uint64_t OutputBitMask = (1ULL << PinConfig->Reset) | (1ULL << PinConfig->ChipSelect);
+
+  gpio_config_t ConfigOutput = {};
+  ConfigOutput.pin_bit_mask = OutputBitMask;
+  ConfigOutput.mode = GPIO_MODE_OUTPUT;
+  ConfigOutput.pull_up_en = GPIO_PULLUP_DISABLE;
+  ConfigOutput.pull_down_en = GPIO_PULLDOWN_DISABLE;
+  ConfigOutput.intr_type = GPIO_INTR_DISABLE;
+  ESP_RETURN_ON_ERROR(gpio_config(&ConfigOutput), "LORA:", "Fehler bei Init output GPIO");
+
+  // Inputs
+  uint64_t InputBitMask = (1ULL << PinConfig->Busy);
+  gpio_config_t ConfigInput = {};
+  ConfigInput.pin_bit_mask = InputBitMask;
+  ConfigInput.mode = GPIO_MODE_INPUT;
+  ConfigInput.pull_up_en = GPIO_PULLUP_DISABLE;
+  ConfigInput.pull_down_en = GPIO_PULLDOWN_DISABLE;
+  ConfigInput.intr_type = GPIO_INTR_DISABLE;
+  ESP_RETURN_ON_ERROR(gpio_config(&ConfigInput), "LORA:", "Fehler bei Init input GPIO");
+
+  // Inputs
+  InputBitMask = (1ULL << PinConfig->DIO1);
+  ConfigInput.pin_bit_mask = InputBitMask;
+  ConfigInput.mode = GPIO_MODE_INPUT;
+  ConfigInput.pull_up_en = GPIO_PULLUP_DISABLE; // die Input-only Pins 34, 36, 39 haben keinen internen Pullup, dann braucht man den auch nicht einschalten!
+  ConfigInput.pull_down_en = GPIO_PULLDOWN_DISABLE;
+  ConfigInput.intr_type = GPIO_INTR_NEGEDGE;
+  ESP_RETURN_ON_ERROR(gpio_config(&ConfigInput), "LORA:", "Fehler bei Init input GPIO");
+
+  // install gpio isr service
+  ESP_RETURN_ON_ERROR(gpio_install_isr_service(0), "LORA:", "Fehler bei Init input GPIO");
+  // hook isr handler for specific gpio pin
+  ESP_RETURN_ON_ERROR(gpio_isr_handler_add((gpio_num_t)PinConfig->DIO1, LoraReceivedHandler, (void *)PinConfig->DIO1), "LORA:", "Fehler PinConfig->DIO1 IRQ");
 
   spi_bus_config_t bus = {};
   bus.miso_io_num = PinConfig->Miso;
@@ -95,7 +125,7 @@ esp_err_t LoRaBase::SPIBusInit()
   bus.quadwp_io_num = -1;
   bus.quadhd_io_num = -1;
   bus.max_transfer_sz = 0;
-  ESP_LOGI("LORA:", "Init LoRa SPI. Channel: %d",PinConfig->SPIChannel);
+  ESP_LOGI("LORA:", "Init LoRa SPI. Channel: %d", PinConfig->SPIChannel);
   ret = spi_bus_initialize(PinConfig->SPIChannel, &bus, 0 /*SPI_DMA_CH_AUTO*/); // ohne DMA max. 32 Bytes gleichzeitig per SPI!
   if (ret != ESP_OK)
     return ret;
@@ -106,11 +136,18 @@ esp_err_t LoRaBase::SPIBusInit()
   dev.queue_size = 1;
   dev.flags = 0;
   dev.pre_cb = NULL;
-  ESP_LOGI("LORA:", "AddDevice LoRa SPI. Channel: %d",PinConfig->SPIChannel);
+  ESP_LOGI("LORA:", "AddDevice LoRa SPI. Channel: %d", PinConfig->SPIChannel);
   ret = spi_bus_add_device(PinConfig->SPIChannel, &dev, &mhSpi);
   if (ret != ESP_OK)
     return ret;
   return ESP_OK;
+}
+
+static void LoraReceivedHandler(void *arg)
+{
+  // Input-IRQ Windgeschw., Regen und Blitze
+  gpio_num_t InputPin = (gpio_num_t)((uint32_t)arg);
+  // ToDo: Received-Handler bearbeiten
 }
 
 /**
@@ -128,6 +165,8 @@ void LoRaBase::CloseSPI()
   {
     spi_bus_remove_device(mhSpi);
     spi_bus_free(PinConfig->SPIChannel);
+    gpio_uninstall_isr_service();
+    gpio_isr_handler_remove((gpio_num_t)PinConfig->DIO1);
     mhSpi = NULL;
   }
 }
@@ -152,7 +191,7 @@ esp_err_t LoRaBase::SendLoraMsg(LoraCommand aCmd, uint8_t *aBuf, uint16_t aSize,
     ph.PayloadCRC = Crc16(aBuf + BytesWritten, ph.PacketPayloadSize);
     memcpy(mLoraBuf, &ph, sizeof(ph)); // Header kopieren
     memcpy(mLoraBuf + sizeof(ph), aBuf + BytesWritten, ph.PacketPayloadSize);
-    // ESP_LOGI(TAG, "Sending LoRa packet %d/%d, %d bytes", i + 1, NumPackets, sizeof(ph) + ph.PacketPayloadSize);
+    // ESP_LOGI("LORA:", "Sending LoRa packet %d/%d, %d bytes", i + 1, NumPackets, sizeof(ph) + ph.PacketPayloadSize);
     ret = SendPacket(mLoraBuf, sizeof(ph) + ph.PacketPayloadSize);
     if (ret != ESP_OK)
       return ret;
@@ -1093,7 +1132,7 @@ esp_err_t SX1262_LoRa::GetIRQStatus(uint16_t &aStatus)
   Params[0] = Opcodes::OP_GET_IRQ_STATUS;
   ret = ChipCommand(Params, sizeof(Params));
   aStatus = (Params[2] << 8) + Params[3];
-  //ESP_LOGI("LoRa", "GetIQRStatus: %d %d %d %d", Params[0], Params[1], Params[2], Params[3]);
+  // ESP_LOGI("LoRa", "GetIQRStatus: %d %d %d %d", Params[0], Params[1], Params[2], Params[3]);
   return ret;
 }
 
@@ -1208,13 +1247,13 @@ esp_err_t SX1262_LoRa::SetupModule(uint8_t aAddress, uint32_t aFrq, uint16_t aPr
   if (PinConfig->UseTXCO)
   {
     // Aufwachzeit TXCO in ms
-    ESP_LOGI("LoRa","Calibrating TXCO...");
+    ESP_LOGI("LoRa", "Calibrating TXCO...");
     const uint32_t TXCO_WakeupTime = 5;
     SetDio3AsTcxoCtrl(TCXO_CTRL_1_8V, TXCO_WakeupTime << 6); // convert from ms to SX126x time base
     uint8_t CalibParam = 0x7F;
     SetCalibrateSections(CalibParam);
     Calibrate(433);
-    ESP_LOGI("LoRa","Calibrating done!");
+    ESP_LOGI("LoRa", "Calibrating done!");
   }
 
   SetDio2AsRfSwitchCtrl(true);
@@ -1326,9 +1365,9 @@ esp_err_t SX1262_LoRa::SendPacket(uint8_t *aBuf, uint8_t aSize)
   ret = GetIRQStatus(iIRQStatus);
   if (ret != ESP_OK)
     return ret;
-  //ESP_LOGI("LoRa", "iIRQStatus: %d", iIRQStatus);
+  // ESP_LOGI("LoRa", "iIRQStatus: %d", iIRQStatus);
 
-  //ESP_LOGI("LoRa", "Warte auf Paketende...");
+  // ESP_LOGI("LoRa", "Warte auf Paketende...");
   while ((iIRQStatus & IRQFlags::TxDone) == 0)
   {
     ret = GetIRQStatus(iIRQStatus);

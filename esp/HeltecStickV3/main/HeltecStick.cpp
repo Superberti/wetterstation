@@ -41,12 +41,13 @@ using json = nlohmann::json;
  *
  *
  * Lora ist auf SPI2
- * Lora SX162, ChipSelect -> 8;
- * Lora SX162, Reset -> 12;
- * Lora SX162, Miso -> 11;
- * Lora SX162, Mosi -> 10;
- * Lora SX162, Clock -> 9;
- * Lora SX162, DIO1 -> 14;
+ * Lora SX1262, ChipSelect -> 8;
+ * Lora SX1262, Reset -> 12;
+ * Lora SX1262, Miso -> 11;
+ * Lora SX1262, Mosi -> 10;
+ * Lora SX1262, Clock -> 9;
+ * Lora SX1262, DIO1 -> 14;
+ * Lora SX1262, Busy = 13;
  *
  * Display ist auf SPI3
  * SCK -> 33
