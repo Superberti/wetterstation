@@ -165,8 +165,8 @@ void LoRaBase::CloseSPI()
   {
     spi_bus_remove_device(mhSpi);
     spi_bus_free(PinConfig->SPIChannel);
-    gpio_uninstall_isr_service();
     gpio_isr_handler_remove((gpio_num_t)PinConfig->DIO1);
+    gpio_uninstall_isr_service();
     mhSpi = NULL;
   }
 }
