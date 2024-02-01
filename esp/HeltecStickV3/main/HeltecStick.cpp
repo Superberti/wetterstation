@@ -53,10 +53,11 @@ using json = nlohmann::json;
  * SCK -> 33
  * SDA -> 34
  * RST -> 38
- * CD -> 36
+ * CD -> 39
  * CS -> 37
  *
  * Board-LED -> 35
+ * Vext schalten (hier: Backlight) -> 36
  */
 
 // An welchem Ort befindet sich der Sensor? (s. lorastructs.h)
@@ -64,12 +65,13 @@ using json = nlohmann::json;
 
 #define TAG "HELTEC-V3"
 #define BOARD_LED GPIO_NUM_35
+#define BACKLIGHT GPIO_NUM_36
 
 // ERM19264 192x64, UC1609C driver Display
 #define DISPLAY_DIN GPIO_NUM_34 // MOSI
 #define DISPLAY_CLK GPIO_NUM_33 // SCK
 #define DISPLAY_CE GPIO_NUM_37  // Chip Enable (CS)
-#define DISPLAY_DC GPIO_NUM_36  // Umschaltung Config/Daten
+#define DISPLAY_DC GPIO_NUM_39  // Umschaltung Config/Daten
 #define DISPLAY_RST GPIO_NUM_38 // Reset
 
 u8g2_t u8g2; // a structure which will contain all the data for one display
@@ -102,6 +104,9 @@ void app_main_cpp()
     vTaskDelay(pdMS_TO_TICKS(100));
   }
 
+  // Display-Backlight an:
+  gpio_set_level(BACKLIGHT, 0);
+
   // LoRa-Modul
   SX1262_LoRa LoRa(HeltecWirelessStick_V3);
   // Parameter s. InitLoRa
@@ -114,8 +119,9 @@ void app_main_cpp()
   }
 
   InitDisplay_u8g2();
+  
   u8g2_ClearDisplay(&u8g2);
-  u8g2_SetFont(&u8g2, u8g2_font_6x10_tf);
+  u8g2_SetFont(&u8g2, u8g2_font_8x13_t_symbols);
 
   int64_t EndTime = GetTime_us();
   ESP_LOGI(TAG, "Init fertig nach %.1f ms", (EndTime - StartTime) / 1000.0);
@@ -125,13 +131,12 @@ void app_main_cpp()
   int counter=0;
   for (;;)
   {
-    //int Busy=gpio_get_level(GPIO_NUM_13);
-    //ESP_LOGI(TAG, "LoRa busy level: %d", Busy);
     // LoRa-Paket senden
     int RetryCounter = 0;
     bool SendOK = false;
     const int MaxRetries = 5;
     StartTime = GetTime_us();
+    
     while (!SendOK && RetryCounter < MaxRetries)
     {
       gpio_set_level(BOARD_LED, 1);
@@ -163,27 +168,30 @@ void app_main_cpp()
     EndTime = GetTime_us();
     ESP_LOGI(TAG, "LoRa gesendet nach %.1f ms", (EndTime - StartTime) / 1000.0);
 
-// Bei dem verwendeten Font (6 breit x 10 hoch) kommen wir beim Nokia Display auf
-// 4 Zeilen a 14 Zeichen
-#define DISPLAY_CHARS_PER_LINE 30
-#define LINE_HEIGHT 11
-#define DISPLAY_LINES 4
+// Das Display hat 192x64 Punkte
+// Bei dem verwendeten Font (8 breit x 13 hoch) kommen wir beim Nokia Display auf
+// 5 Zeilen a 24 Zeichen
+#define DISPLAY_CHARS_PER_LINE 48
+#define DISPLAY_LINES 5
+#define LINE_HEIGHT 13
 #define DISPLAY_BUF_LINES 15
 
     // Anzuzeigender Bereich des gesamten Display-Buffers
     int ViewLineStart = 0;
-    int ViewLineEnd = 3;
+    int ViewLineEnd = 4;
 
     char DisplayBuf[DISPLAY_BUF_LINES][DISPLAY_CHARS_PER_LINE + 1] = {};
     snprintf(DisplayBuf[0], DISPLAY_CHARS_PER_LINE, "Counter: %d", counter);
     snprintf(DisplayBuf[1], DISPLAY_CHARS_PER_LINE, "Hello WORLD");
     snprintf(DisplayBuf[2], DISPLAY_CHARS_PER_LINE, "Everybody");
+    snprintf(DisplayBuf[3], DISPLAY_CHARS_PER_LINE, "Das ist die vorletzte Zeile");
+    snprintf(DisplayBuf[4], DISPLAY_CHARS_PER_LINE, "Geht das noch?öÖüÜäÄß");
     
 
     u8g2_ClearBuffer(&u8g2);
     for (int i = ViewLineStart; i <= ViewLineEnd; i++)
     {
-      u8g2_DrawStr(&u8g2, 0, LINE_HEIGHT * (i - ViewLineStart + 1) - 1, DisplayBuf[i]);
+      u8g2_DrawUTF8(&u8g2, 0, LINE_HEIGHT * (i - ViewLineStart + 1) - 1, DisplayBuf[i]);
     }
     u8g2_SendBuffer(&u8g2);
 
@@ -200,7 +208,7 @@ void app_main_cpp()
 esp_err_t InitGPIO()
 {
   // Outputs
-  const uint64_t OutputBitMask = (1ULL << BOARD_LED);
+  const uint64_t OutputBitMask = (1ULL << BOARD_LED) | (1ULL << BACKLIGHT);
 
   gpio_config_t ConfigOutput = {};
   ConfigOutput.pin_bit_mask = OutputBitMask;

@@ -225,7 +225,7 @@ void LoRaBase::WaitBusy()
       ESP_LOGE("LoRa", "WaitBusy timeout!");
       break;
     }
-    vTaskDelay(pdMS_TO_TICKS(10));
+    vTaskDelay(1);
   }
 }
 
@@ -932,7 +932,7 @@ esp_err_t SX1262_LoRa::SetRadioMode(RadioMode aRM, uint32_t aTimeout)
     Params[1] = 0;
     ret = ChipCommand(Params, 2);
     // Mindestens 500 µs Pause lt. Datenblatt
-    vTaskDelay(pdMS_TO_TICKS(1));
+    vTaskDelay(1);
     break;
   case RM_RX_ENABLE:
     Params[0] = Opcodes::OP_SET_RX;
@@ -1389,7 +1389,7 @@ esp_err_t SX1262_LoRa::SendPacket(uint8_t *aBuf, uint8_t aSize)
       return ESP_ERR_TIMEOUT;
     }
 
-    vTaskDelay(pdMS_TO_TICKS(1));
+    vTaskDelay(1);
   };
   ClearIRQStatus(0xFFFF);
   return ret;
