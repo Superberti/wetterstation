@@ -12,7 +12,7 @@
 #include "esp_sleep.h"
 #include "driver/rtc_io.h"
 #include "soc/rtc.h"
-#include "sht40.h"
+#include "sensors/sht40.h"
 #include "esp_adc/adc_oneshot.h"
 #include "esp_adc/adc_cali.h"
 #include "esp_adc/adc_cali_scheme.h"
@@ -23,15 +23,19 @@
 #include "lorastructs.h"
 #include "esp_wifi.h"
 #include "hauptwetterstation.h"
-#include "bmp390.h"
-#include "ads1015.h"
+#include "sensors/bmp390.h"
+#include "sensors/ads1015.h"
 #include "rtc_wdt.h"
 #include "esp_check.h"
+#include "tools/tools.h"
+
+// I2C-Speed
+#define I2C_FREQ_HZ 400000
 
 extern "C"
 {
-#include <u8g2.h>
-#include <u8g2_esp32_hal.h>
+#include <u8g2/csrc/u8g2.h>
+#include <u8g2/u8g2_esp32_hal.h>
 }
 
 using json = nlohmann::json;
@@ -129,9 +133,9 @@ extern "C"
 }
 
 // Sensorik, global
-SHT40 Sht(I2C_NUM_0);
-BMP390 Bmp(I2C_NUM_0, BMP390_SENSOR_ADDR);
-ADS1015 Ads(I2C_NUM_0, ADC1015_ADDR_VDD);
+SHT40 Sht;
+BMP390 Bmp;
+ADS1x15 Ads;
 
 // Counter-Globals für die IRQs
 volatile uint32_t gWindspeedCounter = 0;
@@ -147,7 +151,6 @@ void app_main_cpp()
   SensorStatus SST = {};
 
   esp_err_t ret;
-  bool iCRCErr;
   int64_t StartTime = GetTime_us();
   struct timeval now;
   /*
@@ -163,28 +166,33 @@ void app_main_cpp()
 
   gpio_set_level(ERROR_LED, 1);
 
-  InitI2C(I2C_NUM_0, PIN_SDA_BUS0, PIN_SCL_BUS0);
+  // InitI2C(I2C_NUM_0, PIN_SDA_BUS0, PIN_SCL_BUS0);
+  ESP_LOGI(TAG, "I2C init...");
+  i2c_master_bus_handle_t i2c_bus_h_0, i2c_bus_h_1;
+  ret = InitI2C(I2C_NUM_0, PIN_SDA_BUS0, PIN_SCL_BUS0, &i2c_bus_h_0);
+  if (ret != ESP_OK)
+    ESP_LOGE(TAG, "Fehler beim InitI2C(0): %d.", ret);
+
+  ret = InitI2C(I2C_NUM_1, PIN_SDA_BUS1, PIN_SCL_BUS1, &i2c_bus_h_1);
+  if (ret != ESP_OK)
+    ESP_LOGE(TAG, "Fehler beim InitI2C(1): %d.", ret);
 
   gettimeofday(&now, NULL);
 
   // Init Temperatursensor
   uint32_t iSerial = 0;
 
-  ret = Sht.ReadSerial(iSerial, iCRCErr);
+  ret = Sht.ReadSerial(iSerial);
   ESP_LOGI(TAG, "SHT40 Seriennummer: %lu", iSerial);
   if (ret != ESP_OK)
   {
     SST.SkipSHT40 = true;
     ESP_LOGE(TAG, "Fehler beim Lesen der Seriennummer des SHT40: %d. Sensor ausgeschaltet!", ret);
   }
-  if (iCRCErr)
-  {
-    SST.SkipSHT40 = true;
-    ESP_LOGE(TAG, "Fehler beim Lesen des SHT40 CRC (Seriennummer). Sensor ausgeschaltet");
-  }
+  Sht.Init(i2c_bus_h_1, SHT40_ADDR, I2C_FREQ_HZ);
 
   // Temperatur und Luftdruck BMP390
-  ret = Bmp.Init();
+  ret = Bmp.Init(i2c_bus_h_0, BMP390_ADDRESS, I2C_FREQ_HZ);
   if (ret != ESP_OK)
   {
     SST.SkipBMP390 = true;
@@ -197,7 +205,8 @@ void app_main_cpp()
 
   // ADC testweise auslesen
   uint16_t ADCVal;
-  ret = Ads.ReadADC(AIN0, FSR_4_096, SPEED_250, ADCVal);
+  ret = Ads.Init(i2c_bus_h_0, ADC1x15_ADDR_VDD, I2C_FREQ_HZ);
+  ret = Ads.ReadADC_1115(AIN0, FSR_4_096, ADS_1115_SPEED_128, ADCVal);
   if (ret != ESP_OK)
   {
     SST.SkipADS1015 = true;
@@ -209,7 +218,17 @@ void app_main_cpp()
   }
 
   // LoRa-Modul
-  SX1278_LoRa LoRa(DevKitC_V4);
+  LoRa_PinConfiguration Devkit = {};
+  Devkit.ChipSelect = GPIO_NUM_18;
+    Devkit.Reset = GPIO_NUM_14;
+    Devkit.Miso = GPIO_NUM_19;
+    Devkit.Mosi = GPIO_NUM_27;
+    Devkit.Clock = GPIO_NUM_5;
+    Devkit.DIO0 = GPIO_NUM_33;
+    Devkit.DIO1 = GPIO_NUM_0;
+    Devkit.SPIChannel = SPI3_HOST;
+    Devkit.Busy = GPIO_NUM_0; //(n.B.)
+  SX1278_LoRa LoRa(Devkit);
   // Parameter s. InitLoRa
   ret = InitLoRa(LoRa);
   if (ret != ESP_OK)
@@ -406,8 +425,7 @@ void GetSensorData(SensorData &aData, SensorStatus &SST)
 {
   const int MaxRetries = 5;
   esp_err_t ret = ESP_OK;
-  double p, t;
-  bool iCRCErr;
+  float p, t;
   uint16_t ADCVal;
   int RetryCounter = 0;
 
@@ -453,17 +471,11 @@ void GetSensorData(SensorData &aData, SensorStatus &SST)
   {
     do
     {
-      ret = Sht.Read(aData.Temp_deg, aData.Hum_per, iCRCErr);
+      ret = Sht.Read(aData.Temp_deg, aData.Hum_per);
       if (ret != ESP_OK)
       {
         SST.SHT40Err++;
         ESP_LOGE(TAG, "Fehler beim Lesen der Temperatur/Luftfeuchtigkeit des SHT40: %d, Versuch %d", ret, RetryCounter + 1);
-      }
-      else if (iCRCErr)
-      {
-        SST.SHT40Err++;
-        ESP_LOGE(TAG, "Fehler beim Lesen des SHT40 CRC (T/L), Versuch %d", RetryCounter + 1);
-        ret = ESP_ERR_INVALID_CRC;
       }
       RetryCounter++;
       if (ret != ESP_OK)
@@ -498,7 +510,7 @@ void GetSensorData(SensorData &aData, SensorStatus &SST)
       do
       {
         // Single-ended bedeutet FSR_2_048 = 0..4,096 V
-        ret = Ads.ReadADC(InputPin, FSR_2_048, SPEED_1600, ADCVal);
+        ret = Ads.ReadADC_1115(InputPin, FSR_2_048, ADS_1115_SPEED_128, ADCVal);
         if (ret != ESP_OK)
         {
           SST.ADS1015Err++;
@@ -560,7 +572,7 @@ esp_err_t InitGPIO()
   gpio_config_t ConfigInput = {};
   ConfigInput.pin_bit_mask = InputBitMask;
   ConfigInput.mode = GPIO_MODE_INPUT;
-  ConfigInput.pull_up_en = GPIO_PULLUP_DISABLE;     // die Input-only Pins 34, 36, 39 haben keinen internen Pullup, dann braucht man den auch nicht einschalten!
+  ConfigInput.pull_up_en = GPIO_PULLUP_DISABLE; // die Input-only Pins 34, 36, 39 haben keinen internen Pullup, dann braucht man den auch nicht einschalten!
   ConfigInput.pull_down_en = GPIO_PULLDOWN_DISABLE;
   ConfigInput.intr_type = GPIO_INTR_NEGEDGE;
   ESP_RETURN_ON_ERROR(gpio_config(&ConfigInput), TAG, "Fehler bei Init input GPIO");
@@ -595,24 +607,21 @@ static void IRAM_ATTR gpio_isr_handler(void *arg)
   }
 }
 
-esp_err_t InitI2C(i2c_port_t aPort, int aSDA_Pin, int aSCL_Pin)
+esp_err_t InitI2C(i2c_port_t aPort, gpio_num_t aSDA_Pin, gpio_num_t aSCL_Pin, i2c_master_bus_handle_t *aBusHandle)
 {
   if (aPort > 1)
     return ESP_ERR_INVALID_ARG;
-  esp_err_t ret;
 
-  i2c_config_t conf;
-  conf.mode = I2C_MODE_MASTER;
+  i2c_master_bus_config_t conf;
+  conf.i2c_port = aPort;
   conf.sda_io_num = aSDA_Pin;
-  conf.sda_pullup_en = GPIO_PULLUP_ENABLE;
   conf.scl_io_num = aSCL_Pin;
-  conf.scl_pullup_en = GPIO_PULLUP_ENABLE;
-  conf.master.clk_speed = 100000; // Fast Mode, 1000000;  // Fast Mode Plus=1MHz
-  conf.clk_flags = 0;
-  ret = i2c_param_config(aPort, &conf);
-  if (ret != ESP_OK)
-    return ret;
-  return i2c_driver_install(aPort, conf.mode, 0, 0, 0);
+  conf.clk_source = I2C_CLK_SRC_DEFAULT;
+  conf.glitch_ignore_cnt = 7;
+  conf.intr_priority = 0;
+  conf.trans_queue_depth = 0;
+  conf.flags.enable_internal_pullup = 1;
+  return i2c_new_master_bus(&conf, aBusHandle);
 }
 
 esp_err_t InitLoRa(SX1278_LoRa &aLoRa)
@@ -630,13 +639,6 @@ esp_err_t InitLoRa(SX1278_LoRa &aLoRa)
   // Coding-Rate: 6 = 4/6 = 1,5-facher FEC-Overhead
   // Tx-Power 2-17
   return aLoRa.SetupModule(LORA_ADDR_GWHS, 434.54e6, 14, LoRaBase::LoRaBandwidth::LORA_BW_500, 0x37, LoRaBase::SpreadingFactor::SF8, LoRaBase::LoRaCodingRate::LORA_CR_4_6, 15);
-}
-
-int64_t GetTime_us()
-{
-  struct timeval tv_now;
-  gettimeofday(&tv_now, NULL);
-  return (int64_t)tv_now.tv_sec * 1000000L + (int64_t)tv_now.tv_usec;
 }
 
 #define MAX_VPBUFLEN 256
