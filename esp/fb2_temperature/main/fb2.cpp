@@ -83,7 +83,7 @@ using json = nlohmann::json;
 #define WAKEUP_INPUT_PIN GPIO_NUM_2
 
 // Interner ADC (ADC1 Channel1)
-#define ADC_V_BATT ADC_CHANNEL_1
+#define ADC_V_BATT ADC_CHANNEL_0
 
 // I2C-Speed
 #define I2C_FREQ_HZ 400000
@@ -422,10 +422,10 @@ void logger::Run()
       AdcMean += AdcValue;
     }
     AdcMean /= 64.0;
-    // Referenzspannung 1.1V, Spannungsteiler 100K/100K, Abschwächung 12dB (Faktor 4) = 8.8 V bei Vollausschlag (4095)
+    // Referenzspannung 1.1V, Spannungsteiler 100K/100K, Abschwächung 0dB (Faktor 1) = 1.1 V bei Vollausschlag (4095)
     // Evtl. braucht es noch Offset/Gain als Kalibrierung für einen vernünftigen Wert. Alternativ an den ADS1115 anschließen...
     // tmp.VBatt_V = AdcMean / 4095 * 8.8; // -> Das ist die Theorie
-    VBatt_V = AdcMean / 4095 * 6.6566; // -> ... und das die Praxis
+    VBatt_V = AdcMean / 4095 * 8.8; // -> ... und das die Praxis
     return VBatt_V;
   }
 
