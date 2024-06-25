@@ -25,6 +25,7 @@ esp_err_t SHT40::Init(i2c_master_bus_handle_t aBusHandle, uint8_t aI2CAddr, uint
   conf.dev_addr_length = I2C_ADDR_BIT_LEN_7;
   conf.device_address = aI2CAddr;
   conf.scl_speed_hz = aI2CSpeed_Hz;
+  conf.flags.disable_ack_check=false;
   return i2c_master_bus_add_device(mBusHandle, &conf, &mDevHandle);
 }
 
@@ -35,10 +36,9 @@ SHT40::~SHT40(void)
 }
 
 // SHT40-Sensor auslesen
-esp_err_t SHT40::Read(float &aTemp, float &aHum, bool &rCRC_Err)
+esp_err_t SHT40::Read(float &aTemp, float &aHum)
 {
   int ret;
-  rCRC_Err = false;
   uint8_t mode = (uint8_t)mReadMode;
   ret = i2c_master_transmit(mDevHandle, &mode, 1, DEV_TIMEOUT);
   if (ret != ESP_OK)
@@ -92,23 +92,22 @@ esp_err_t SHT40::Read(float &aTemp, float &aHum, bool &rCRC_Err)
   if (crc != rb[2])
   {
     ESP_LOGE("SHT40:", "Falscher Temperatur-CRC: [0x%x] <> [0x%x]\r\n", crc, rb[2]);
-    rCRC_Err = true;
+    return ESP_ERR_INVALID_CRC;
   }
   // Checksumme Luftfeuchte
   crc = ComputeChecksum(rb + 3, 2);
   if (crc != rb[5])
   {
     ESP_LOGE("SHT40:", "Falscher Luftfeuchte-CRC: [0x%x] <> [0x%x]\r\n", crc, rb[5]);
-    rCRC_Err = true;
+    return ESP_ERR_INVALID_CRC;
   }
 
   return ret;
 }
 
-esp_err_t SHT40::ReadSerial(uint32_t &aSerialNo, bool &rCRC_Err)
+esp_err_t SHT40::ReadSerial(uint32_t &aSerialNo)
 {
   int ret;
-  rCRC_Err = false;
   uint8_t cmd = (uint8_t)SHT40_CMD_READ_SERIAL;
   ret = i2c_master_transmit(mDevHandle, &cmd, 1, DEV_TIMEOUT);
   if (ret != ESP_OK)
@@ -135,7 +134,7 @@ esp_err_t SHT40::ReadSerial(uint32_t &aSerialNo, bool &rCRC_Err)
   if (crc != rb[2])
   {
     ESP_LOGE("SHT40:", "Falscher Serial(0)-CRC: [0x%x] <> [0x%x]\r\n", crc, rb[2]);
-    rCRC_Err = true;
+    return ESP_ERR_INVALID_CRC;
   }
 
   // Checksumme Serial Block1
@@ -143,7 +142,7 @@ esp_err_t SHT40::ReadSerial(uint32_t &aSerialNo, bool &rCRC_Err)
   if (crc != rb[5])
   {
     ESP_LOGE("SHT40:", "Falscher Serial(1)-CRC: [0x%x] <> [0x%x]\r\n", crc, rb[5]);
-    rCRC_Err = true;
+    return ESP_ERR_INVALID_CRC;
   }
 
   return ret;

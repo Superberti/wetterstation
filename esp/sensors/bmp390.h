@@ -1,12 +1,13 @@
 /*
  * Ansteuerung eines BMP390 Luftdrucksensors.
- * Umgesetzt auf ESP32, nur I2C-Interface
- * O. Rutsch, 22.06.23
+ * Umgesetzt auf ESP32, neuer I2C-Treiber aus dem IDF 5.2.2
+ * O. Rutsch, 24.06.24
  */
 #ifndef __BMP390_H__
 #define __BMP390_H__
 
-#include "driver/i2c.h"
+#include "driver/i2c_master.h"
+#include "SensorTypes.h"
 
 #define BMP390_ADDRESS (0x77) // Adresse, wenn OSD auf Masse. Bei 3.3 V ist die Adresse 0x76
 #define BMP390_CHIP_ID (0x60) // Feste Chip-ID
@@ -76,14 +77,12 @@ struct bmp390_calib_data
 class BMP390
 {
 protected:
-  i2c_port_t mPort;
-  int mSDA_Pin;
-  int mSCL_Pin;
-  uint8_t mI2CAddr;
+  i2c_master_bus_handle_t mBusHandle;
+  i2c_master_dev_handle_t mDevHandle;
   // Berechnete Kalibrierfaktoren aus dem NVM
-  double PAR_T1, PAR_T2, PAR_T3;
-  double PAR_P1, PAR_P2, PAR_P3, PAR_P4, PAR_P5, PAR_P6, PAR_P7, PAR_P8, PAR_P9, PAR_P10, PAR_P11;
-  double t_lin;
+  float PAR_T1, PAR_T2, PAR_T3;
+  float PAR_P1, PAR_P2, PAR_P3, PAR_P4, PAR_P5, PAR_P6, PAR_P7, PAR_P8, PAR_P9, PAR_P10, PAR_P11;
+  float t_lin;
   bmp390_calib_data calib_data;
 
   /// @brief I2C-Register mit beliebiger Länge lesen
@@ -101,12 +100,12 @@ protected:
   /// @brief Temperaturregister auslesen und Umrechnung in die Temperatur
   /// @param rTemp Ausgelesene Temperatur in °C
   /// @return Status
-  esp_err_t ReadTemperature(double &rTemp);
+  esp_err_t ReadTemperature(float &rTemp);
 
   /// @brief Druckregister auslesen und Umrechnung in Druck
   /// @param rPress Absoluter Druck in mbar
   /// @return Status
-  esp_err_t ReadPressure(double &rPress);
+  esp_err_t ReadPressure(float &rPress);
 
   /// @brief 8-Bit-Register schreiben
   /// @param reg_addr Registeradresse
@@ -144,11 +143,11 @@ public:
   /// @brief Konstruktor BMP390-Sensor
   /// @param aPort I2C-Port des ESP32
   /// @param aI2CAddr I2C-Adresse
-  BMP390(i2c_port_t aPort, uint8_t aI2CAddr);
+  BMP390();
   ~BMP390(void);
 
   /// @brief BMP390-Sensor initialisieren und Kalibrierdaten lesen
-  esp_err_t Init();
+  esp_err_t Init(i2c_master_bus_handle_t aBusHandle, uint8_t aI2CAddr, uint32_t aI2CSpeed_Hz);
 
   /// @brief Gibt es Messwerte, die gelesen werden können?
   /// @return Messwerte lesbar
@@ -158,7 +157,7 @@ public:
   /// @param rTemp_C Temperatur
   /// @param rPress_mbar Druck
   /// @return Status
-  esp_err_t ReadTempAndPress(double &rTemp_C, double &rPress_mbar);
+  esp_err_t ReadTempAndPress(float &rTemp_C, float &rPress_mbar);
 
   /// @brief Auslesevorgang starten
   /// @return Status
@@ -170,7 +169,7 @@ public:
   /// @param rPress_mbar Druck
   /// @param rPress_mbar Wartet, bis die Daten anliegen. Timeout bei 1 s
   /// @return Status
-  esp_err_t ReadTempAndPressAsync(double &rTemp_C, double &rPress_mbar, bool aWaitForData = true);
+  esp_err_t ReadTempAndPressAsync(float &rTemp_C, float &rPress_mbar, bool aWaitForData = true);
 
   /// @brief Sensor Soft-Reset
   /// @param  
@@ -184,18 +183,18 @@ public:
   /// @param aAlt Gemessener Absolutdruck
   /// @param seaLevelhPa Aktueller Druck auf Meereshöhe
   /// @return Status
-  esp_err_t ReadAltitude(double &aAlt, double seaLevelhPa = 1013.25);
+  esp_err_t ReadAltitude(float &aAlt, float seaLevelhPa = 1013.25);
 
   /// @brief Luftdruck auf Meereshöhe umrechnen, falls die aktuelle Höhe bekannt ist
   /// @param altitude Aktuelle Höhe üNN
   /// @param atmospheric Gemessener Absolutdruck
   /// @return Druck relativ zur Meereshöhe
-  double SeaLevelForAltitude(double altitude, double atmospheric);
+  float SeaLevelForAltitude(float altitude, float atmospheric);
 
   /// @brief Siedetemperatur von Wasser berechnen
   /// @param pressure Absolutdruck
   /// @return Siedepunkt Wasser in °C
-  double WaterBoilingPoint(double pressure);
+  float WaterBoilingPoint(float pressure);
 };
 
 #endif

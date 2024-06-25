@@ -49,7 +49,6 @@ class BMP390;
 class logger
 {
 protected:
-  
   static const int mSleepIntervalTime_s;
   LoggerResetMode mLoggerResetMode;
   int64_t mStartTime; // gültig nach dem Auslesen des Uhrenchips
@@ -66,6 +65,7 @@ protected:
   void GoSleep();
   float GetVBatt();
   uint32_t GetSecondsAfterStart();
+
 public:
   logger();
   ~logger();

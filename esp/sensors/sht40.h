@@ -21,8 +21,8 @@ public:
   SHT40();
   esp_err_t Init(i2c_master_bus_handle_t aBusHandle, uint8_t aI2CAddr, uint32_t aI2CSpeed_Hz, SHT40_COMMAND aReadMode = SHT40_CMD_HPM);
   ~SHT40(void);
-  esp_err_t Read(float &aTemp, float &aHum, bool &rCRC_Err);
-  esp_err_t ReadSerial(uint32_t &aSerialNo, bool &rCRC_Err);
+  esp_err_t Read(float &aTemp, float &aHum);
+  esp_err_t ReadSerial(uint32_t &aSerialNo);
   static uint8_t ComputeChecksum(uint8_t *bytes, int len);
   static uint8_t Crc8b(uint8_t aData);
 };

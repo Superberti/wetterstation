@@ -1,5 +1,5 @@
 /*
- * ESP-Datenlogger für Druck, Feuchte und Temperatur 
+ * ESP-Datenlogger für Druck, Feuchte und Temperatur
  * CBOR-Datenübertragung an die Wetterstation mit LoRa-Funk
  * Baseboard: Firebeetle 2 (ESP32-C6, https://wiki.dfrobot.com/SKU_DFR1075_FireBeetle_2_Board_ESP32_C6)
  * Angeschlossene Sensorik:
@@ -64,7 +64,7 @@
  *
  * BOARD_LED -> 15
  *
- * WAKE-UP-Schalter -> 11 (Pull-Up, Active-Low)
+ * WAKE-UP-Schalter -> 2 (Pull-Up, Active-Low)
  *
  * Batteriespannung über 2x100 kOhm Spannungsteiler an GPIO2
  */
@@ -79,9 +79,13 @@
 #define PIN_SDA_BUS0 GPIO_NUM_19
 #define PIN_SCL_BUS0 GPIO_NUM_20
 
+// BMP390 am I2C-Bus 1
+#define PIN_SDA_BUS1 GPIO_NUM_6
+#define PIN_SCL_BUS1 GPIO_NUM_7
+
 // GPIOs
-#define BOARD_LED GPIO_NUM_17
-#define WAKEUP_INPUT_PIN GPIO_NUM_7
+#define BOARD_LED GPIO_NUM_15
+#define WAKEUP_INPUT_PIN GPIO_NUM_2
 
 // Interner ADC (ADC1 Channel1)
 #define ADC_V_BATT ADC_CHANNEL_1
@@ -107,6 +111,8 @@ extern "C"
 void app_main_cpp()
 {
   // vTaskDelay(pdMS_TO_TICKS(1000));
+  logger l;
+  l.Run();
 }
 
 #define NUM_SENSOR_DATA 10
@@ -114,11 +120,12 @@ void app_main_cpp()
 logger::logger()
 {
   mADCHandle = NULL;
+  i2c_bus_h_0 = NULL;
   mLoggerResetMode = RESET_MODE_POWERON;
   mStartTime = GetTime_us();
   // Log auf eigene Funktion umbiegen
   Sht = new SHT40;
-  //Bmp = new BMP390;
+  Bmp = new BMP390;
   switch (esp_sleep_get_wakeup_cause())
   {
   case ESP_SLEEP_WAKEUP_TIMER:
@@ -159,7 +166,6 @@ logger::logger()
 
 void logger::Run()
 {
-  bool CRC_Err = false;
   uint32_t SerialNo = 0;
   esp_err_t ret;
 
@@ -167,13 +173,13 @@ void logger::Run()
   ESP_LOGI(TAG, "GPIO init...");
   InitGPIO();
 
-    for (int i = 0; i < 20; i++)
-    {
-      gpio_set_level(BOARD_LED, 1);
-      vTaskDelay(pdMS_TO_TICKS(100));
-      gpio_set_level(BOARD_LED, 0);
-      vTaskDelay(pdMS_TO_TICKS(100));
-    }
+  for (int i = 0; i < 5; i++)
+  {
+    gpio_set_level(BOARD_LED, 1);
+    vTaskDelay(pdMS_TO_TICKS(100));
+    gpio_set_level(BOARD_LED, 0);
+    vTaskDelay(pdMS_TO_TICKS(100));
+  }
 
   //-------------ADC1 Init---------------//
   adc_oneshot_unit_init_cfg_t init_config1;
@@ -193,8 +199,6 @@ void logger::Run()
   ret = InitI2C(I2C_NUM_0, PIN_SDA_BUS0, PIN_SCL_BUS0, &i2c_bus_h_0);
   if (ret != ESP_OK)
     ESP_LOGE(TAG, "Fehler beim InitI2C(0): %d.", ret);
-  
-
 
   // Init Temperatursensor
   ret = Sht->Init(i2c_bus_h_0, SHT40_ADDR, I2C_FREQ_HZ);
@@ -203,17 +207,27 @@ void logger::Run()
     SD.SkipSHT40 = true;
     ESP_LOGE(TAG, "Fehler beim Initialisieren des SHT40: %d. Sensor ausgeschaltet!", ret);
   }
-  else
+
+  // Init Drucksensor
+  ret = Bmp->Init(i2c_bus_h_0, BMP390_ADDRESS, I2C_FREQ_HZ);
+  if (ret != ESP_OK)
   {
-    Sht->ReadSerial(SerialNo, CRC_Err);
-    ESP_LOGI(TAG, "SHT40 Seriennummer: %lu", SerialNo);
+    SD.SkipBMP390 = true;
+    ESP_LOGE(TAG, "Fehler beim Initialisieren des BMP390: %d. Sensor ausgeschaltet!", ret);
   }
 
-  SD.PC = 0;
+  bool toggle = false;
+  while (1)
+  {
+    toggle = !toggle;
+    ReadSensorData();
+    gpio_set_level(BOARD_LED, toggle);
+    vTaskDelay(1000 / portTICK_PERIOD_MS);
+  }
 
-    // Sensordaten von der Hardware auslesen
-    std::string res = ReadSensorData();
-  GoSleep();
+  // Sensordaten von der Hardware auslesen
+  // std::string res = ReadSensorData();
+  // GoSleep();
 }
 
 logger::~logger()
@@ -229,7 +243,7 @@ void logger::GoSleep()
   ESP_LOGI(TAG, "Configuring sleep mode...");
 
   // SD-Karte abschalten
-  
+
   ESP_LOGI(TAG, "Weckzeit einstellen nach %d s", SLEEP_TIME);
   ESP_ERROR_CHECK(esp_sleep_enable_timer_wakeup(SLEEP_TIME * 1000000));
 
@@ -257,7 +271,7 @@ void logger::GoSleep()
   SleepCounter++;
   ESP_LOGI(TAG, "Going to sleep now!");
 
-  //gpio_deep_sleep_hold_en();
+  // gpio_deep_sleep_hold_en();
   ESP_LOGI(TAG, "Starting ULP program...");
   esp_deep_sleep_start();
 }
@@ -273,15 +287,17 @@ std::string logger::ReadSensorData()
   std::string res;
   const int MaxRetries = 5;
   esp_err_t ret = ESP_OK;
-  bool iCRCErr;
   uint16_t ADCVal;
   int RetryCounter = 0;
-  SensorData tmp;
 
   gpio_set_level(BOARD_LED, 1);
 
-  tmp.uptime_s = GetSecondsAfterStart();
+  SD.uptime_s = GetSecondsAfterStart();
   // ESP_LOGI(TAG,"Alive time: %d s",tmp.alive_timer_s );
+
+  ret = Bmp->StartReadTempAndPress();
+  if (ret != ESP_OK)
+    ESP_LOGE(TAG, "Fehler beim Starten des BMP390: %d", ret);
 
   // SHT40 (wir verwenden die Temperatur vom SHT, die ist genauer!)
   RetryCounter = 0;
@@ -289,18 +305,13 @@ std::string logger::ReadSensorData()
   {
     do
     {
-      ret = Sht->Read(tmp.Temp_deg, tmp.Hum_per, iCRCErr);
+      ret = Sht->Read(SD.Temp_deg, SD.Hum_per);
       if (ret != ESP_OK)
       {
         SD.SHT40Err++;
         ESP_LOGE(TAG, "Fehler beim Lesen der Temperatur/Luftfeuchtigkeit des SHT40: %d, Versuch %d", ret, RetryCounter + 1);
       }
-      else if (iCRCErr)
-      {
-        SD.SHT40Err++;
-        ESP_LOGE(TAG, "Fehler beim Lesen des SHT40 CRC (T/L), Versuch %d", RetryCounter + 1);
-        ret = ESP_ERR_INVALID_CRC;
-      }
+
       RetryCounter++;
       if (ret != ESP_OK)
         vTaskDelay(100 / portTICK_PERIOD_MS);
@@ -314,21 +325,21 @@ std::string logger::ReadSensorData()
     }
     else
     {
-      // ESP_LOGI("SHT40", "SHT40 Temperatur: %.2f°C Luftfeuchte: %.2f %%", tmp.Temp_deg, tmp.Hum_per);
+      ESP_LOGI(TAG, "SHT40 Temperatur: %.2f°C Luftfeuchte: %.2f %%", SD.Temp_deg, SD.Hum_per);
     }
-  }
-
-  if (SD.SkipSHT40)
-  {
-    tmp.Hum_per = -1;
-    tmp.Temp_deg = -100;
-    ESP_LOGI(TAG, "SHT40 wird übersprungen...");
-    res += "Skipping SHT40 sensor. ";
   }
 
   // Vorher noch kurz die Batteriespannung abfragen. Am besten mit allen eingeschalteten Geräten, dann wird die Spannung unter
   // Belastung gemessen.
-  tmp.VBatt_V = GetVBatt();
+  SD.VBatt_V = GetVBatt();
+  ESP_LOGI(TAG, "VBat: %.2f V", SD.VBatt_V);
+
+  // BMP390
+  ret = Bmp->ReadTempAndPressAsync(SD.Temp_deg, SD.Press_mBar);
+  SD.Press_mBar = Bmp->SeaLevelForAltitude(602, SD.Press_mBar);
+  if (ret != ESP_OK)
+    ESP_LOGE(TAG, "Fehler beim Lesen des BMP390: %d", ret);
+  ESP_LOGI(TAG, "Druck: %.2f mbar Temp: %.2f°C", SD.Press_mBar, SD.Temp_deg);
 
   SD.PC++;
   if (res.length() == 0)
@@ -361,9 +372,8 @@ float logger::GetVBatt()
 
 esp_err_t logger::InitGPIO()
 {
-  rtc_gpio_hold_dis(BOARD_LED);
   // Outputs
-  const uint64_t OutputBitMask = (1ULL << BOARD_LED) | (1ULL << PIN_NUM_CS) ;
+  const uint64_t OutputBitMask = (1ULL << BOARD_LED) | (1ULL << PIN_NUM_CS);
 
   gpio_config_t ConfigOutput = {};
   ConfigOutput.pin_bit_mask = OutputBitMask;

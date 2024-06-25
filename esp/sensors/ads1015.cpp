@@ -29,6 +29,7 @@ esp_err_t ADS1x15::Init(i2c_master_bus_handle_t aBusHandle, uint8_t aI2CAddr, ui
     conf.dev_addr_length = I2C_ADDR_BIT_LEN_7;
     conf.device_address = aI2CAddr;
     conf.scl_speed_hz = aI2CSpeed_Hz;
+    conf.flags.disable_ack_check=false;
     return i2c_master_bus_add_device(mBusHandle, &conf, &mDevHandle);
   }
   else
@@ -137,8 +138,6 @@ esp_err_t ADS1x15::ReadADC_1115(ADC_MP aInputMux, FSC_RANGE aFullScale, ADC_SPEE
 
 esp_err_t ADS1x15::ReadRegister16(ADC_REGISTER aReg, uint16_t &aRegVal)
 {
-  if (mDevHandle == NULL)
-    return ESP_ERR_INVALID_ARG;
   esp_err_t ret;
   uint8_t RegAddr = aReg;
   uint8_t data[2] = {};

@@ -4,33 +4,51 @@
 
 #include <stdio.h>
 #include "esp_log.h"
-#include "driver/i2c.h"
 #include <stdint.h>
 #include "bmp390.h"
 #include <math.h>
+#include "freertos/FreeRTOS.h"
 
 #define ACK_CHECK_EN 0x1  /*!< I2C master will check ack from slave*/
 #define ACK_CHECK_DIS 0x0 /*!< I2C master will not check ack from slave */
+#define DEV_TIMEOUT 100
 
-BMP390::BMP390(i2c_port_t aPort, uint8_t aI2CAddr)
+BMP390::BMP390()
 {
-  mPort = aPort;
-  mI2CAddr = aI2CAddr;
 }
 
 BMP390::~BMP390(void)
 {
+  if (mDevHandle != NULL)
+    i2c_master_bus_rm_device(mDevHandle);
 }
 
-esp_err_t BMP390::Init()
+esp_err_t BMP390::Init(i2c_master_bus_handle_t aBusHandle, uint8_t aI2CAddr, uint32_t aI2CSpeed_Hz)
 {
-  esp_err_t status = ESP_OK;
-  if (Read8(BMP390_REGISTER_CHIP_ID) != BMP390_CHIP_ID)
+  esp_err_t ret = ESP_OK;
+  mBusHandle = aBusHandle;
+  i2c_device_config_t conf;
+  conf.dev_addr_length = I2C_ADDR_BIT_LEN_7;
+  conf.device_address = aI2CAddr;
+  conf.scl_speed_hz = aI2CSpeed_Hz;
+  conf.flags.disable_ack_check=false;
+  ret = i2c_master_bus_add_device(mBusHandle, &conf, &mDevHandle);
+  if (ret != ESP_OK)
+    return ret;
+
+  uint8_t ChipID = Read8(BMP390_REGISTER_CHIP_ID, &ret);
+  if (ret != ESP_OK)
+    return ret;
+
+  if (ChipID != BMP390_CHIP_ID)
+  {
+    ESP_LOGE("BMP390::Init", "Unbekannte Chip-ID: %d", ChipID);
     return ESP_ERR_INVALID_VERSION;
+  }
   Reset();
-  status = ReadCalibData();
-  if (status != ESP_OK)
-    return status;
+  ret = ReadCalibData();
+  if (ret != ESP_OK)
+    return ret;
 
   //  Oversampling setzen. Bit 0..2: Druck, Bit 3..5 Temperatur
   return WriteRegister(BMP390_REGISTER_OSR, (SAMPLING_X2 << 3) | SAMPLING_X32);
@@ -39,14 +57,8 @@ esp_err_t BMP390::Init()
 esp_err_t BMP390::WriteRegister(uint8_t reg_addr, uint8_t value)
 {
   esp_err_t ret;
-  i2c_cmd_handle_t cmd = i2c_cmd_link_create();
-  i2c_master_start(cmd);
-  i2c_master_write_byte(cmd, mI2CAddr << 1 | I2C_MASTER_WRITE, ACK_CHECK_EN);
-  i2c_master_write_byte(cmd, reg_addr, ACK_CHECK_EN);
-  i2c_master_write_byte(cmd, value, ACK_CHECK_EN);
-  i2c_master_stop(cmd);
-  ret = i2c_master_cmd_begin(I2C_NUM_0, cmd, 1000 / portTICK_PERIOD_MS);
-  i2c_cmd_link_delete(cmd);
+  uint8_t data[2] = {reg_addr, value};
+  ret = i2c_master_transmit(mDevHandle, data, sizeof(data), DEV_TIMEOUT);
   if (ret != ESP_OK)
     ESP_LOGE("BMP390::WriteRegister", "I2C error no.: %d", ret);
   return ret;
@@ -55,33 +67,17 @@ esp_err_t BMP390::WriteRegister(uint8_t reg_addr, uint8_t value)
 esp_err_t BMP390::ReadRegister(uint8_t reg_addr, uint8_t *data, uint16_t len)
 {
   esp_err_t ret;
-  i2c_cmd_handle_t cmd = i2c_cmd_link_create();
-  i2c_master_start(cmd);
-  i2c_master_write_byte(cmd, mI2CAddr << 1 | I2C_MASTER_WRITE, ACK_CHECK_EN);
-  i2c_master_write_byte(cmd, reg_addr, ACK_CHECK_EN);
-  i2c_master_stop(cmd);
-  ret = i2c_master_cmd_begin(I2C_NUM_0, cmd, 1000 / portTICK_PERIOD_MS);
-  i2c_cmd_link_delete(cmd);
-  if (ret != ESP_OK)
-  {
-    ESP_LOGE("BMP390::ReadRegister", "I2C error no.: %d", ret);
-    return ret;
-  }
-  cmd = i2c_cmd_link_create();
-  i2c_master_start(cmd);
-  i2c_master_write_byte(cmd, mI2CAddr << 1 | I2C_MASTER_READ, ACK_CHECK_EN);
-  i2c_master_read(cmd, data, len, I2C_MASTER_LAST_NACK);
-  i2c_master_stop(cmd);
-  ret = i2c_master_cmd_begin(I2C_NUM_0, cmd, 1000 / portTICK_PERIOD_MS);
-  i2c_cmd_link_delete(cmd);
+  uint8_t RegAddr = reg_addr;
+  ret = i2c_master_transmit_receive(mDevHandle, &RegAddr, 1, data, len, DEV_TIMEOUT);
   if (ret != ESP_OK)
     ESP_LOGE("BMP390::ReadRegister", "I2C error no.: %d", ret);
+
   return ret;
 }
 
 uint8_t BMP390::Read8(uint8_t reg, esp_err_t *rError)
 {
-  uint8_t value;
+  uint8_t value=0;
   esp_err_t res = ReadRegister(reg, &value, sizeof(value));
   if (rError)
     *rError = res;
@@ -111,7 +107,7 @@ esp_err_t BMP390::ReadCalibData()
   return status;
 }
 
-esp_err_t BMP390::ReadTempAndPress(double &rTemp_C, double &rPress_mbar)
+esp_err_t BMP390::ReadTempAndPress(float &rTemp_C, float &rPress_mbar)
 {
   esp_err_t Status;
   Status = StartReadTempAndPress();
@@ -125,7 +121,7 @@ esp_err_t BMP390::StartReadTempAndPress()
   return WriteRegister(BMP390_REGISTER_PWR_CTRL, (MODE_FORCED << 4) | 0x03);
 }
 
-esp_err_t BMP390::ReadTempAndPressAsync(double &rTemp_C, double &rPress_mbar, bool aWaitForData)
+esp_err_t BMP390::ReadTempAndPressAsync(float &rTemp_C, float &rPress_mbar, bool aWaitForData)
 {
   if (!aWaitForData)
   {
@@ -157,7 +153,7 @@ bool BMP390::DataReady()
   return Status & (1 << 3);
 }
 
-esp_err_t BMP390::ReadTemperature(double &rTemp_C)
+esp_err_t BMP390::ReadTemperature(float &rTemp_C)
 {
   // Temperaturwert lesen
   esp_err_t Status;
@@ -167,9 +163,9 @@ esp_err_t BMP390::ReadTemperature(double &rTemp_C)
   if (Status != ESP_OK)
     return Status;
   adc_T = adc[0] + (adc[1] << 8) + (adc[2] << 16);
-  //ESP_LOGI("BMP390", "ADC Temperatur: %lu.", adc_T);
-  double partial_data1 = (double)(adc_T - PAR_T1);
-  double partial_data2 = (double)(partial_data1 * PAR_T2);
+  // ESP_LOGI("BMP390", "ADC Temperatur: %lu.", adc_T);
+  float partial_data1 = (float)(adc_T - PAR_T1);
+  float partial_data2 = (float)(partial_data1 * PAR_T2);
   // Update the compensated temperature in calib structure since this is
   // needed for pressure calculation */
   t_lin = partial_data2 + (partial_data1 * partial_data1) * PAR_T3;
@@ -178,7 +174,7 @@ esp_err_t BMP390::ReadTemperature(double &rTemp_C)
   return Status;
 }
 
-esp_err_t BMP390::ReadPressure(double &rPress_mbar)
+esp_err_t BMP390::ReadPressure(float &rPress_mbar)
 {
   esp_err_t Status = ESP_OK;
   uint32_t adc_P;
@@ -187,14 +183,14 @@ esp_err_t BMP390::ReadPressure(double &rPress_mbar)
   if (Status != ESP_OK)
     return Status;
   adc_P = adc[0] + (adc[1] << 8) + (adc[2] << 16);
-  //ESP_LOGI("BMP390", "ADC Druck: %lu.", adc_P);
+  // ESP_LOGI("BMP390", "ADC Druck: %lu.", adc_P);
   /* Temporary variables used for compensation */
-  double partial_data1;
-  double partial_data2;
-  double partial_data3;
-  double partial_data4;
-  double partial_out1;
-  double partial_out2;
+  float partial_data1;
+  float partial_data2;
+  float partial_data3;
+  float partial_data4;
+  float partial_out1;
+  float partial_out2;
   /* Calibration data */
   partial_data1 = PAR_P6 * t_lin;
   partial_data2 = PAR_P7 * (t_lin * t_lin);
@@ -203,18 +199,18 @@ esp_err_t BMP390::ReadPressure(double &rPress_mbar)
   partial_data1 = PAR_P2 * t_lin;
   partial_data2 = PAR_P3 * (t_lin * t_lin);
   partial_data3 = PAR_P4 * (t_lin * t_lin * t_lin);
-  partial_out2 = (double)adc_P * (PAR_P1 + partial_data1 + partial_data2 + partial_data3);
-  partial_data1 = (double)adc_P * (double)adc_P;
+  partial_out2 = (float)adc_P * (PAR_P1 + partial_data1 + partial_data2 + partial_data3);
+  partial_data1 = (float)adc_P * (float)adc_P;
   partial_data2 = PAR_P9 + PAR_P10 * t_lin;
   partial_data3 = partial_data1 * partial_data2;
-  partial_data4 = partial_data3 + ((double)adc_P * (double)adc_P * (double)adc_P) * PAR_P11;
+  partial_data4 = partial_data3 + ((float)adc_P * (float)adc_P * (float)adc_P) * PAR_P11;
   rPress_mbar = (partial_out1 + partial_out2 + partial_data4) / 100.0; // Wird im Datenblatt in Pascal berechnet
   return Status;
 }
 
-esp_err_t BMP390::ReadAltitude(double &aAlt, double seaLevelhPa)
+esp_err_t BMP390::ReadAltitude(float &aAlt, float seaLevelhPa)
 {
-  double pressure;
+  float pressure;
   esp_err_t Status = ReadPressure(pressure); // in Si units for Pascal
   pressure /= 100;
 
@@ -223,7 +219,7 @@ esp_err_t BMP390::ReadAltitude(double &aAlt, double seaLevelhPa)
   return Status;
 }
 
-double BMP390::SeaLevelForAltitude(double altitude, double atmospheric)
+float BMP390::SeaLevelForAltitude(float altitude, float atmospheric)
 {
   // Equation taken from BMP180 datasheet (page 17):
   // http://www.adafruit.com/datasheets/BST-BMP180-DS000-09.pdf
@@ -234,7 +230,7 @@ double BMP390::SeaLevelForAltitude(double altitude, double atmospheric)
   return atmospheric / pow(1.0 - (altitude / 44330.0), 5.255);
 }
 
-double BMP390::WaterBoilingPoint(double pressure)
+float BMP390::WaterBoilingPoint(float pressure)
 {
   // Magnusformular for calculation of the boiling point of water at a given
   // pressure
