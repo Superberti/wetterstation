@@ -45,6 +45,7 @@ void error(const char *format, ...);
 // Forwards
 class SHT40;
 class BMP390;
+class SX1278_LoRa;
 
 class logger
 {
@@ -59,12 +60,14 @@ protected:
 
   SHT40 *Sht;
   BMP390 *Bmp;
+  SX1278_LoRa *LoRa;
   esp_err_t InitI2C(i2c_port_t aPort, gpio_num_t aSDA_Pin, gpio_num_t aSCL_Pin, i2c_master_bus_handle_t *aBusHandle);
   esp_err_t InitGPIO();
   std::string ReadSensorData();
   void GoSleep();
   float GetVBatt();
   uint32_t GetSecondsAfterStart();
+  esp_err_t BuildCBORBuf(uint8_t *aBuf , uint16_t aMaxBufSize, uint16_t & aCBORBuildSize, const SensorData & aSD);
 
 public:
   logger();

@@ -20,17 +20,9 @@
 #include "sdkconfig.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
-#include "esp_mac.h"
-#include "esp_wifi.h"
 #include "esp_log.h"
 #include "nvs_flash.h"
 #include "esp_system.h"
-#include "lwip/err.h"
-#include "lwip/sys.h"
-#include "lwip/ip_addr.h"
-#include "lwip/netif.h"
-#include <lwip/inet.h>
-#include "spi_flash_mmap.h"
 #include <string.h>
 #include "driver/gpio.h"
 #include <driver/rtc_io.h>
@@ -45,15 +37,18 @@
 #include <esp_sleep.h>
 #include "fb2.h"
 #include "sensors/ads1015.h"
-#include "rtc_wdt.h"
 #include "esp_check.h"
 #include "sensors/ds3231.h"
-#include "common/tools.h"
-#include "nvs_handle.hpp"
+#include "tools/tools.h"
+#include "tools/json.hpp"
 #include <memory>
 #include "esp_timer.h"
+#include "lora/lorastructs.h"
+#include "lora/lora.h"
 
 #define FB2_VERSION "1.0.0.0"
+#define LORA_ORT ORT_SYMPATEC
+using json = nlohmann::json;
 
 /*
  * Pindefinitionen:
@@ -126,6 +121,8 @@ logger::logger()
   // Log auf eigene Funktion umbiegen
   Sht = new SHT40;
   Bmp = new BMP390;
+  LoRa_PinConfiguration PinConfig = {};
+  LoRa = new SX1278_LoRa(PinConfig);
   switch (esp_sleep_get_wakeup_cause())
   {
   case ESP_SLEEP_WAKEUP_TIMER:
@@ -166,7 +163,6 @@ logger::logger()
 
 void logger::Run()
 {
-  uint32_t SerialNo = 0;
   esp_err_t ret;
 
   // Initialisierung GPIO
@@ -216,218 +212,311 @@ void logger::Run()
     ESP_LOGE(TAG, "Fehler beim Initialisieren des BMP390: %d. Sensor ausgeschaltet!", ret);
   }
 
-  bool toggle = false;
+  // Sendefrequenz: 434,54 MHz
+  // Preambellänge: 14
+  // Bandbreite 500 kHz
+  // Achtung: Damit auch der neuere SX1262 verwendet wird, muss man sich über die Sync-Words ein paar mehr
+  // Gedanken machen. Der SX1262 hat 2 Bytes Sync, nicht nur 1 Byte. Damit sich trotzdem beide verstehen, muss man
+  // folgendes beachten:
+  // SX1276: Jedes Nibble unterschiedlich von 1-7, also z.B. 0x37 => 0xYZ (Y!=Z, Z und Y <8 && >0)
+  // SX1262: 0Y4Z4, also hier 0x3474
+  // Sync-Byte: 0x37
+  // Spreading-Factor: 8 = 256 Chips/symbol
+  // Coding-Rate: 6 = 4/6 = 1,5-facher FEC-Overhead
+  // Tx-Power 2-17
+  /*
+  ret = LoRa->SetupModule(LORA_ADDR_GWHS, 434.54e6, 14, LoRaBase::LoRaBandwidth::LORA_BW_500, 0x37, LoRaBase::SpreadingFactor::SF8, LoRaBase::LoRaCodingRate::LORA_CR_4_6, 15);
+  if (ret != ESP_OK)
+  {
+    ESP_LOGE(TAG, "Fehler beim Initialisieren vom LoRa-Modul: %d. Sensor ausgeschaltet!", ret);
+  }*/
+
+  uint8_t LoraBuf[255];
+  uint16_t iCBORBuildSize;
   while (1)
   {
-    toggle = !toggle;
+    gpio_set_level(BOARD_LED, 1);
     ReadSensorData();
-    gpio_set_level(BOARD_LED, toggle);
-    vTaskDelay(1000 / portTICK_PERIOD_MS);
+    iCBORBuildSize = 0;
+    BuildCBORBuf(LoraBuf, sizeof(LoraBuf), iCBORBuildSize, SD);
+    if (iCBORBuildSize > sizeof(LoraBuf))
+      ESP_LOGE(TAG, "LoRa Buffer overflow...:%d", iCBORBuildSize);
+
+    // LoRa-Paket senden
+    /*
+    int RetryCounter = 0;
+    bool SendOK = false;
+    const int MaxRetries = 5;
+    int64_t StartTime = GetTime_us();
+    while (!SendOK && RetryCounter < MaxRetries)
+    {
+      gpio_set_level(BOARD_LED, 1);
+      int64_t ts = GetTime_us();
+      ret = LoRa->SendLoraMsg(CMD_CBORDATA, LoraBuf, iCBORBuildSize, SleepCounter);
+      SendOK = ret == ESP_OK;
+      int64_t te = GetTime_us();
+      gpio_set_level(BOARD_LED, 0);
+      ESP_LOGI(TAG, "Zeit fuer LoRa: %.1f ms. Paketgroesse: %u", double(te - ts) / 1000.0, iCBORBuildSize);
+      if (!SendOK)
+      {
+        RetryCounter++;
+        ESP_LOGE(TAG, "Fehler beim Senden eines LoRa-Paketes: %d Versuch: %d", ret, RetryCounter);
+        ESP_LOGE(TAG, "Resette LORA-Modul...");
+        LoRa->Reset();
+        vTaskDelay(pdMS_TO_TICKS(1000));
+        ret = LoRa->SetupModule(LORA_ADDR_GWHS, 434.54e6, 14, LoRaBase::LoRaBandwidth::LORA_BW_500, 0x37, LoRaBase::SpreadingFactor::SF8, LoRaBase::LoRaCodingRate::LORA_CR_4_6, 15);
+        if (ret != ESP_OK)
+          ESP_LOGI(TAG, "Fehler beim Initialisieren des LoRa Moduls: %d", ret);
+        else
+          ESP_LOGI(TAG, "Re-Init LORA erfolgreich");
+      }
+    }
+    if (!SendOK)
+    {
+      ESP_LOGE(TAG, "Wiederholtes Senden fehlgeschlagen!");
+      continue; // schlafen legen, vielleicht klappt es ja beim nächsten mal...
+    }
+
+    int64_t EndTime = GetTime_us();
+    ESP_LOGI(TAG, "LoRa gesendet nach %.1f ms", (EndTime - StartTime) / 1000.0);
+*/
+      gpio_set_level(BOARD_LED, 0);
+
+      vTaskDelay(1000 / portTICK_PERIOD_MS);
+    }
+
+    // Sensordaten von der Hardware auslesen
+    // std::string res = ReadSensorData();
+    // GoSleep();
   }
 
-  // Sensordaten von der Hardware auslesen
-  // std::string res = ReadSensorData();
-  // GoSleep();
-}
-
-logger::~logger()
-{
-  delete Sht;
-  delete Bmp;
-}
+  logger::~logger()
+  {
+    delete Sht;
+    delete Bmp;
+  }
 
 #define SLEEP_TIME 120
 
-void logger::GoSleep()
-{
-  ESP_LOGI(TAG, "Configuring sleep mode...");
-
-  // SD-Karte abschalten
-
-  ESP_LOGI(TAG, "Weckzeit einstellen nach %d s", SLEEP_TIME);
-  ESP_ERROR_CHECK(esp_sleep_enable_timer_wakeup(SLEEP_TIME * 1000000));
-
-  rtc_gpio_pullup_en(WAKEUP_INPUT_PIN);
-  rtc_gpio_pulldown_dis(WAKEUP_INPUT_PIN);
-
-  ESP_ERROR_CHECK(esp_sleep_enable_ext1_wakeup(WAKEUP_INPUT_PIN, ESP_EXT1_WAKEUP_ANY_LOW));
-  gpio_set_level(BOARD_LED, 0);
-
-  // rtc_gpio_isolate(BOARD_LED);
-  // rtc_gpio_isolate(SWITCH_BRIDGE_AND_CLOCK);
-
-  // Pins auf Input
-  gpio_set_direction(PIN_NUM_CS, GPIO_MODE_INPUT);
-  gpio_set_direction(PIN_NUM_MISO, GPIO_MODE_INPUT);
-  gpio_set_direction(PIN_NUM_MOSI, GPIO_MODE_INPUT);
-  gpio_set_direction(PIN_NUM_CLK, GPIO_MODE_INPUT);
-  gpio_set_direction(PIN_SDA_BUS0, GPIO_MODE_INPUT);
-  gpio_set_direction(PIN_SCL_BUS0, GPIO_MODE_INPUT);
-
-  // ADC aus
-  if (mADCHandle != NULL)
-    adc_oneshot_del_unit(mADCHandle);
-
-  SleepCounter++;
-  ESP_LOGI(TAG, "Going to sleep now!");
-
-  // gpio_deep_sleep_hold_en();
-  ESP_LOGI(TAG, "Starting ULP program...");
-  esp_deep_sleep_start();
-}
-
-uint32_t logger::GetSecondsAfterStart()
-{
-  int64_t MikroSecondsAfterStart = GetTime_us() - mStartTime;
-  return MikroSecondsAfterStart / 1000000;
-}
-
-std::string logger::ReadSensorData()
-{
-  std::string res;
-  const int MaxRetries = 5;
-  esp_err_t ret = ESP_OK;
-  uint16_t ADCVal;
-  int RetryCounter = 0;
-
-  gpio_set_level(BOARD_LED, 1);
-
-  SD.uptime_s = GetSecondsAfterStart();
-  // ESP_LOGI(TAG,"Alive time: %d s",tmp.alive_timer_s );
-
-  ret = Bmp->StartReadTempAndPress();
-  if (ret != ESP_OK)
-    ESP_LOGE(TAG, "Fehler beim Starten des BMP390: %d", ret);
-
-  // SHT40 (wir verwenden die Temperatur vom SHT, die ist genauer!)
-  RetryCounter = 0;
-  if (!SD.SkipSHT40)
+  void logger::GoSleep()
   {
-    do
+    ESP_LOGI(TAG, "Configuring sleep mode...");
+
+    // SD-Karte abschalten
+
+    ESP_LOGI(TAG, "Weckzeit einstellen nach %d s", SLEEP_TIME);
+    ESP_ERROR_CHECK(esp_sleep_enable_timer_wakeup(SLEEP_TIME * 1000000));
+
+    rtc_gpio_pullup_en(WAKEUP_INPUT_PIN);
+    rtc_gpio_pulldown_dis(WAKEUP_INPUT_PIN);
+
+    ESP_ERROR_CHECK(esp_sleep_enable_ext1_wakeup(WAKEUP_INPUT_PIN, ESP_EXT1_WAKEUP_ANY_LOW));
+    gpio_set_level(BOARD_LED, 0);
+
+    // rtc_gpio_isolate(BOARD_LED);
+    // rtc_gpio_isolate(SWITCH_BRIDGE_AND_CLOCK);
+
+    // Pins auf Input
+    gpio_set_direction(PIN_NUM_CS, GPIO_MODE_INPUT);
+    gpio_set_direction(PIN_NUM_MISO, GPIO_MODE_INPUT);
+    gpio_set_direction(PIN_NUM_MOSI, GPIO_MODE_INPUT);
+    gpio_set_direction(PIN_NUM_CLK, GPIO_MODE_INPUT);
+    gpio_set_direction(PIN_SDA_BUS0, GPIO_MODE_INPUT);
+    gpio_set_direction(PIN_SCL_BUS0, GPIO_MODE_INPUT);
+
+    // ADC aus
+    if (mADCHandle != NULL)
+      adc_oneshot_del_unit(mADCHandle);
+
+    SleepCounter++;
+    ESP_LOGI(TAG, "Going to sleep now!");
+
+    // gpio_deep_sleep_hold_en();
+    ESP_LOGI(TAG, "Starting ULP program...");
+    esp_deep_sleep_start();
+  }
+
+  uint32_t logger::GetSecondsAfterStart()
+  {
+    int64_t MikroSecondsAfterStart = GetTime_us() - mStartTime;
+    return MikroSecondsAfterStart / 1000000;
+  }
+
+  std::string logger::ReadSensorData()
+  {
+    std::string res;
+    const int MaxRetries = 5;
+    esp_err_t ret = ESP_OK;
+    int RetryCounter = 0;
+
+    gpio_set_level(BOARD_LED, 1);
+
+    SD.uptime_s = GetSecondsAfterStart();
+    // ESP_LOGI(TAG,"Alive time: %d s",tmp.alive_timer_s );
+
+    ret = Bmp->StartReadTempAndPress();
+    if (ret != ESP_OK)
+      ESP_LOGE(TAG, "Fehler beim Starten des BMP390: %d", ret);
+
+    // SHT40 (wir verwenden die Temperatur vom SHT, die ist genauer!)
+    RetryCounter = 0;
+    if (!SD.SkipSHT40)
     {
-      ret = Sht->Read(SD.Temp_deg, SD.Hum_per);
+      do
+      {
+        ret = Sht->Read(SD.Temp_deg, SD.Hum_per);
+        if (ret != ESP_OK)
+        {
+          SD.SHT40Err++;
+          ESP_LOGE(TAG, "Fehler beim Lesen der Temperatur/Luftfeuchtigkeit des SHT40: %d, Versuch %d", ret, RetryCounter + 1);
+        }
+
+        RetryCounter++;
+        if (ret != ESP_OK)
+          vTaskDelay(100 / portTICK_PERIOD_MS);
+      } while (ret != ESP_OK && RetryCounter < MaxRetries);
+
       if (ret != ESP_OK)
       {
-        SD.SHT40Err++;
-        ESP_LOGE(TAG, "Fehler beim Lesen der Temperatur/Luftfeuchtigkeit des SHT40: %d, Versuch %d", ret, RetryCounter + 1);
+        ESP_LOGE(TAG, "SHT40: Wiederholtes Lesen des Sensors fehlgeschlagen! Sensor wird ab jetzt übersprungen!");
+        res += "Reading SHT40(temperature, humidity) error. Skipping sensor. ";
+        SD.SkipSHT40 = true;
       }
+      else
+      {
+        ESP_LOGI(TAG, "SHT40 Temperatur: %.2f°C Luftfeuchte: %.2f %%", SD.Temp_deg, SD.Hum_per);
+      }
+    }
 
-      RetryCounter++;
-      if (ret != ESP_OK)
-        vTaskDelay(100 / portTICK_PERIOD_MS);
-    } while (ret != ESP_OK && RetryCounter < MaxRetries);
+    // Vorher noch kurz die Batteriespannung abfragen. Am besten mit allen eingeschalteten Geräten, dann wird die Spannung unter
+    // Belastung gemessen.
+    SD.VBatt_V = GetVBatt();
+    ESP_LOGI(TAG, "VBat: %.2f V", SD.VBatt_V);
 
+    // BMP390
+    ret = Bmp->ReadTempAndPressAsync(SD.Temp_deg, SD.Press_mBar);
+    SD.Press_mBar = Bmp->SeaLevelForAltitude(602, SD.Press_mBar);
     if (ret != ESP_OK)
+      ESP_LOGE(TAG, "Fehler beim Lesen des BMP390: %d", ret);
+    ESP_LOGI(TAG, "Druck: %.2f mbar Temp: %.2f°C", SD.Press_mBar, SD.Temp_deg);
+
+    SD.PC++;
+    if (res.length() == 0)
+      res = "OK";
+
+    gpio_set_level(BOARD_LED, 0);
+    return res;
+  }
+
+  // Batteriespannung abfragen. Am besten mit allen eingeschalteten Geräten, dann wird die Spannung unter
+  // Belastung gemessen.
+  float logger::GetVBatt()
+  {
+    float VBatt_V;
+    double AdcMean = 0;
+    int AdcValue = 0;
+    // Batteriespannung
+    for (int i = 0; i < 64; i++)
     {
-      ESP_LOGE(TAG, "SHT40: Wiederholtes Lesen des Sensors fehlgeschlagen! Sensor wird ab jetzt übersprungen!");
-      res += "Reading SHT40(temperature, humidity) error. Skipping sensor. ";
-      SD.SkipSHT40 = true;
+      ESP_ERROR_CHECK(adc_oneshot_read(mADCHandle, ADC_V_BATT, &AdcValue));
+      AdcMean += AdcValue;
+    }
+    AdcMean /= 64.0;
+    // Referenzspannung 1.1V, Spannungsteiler 100K/100K, Abschwächung 12dB (Faktor 4) = 8.8 V bei Vollausschlag (4095)
+    // Evtl. braucht es noch Offset/Gain als Kalibrierung für einen vernünftigen Wert. Alternativ an den ADS1115 anschließen...
+    // tmp.VBatt_V = AdcMean / 4095 * 8.8; // -> Das ist die Theorie
+    VBatt_V = AdcMean / 4095 * 6.6566; // -> ... und das die Praxis
+    return VBatt_V;
+  }
+
+  esp_err_t logger::InitGPIO()
+  {
+    // Outputs
+    const uint64_t OutputBitMask = (1ULL << BOARD_LED) | (1ULL << PIN_NUM_CS);
+
+    gpio_config_t ConfigOutput = {};
+    ConfigOutput.pin_bit_mask = OutputBitMask;
+    ConfigOutput.mode = GPIO_MODE_INPUT_OUTPUT; // damit man auch den aktuell eingestellten Wert zurücklesen kann!
+    ConfigOutput.pull_up_en = GPIO_PULLUP_DISABLE;
+    ConfigOutput.pull_down_en = GPIO_PULLDOWN_DISABLE;
+    ConfigOutput.intr_type = GPIO_INTR_DISABLE;
+    ESP_RETURN_ON_ERROR(gpio_config(&ConfigOutput), TAG, "Fehler bei Init output GPIO");
+
+    // Inputs
+    const uint64_t InputBitMask = (1ULL << WAKEUP_INPUT_PIN);
+    gpio_config_t ConfigInput = {};
+    ConfigInput.pin_bit_mask = InputBitMask;
+    ConfigInput.mode = GPIO_MODE_INPUT;
+    ConfigInput.pull_up_en = GPIO_PULLUP_ENABLE;
+    ConfigInput.pull_down_en = GPIO_PULLDOWN_DISABLE;
+    ConfigInput.intr_type = GPIO_INTR_DISABLE;
+    ESP_RETURN_ON_ERROR(gpio_config(&ConfigInput), TAG, "Fehler bei Init input GPIO");
+    return ESP_OK;
+  }
+
+  esp_err_t logger::InitI2C(i2c_port_t aPort, gpio_num_t aSDA_Pin, gpio_num_t aSCL_Pin, i2c_master_bus_handle_t * aBusHandle)
+  {
+    if (aPort > 1)
+      return ESP_ERR_INVALID_ARG;
+
+    i2c_master_bus_config_t conf;
+    conf.i2c_port = aPort;
+    conf.sda_io_num = aSDA_Pin;
+    conf.scl_io_num = aSCL_Pin;
+    conf.clk_source = I2C_CLK_SRC_DEFAULT;
+    conf.glitch_ignore_cnt = 7;
+    conf.intr_priority = 0;
+    conf.trans_queue_depth = 0;
+    conf.flags.enable_internal_pullup = 1;
+    return i2c_new_master_bus(&conf, aBusHandle);
+  }
+
+#define MAX_VPBUFLEN 256
+  char vprintf_buffer[MAX_VPBUFLEN];
+
+  void error(const char *format, ...)
+  {
+    va_list myargs;
+    va_start(myargs, format);
+
+    vsnprintf(vprintf_buffer, MAX_VPBUFLEN, format, myargs);
+    ESP_LOGE(TAG, "%s", vprintf_buffer);
+    va_end(myargs);
+    int toggle = 0;
+    for (;;)
+    {
+      toggle = 1 - toggle;
+      gpio_set_level(BOARD_LED, toggle);
+      vTaskDelay(pdMS_TO_TICKS(20));
+    }
+  }
+
+  esp_err_t logger::BuildCBORBuf(uint8_t * aBuf, uint16_t aMaxBufSize, uint16_t & aCBORBuildSize, const SensorData &aSD)
+  {
+    json j =
+        {
+            {POS_TAG, LORA_ORT},
+            {DATA_TAG,
+             {{PC_TAG, aSD.PC},
+              {TEMP_TAG, {{VAL_TAG, aSD.Temp_deg}}},
+              {HUM_TAG, {{VAL_TAG, aSD.Hum_per}}},
+              {PRESS_TAG, {{VAL_TAG, aSD.Press_mBar}}},
+              {VOL_TAG, {{VAL_TAG, aSD.VBatt_V}}}}}};
+
+    // serialize it to CBOR
+    std::vector<std::uint8_t> v = json::to_cbor(j);
+    aCBORBuildSize = v.size();
+    if (v.size() > aMaxBufSize)
+    {
+      ESP_LOGE(TAG, "CBOR file too big!");
+      aCBORBuildSize = 0;
+      return ESP_OK;
     }
     else
     {
-      ESP_LOGI(TAG, "SHT40 Temperatur: %.2f°C Luftfeuchte: %.2f %%", SD.Temp_deg, SD.Hum_per);
+      // ESP_LOGI(TAG, "CBOR file size: %d!",aCBORBuildSize);
+      memcpy(aBuf, v.data(), aCBORBuildSize);
     }
+
+    return ESP_OK;
   }
-
-  // Vorher noch kurz die Batteriespannung abfragen. Am besten mit allen eingeschalteten Geräten, dann wird die Spannung unter
-  // Belastung gemessen.
-  SD.VBatt_V = GetVBatt();
-  ESP_LOGI(TAG, "VBat: %.2f V", SD.VBatt_V);
-
-  // BMP390
-  ret = Bmp->ReadTempAndPressAsync(SD.Temp_deg, SD.Press_mBar);
-  SD.Press_mBar = Bmp->SeaLevelForAltitude(602, SD.Press_mBar);
-  if (ret != ESP_OK)
-    ESP_LOGE(TAG, "Fehler beim Lesen des BMP390: %d", ret);
-  ESP_LOGI(TAG, "Druck: %.2f mbar Temp: %.2f°C", SD.Press_mBar, SD.Temp_deg);
-
-  SD.PC++;
-  if (res.length() == 0)
-    res = "OK";
-
-  gpio_set_level(BOARD_LED, 0);
-  return res;
-}
-
-// Batteriespannung abfragen. Am besten mit allen eingeschalteten Geräten, dann wird die Spannung unter
-// Belastung gemessen.
-float logger::GetVBatt()
-{
-  float VBatt_V;
-  double AdcMean = 0;
-  int AdcValue = 0;
-  // Batteriespannung
-  for (int i = 0; i < 64; i++)
-  {
-    ESP_ERROR_CHECK(adc_oneshot_read(mADCHandle, ADC_V_BATT, &AdcValue));
-    AdcMean += AdcValue;
-  }
-  AdcMean /= 64.0;
-  // Referenzspannung 1.1V, Spannungsteiler 100K/100K, Abschwächung 12dB (Faktor 4) = 8.8 V bei Vollausschlag (4095)
-  // Evtl. braucht es noch Offset/Gain als Kalibrierung für einen vernünftigen Wert. Alternativ an den ADS1115 anschließen...
-  // tmp.VBatt_V = AdcMean / 4095 * 8.8; // -> Das ist die Theorie
-  VBatt_V = AdcMean / 4095 * 6.6566; // -> ... und das die Praxis
-  return VBatt_V;
-}
-
-esp_err_t logger::InitGPIO()
-{
-  // Outputs
-  const uint64_t OutputBitMask = (1ULL << BOARD_LED) | (1ULL << PIN_NUM_CS);
-
-  gpio_config_t ConfigOutput = {};
-  ConfigOutput.pin_bit_mask = OutputBitMask;
-  ConfigOutput.mode = GPIO_MODE_INPUT_OUTPUT; // damit man auch den aktuell eingestellten Wert zurücklesen kann!
-  ConfigOutput.pull_up_en = GPIO_PULLUP_DISABLE;
-  ConfigOutput.pull_down_en = GPIO_PULLDOWN_DISABLE;
-  ConfigOutput.intr_type = GPIO_INTR_DISABLE;
-  ESP_RETURN_ON_ERROR(gpio_config(&ConfigOutput), TAG, "Fehler bei Init output GPIO");
-
-  // Inputs
-  const uint64_t InputBitMask = (1ULL << WAKEUP_INPUT_PIN);
-  gpio_config_t ConfigInput = {};
-  ConfigInput.pin_bit_mask = InputBitMask;
-  ConfigInput.mode = GPIO_MODE_INPUT;
-  ConfigInput.pull_up_en = GPIO_PULLUP_ENABLE;
-  ConfigInput.pull_down_en = GPIO_PULLDOWN_DISABLE;
-  ConfigInput.intr_type = GPIO_INTR_DISABLE;
-  ESP_RETURN_ON_ERROR(gpio_config(&ConfigInput), TAG, "Fehler bei Init input GPIO");
-  return ESP_OK;
-}
-
-esp_err_t logger::InitI2C(i2c_port_t aPort, gpio_num_t aSDA_Pin, gpio_num_t aSCL_Pin, i2c_master_bus_handle_t *aBusHandle)
-{
-  if (aPort > 1)
-    return ESP_ERR_INVALID_ARG;
-
-  i2c_master_bus_config_t conf;
-  conf.i2c_port = aPort;
-  conf.sda_io_num = aSDA_Pin;
-  conf.scl_io_num = aSCL_Pin;
-  conf.clk_source = I2C_CLK_SRC_DEFAULT;
-  conf.glitch_ignore_cnt = 7;
-  conf.intr_priority = 0;
-  conf.trans_queue_depth = 0;
-  conf.flags.enable_internal_pullup = 1;
-  return i2c_new_master_bus(&conf, aBusHandle);
-}
-
-#define MAX_VPBUFLEN 256
-char vprintf_buffer[MAX_VPBUFLEN];
-
-void error(const char *format, ...)
-{
-  va_list myargs;
-  va_start(myargs, format);
-
-  vsnprintf(vprintf_buffer, MAX_VPBUFLEN, format, myargs);
-  ESP_LOGE(TAG, "%s", vprintf_buffer);
-  va_end(myargs);
-  int toggle = 0;
-  for (;;)
-  {
-    toggle = 1 - toggle;
-    gpio_set_level(BOARD_LED, toggle);
-    vTaskDelay(pdMS_TO_TICKS(20));
-  }
-}
