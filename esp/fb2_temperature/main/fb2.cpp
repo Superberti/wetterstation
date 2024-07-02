@@ -165,14 +165,16 @@ void logger::Run()
   // Initialisierung GPIO
   ESP_LOGI(TAG, "GPIO init...");
   InitGPIO();
+  gpio_set_level(BOARD_LED, 1);
 
+  /*
   for (int i = 0; i < 10; i++)
   {
     gpio_set_level(BOARD_LED, 1);
     vTaskDelay(pdMS_TO_TICKS(100));
     gpio_set_level(BOARD_LED, 0);
     vTaskDelay(pdMS_TO_TICKS(100));
-  }
+  }*/
 
   //-------------ADC1 Init---------------//
   adc_oneshot_unit_init_cfg_t init_config1;
@@ -184,8 +186,6 @@ void logger::Run()
   AdcConfig.atten = ADC_ATTEN_DB_12;
   AdcConfig.bitwidth = ADC_BITWIDTH_DEFAULT;
   ESP_ERROR_CHECK(adc_oneshot_config_channel(mADCHandle, ADC_V_BATT, &AdcConfig));
-
-  gpio_set_level(BOARD_LED, 1);
 
   // Initialisierung I2C und GPIO
   ESP_LOGI(TAG, "I2C init...");
@@ -259,7 +259,7 @@ void logger::Run()
       ESP_LOGE(TAG, "Fehler beim Senden eines LoRa-Paketes: %d Versuch: %d", ret, RetryCounter);
       ESP_LOGE(TAG, "Resette LORA-Modul...");
       LoRa->Reset();
-      vTaskDelay(pdMS_TO_TICKS(1000));
+      vTaskDelay(pdMS_TO_TICKS(100));
       ret = LoRa->SetupModule(LORA_ADDR_GWHS, 434.54e6, 14, LoRaBase::LoRaBandwidth::LORA_BW_500, 0x37, LoRaBase::SpreadingFactor::SF8, LoRaBase::LoRaCodingRate::LORA_CR_4_6, 15);
       if (ret != ESP_OK)
         ESP_LOGI(TAG, "Fehler beim Initialisieren des LoRa Moduls: %d", ret);
@@ -276,7 +276,7 @@ void logger::Run()
   ESP_LOGI(TAG, "LoRa gesendet nach %.1f ms", (EndTime - StartTime) / 1000.0);
 
   gpio_set_level(BOARD_LED, 0);
-
+  LoRa->Sleep();
   GoSleep();
 }
 
@@ -300,16 +300,19 @@ void logger::GoSleep()
 
   // ESP_ERROR_CHECK(esp_sleep_enable_ext1_wakeup(WAKEUP_INPUT_PIN, ESP_EXT1_WAKEUP_ANY_LOW));
   gpio_set_level(BOARD_LED, 0);
+  //gpio_set_level(LORA_PIN_RESET, false);
 
   //rtc_gpio_isolate(BOARD_LED);
-  rtc_gpio_isolate(LORA_PIN_RESET);
+  //rtc_gpio_isolate(LORA_PIN_RESET);
 
   // Pins auf Input
+  
   gpio_set_direction(LORA_PIN_CS, GPIO_MODE_INPUT);
   gpio_set_direction(LORA_PIN_MISO, GPIO_MODE_INPUT);
   gpio_set_direction(LORA_PIN_MOSI, GPIO_MODE_INPUT);
   gpio_set_direction(LORA_PIN_CLK, GPIO_MODE_INPUT);
   gpio_set_direction(LORA_PIN_DIO0, GPIO_MODE_INPUT);
+  gpio_set_direction(LORA_PIN_RESET, GPIO_MODE_INPUT);
   gpio_set_direction(PIN_SDA_BUS0, GPIO_MODE_INPUT);
   gpio_set_direction(PIN_SCL_BUS0, GPIO_MODE_INPUT);
 
