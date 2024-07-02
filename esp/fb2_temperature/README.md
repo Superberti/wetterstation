@@ -1,32 +1,14 @@
-# _Sample project_
+# Firebeetle 2 (ESP32-C6) Temperatur- Druck- und Luftfeuchtigkeitslogger (Akkubetrieb)
 
-(See the README.md file in the upper level 'examples' directory for more information about examples.)
+## Verwendete Sensoren:
+- BMP390 (Luftdruck)
+- SHT40 (Temperatur und Luftfeuchtigkeit)
 
-This is the simplest buildable example. The example is used by command `idf.py create-project`
-that copies the project to user specified path and set it's name. For more information follow the [docs page](https://docs.espressif.com/projects/esp-idf/en/latest/api-guides/build-system.html#start-a-new-project)
+## LoRa-Modul
+SX1278 bei 433 MHz
 
+## Hinweise zum Compilieren
+- Verwendung vom ESP-IDF 5.2.2 mit VSCode
 
-
-## How to use example
-We encourage the users to use the example as a template for the new projects.
-A recommended way is to follow the instructions on a [docs page](https://docs.espressif.com/projects/esp-idf/en/latest/api-guides/build-system.html#start-a-new-project).
-
-## Example folder contents
-
-The project **sample_project** contains one source file in C language [main.c](main/main.c). The file is located in folder [main](main).
-
-ESP-IDF projects are built using CMake. The project build configuration is contained in `CMakeLists.txt`
-files that provide set of directives and instructions describing the project's source files and targets
-(executable, library, or both). 
-
-Below is short explanation of remaining files in the project folder.
-
-```
-├── CMakeLists.txt
-├── main
-│   ├── CMakeLists.txt
-│   └── main.c
-└── README.md                  This is the file you are currently reading
-```
-Additionally, the sample project contains Makefile and component.mk files, used for the legacy Make based build system. 
-They are not used or needed when building with CMake and idf.py.
+## Hinweise zum Flashen
+- Wenn die MCU zu schnell in den Sleep-Modus geht, dann kann kein COM-Port zum Flashen angelegt werden. Beim Firebeetle reicht es NICHT aus, Reset+Boot zu drücken und dann nur Reset loszulassen (wie es auf den ESP32-S3-Lilygo-Board funktioniert). Hier muss die Stromversorgung getrennt werden (also USB abziehen), Boot-Knopf drücken und halten, USB-Stecker rein. Danach befindet der Firebeetle sich im flashbaren Bootmodus.

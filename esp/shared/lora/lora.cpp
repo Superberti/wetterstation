@@ -11,7 +11,6 @@
 #include "../tools/tools.h"
 #include "esp_check.h"
 
-static void LoraReceivedHandler(void *arg);
 
 // Quarzfrequenz aller Module
 #define XTAL_FRQ 32000000
@@ -49,20 +48,6 @@ esp_err_t LoRaBase::SPIBusInit()
   ConfigInput.intr_type = GPIO_INTR_DISABLE;
   ESP_RETURN_ON_ERROR(gpio_config(&ConfigInput), "LORA:", "Fehler bei Init input GPIO");
 
-  // Inputs
-  InputBitMask = (1ULL << mPinConfig.DIO1);
-  ConfigInput.pin_bit_mask = InputBitMask;
-  ConfigInput.mode = GPIO_MODE_INPUT;
-  ConfigInput.pull_up_en = GPIO_PULLUP_DISABLE; // die Input-only Pins 34, 36, 39 haben keinen internen Pullup, dann braucht man den auch nicht einschalten!
-  ConfigInput.pull_down_en = GPIO_PULLDOWN_DISABLE;
-  ConfigInput.intr_type = GPIO_INTR_NEGEDGE;
-  ESP_RETURN_ON_ERROR(gpio_config(&ConfigInput), "LORA:", "Fehler bei Init input GPIO");
-
-  // install gpio isr service
-  ESP_RETURN_ON_ERROR(gpio_install_isr_service(0), "LORA:", "Fehler bei Init input GPIO");
-  // hook isr handler for specific gpio pin
-  ESP_RETURN_ON_ERROR(gpio_isr_handler_add(mPinConfig.DIO1, LoraReceivedHandler, (void *)mPinConfig.DIO1), "LORA:", "Fehler PinConfig.DIO1 IRQ");
-
   spi_bus_config_t bus = {};
   bus.miso_io_num = mPinConfig.Miso;
   bus.mosi_io_num = mPinConfig.Mosi;
@@ -86,13 +71,6 @@ esp_err_t LoRaBase::SPIBusInit()
   if (ret != ESP_OK)
     return ret;
   return ESP_OK;
-}
-
-static void LoraReceivedHandler(void *arg)
-{
-  // Input-IRQ Windgeschw., Regen und Blitze
-  gpio_num_t InputPin = (gpio_num_t)((uint32_t)arg);
-  // ToDo: Received-Handler bearbeiten
 }
 
 /**

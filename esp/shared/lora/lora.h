@@ -23,8 +23,8 @@
     Mosi = 27;
     Clock = 5;
     DIO0 = 26;
-    DIO1 = 33;
-    Busy = 32;
+    DIO1 = 0;
+    Busy = 0;
     SPIChannel = SPI2_HOST;
     break;
   case HeltecESPLoRa:
@@ -46,7 +46,7 @@
     Clock = 9;
     // DIO0 = 26;  // Der SX1262 hat nur DIO1-3. Angeschlossen ist aber nur DIO1
     DIO1 = 14;
-    Busy = 13;
+    Busy = 13;    // Busy gibt es nur beim SX1262
     SPIChannel = SPI2_HOST;
     UseTXCO = true; // Hat einen TXCO und keinen XTAL
     break;
