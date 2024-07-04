@@ -1,11 +1,5 @@
 /*
- * ESP-Datenlogger für Druck, Feuchte und Temperatur
- * CBOR-Datenübertragung an die Wetterstation mit LoRa-Funk
- * Baseboard: Firebeetle 2 (ESP32-C6, https://wiki.dfrobot.com/SKU_DFR1075_FireBeetle_2_Board_ESP32_C6)
- * Angeschlossene Sensorik:
- * SHT40 - Temperatur und Luftfeuchte
- * BMP390 - Luftdruck
- * LoRa SX1262
+ * Heltec WSL-V3
  */
 
 #include <stdio.h>
@@ -57,20 +51,17 @@ using json = nlohmann::json;
  * SHT40, SCL -> 20 (I2C-0) (SHT40 und BMP390)
  *
  *
- * BOARD_LED -> 15
+ * BOARD_LED -> 35
  *
- * WAKE-UP-Schalter -> 2 (Pull-Up, Active-Low)
- *
- * Batteriespannung über 2x100 kOhm Spannungsteiler an GPIO2
  */
 
 // SX1262 LoRa-Modul (SPI)
-#define LORA_PIN_MISO GPIO_NUM_2
-#define LORA_PIN_MOSI GPIO_NUM_17
-#define LORA_PIN_CLK GPIO_NUM_3
-#define LORA_PIN_CS GPIO_NUM_16
-#define LORA_PIN_RESET GPIO_NUM_7
-#define LORA_PIN_DIO0 GPIO_NUM_6
+#define LORA_PIN_MISO GPIO_NUM_11
+#define LORA_PIN_MOSI GPIO_NUM_10
+#define LORA_PIN_CLK GPIO_NUM_9
+#define LORA_PIN_CS GPIO_NUM_8
+#define LORA_PIN_RESET GPIO_NUM_12
+#define LORA_PIN_BUSY GPIO_NUM_13
 
 // SHT40 und BMP390 am I2C-Bus 0
 #define PIN_SDA_BUS0 GPIO_NUM_19
@@ -81,7 +72,7 @@ using json = nlohmann::json;
 #define PIN_SCL_BUS1 GPIO_NUM_7
 
 // GPIOs
-#define BOARD_LED GPIO_NUM_15
+#define BOARD_LED GPIO_NUM_35
 // #define WAKEUP_INPUT_PIN GPIO_NUM_2
 
 // Interner ADC (ADC1 Channel1)
@@ -121,21 +112,23 @@ logger::logger()
   mLoggerResetMode = RESET_MODE_POWERON;
   mStartTime = GetTime_us();
   // Log auf eigene Funktion umbiegen
-  Sht = new SHT40;
-  Bmp = new BMP390;
+  // Sht = new SHT40;
+  // Bmp = new BMP390;
+
   LoRa_PinConfiguration PinConfig = {};
   PinConfig.ChipSelect = LORA_PIN_CS;
   PinConfig.Clock = LORA_PIN_CLK;
-  PinConfig.DIO0 = LORA_PIN_DIO0;
   PinConfig.Miso = LORA_PIN_MISO;
   PinConfig.Mosi = LORA_PIN_MOSI;
   PinConfig.Reset = LORA_PIN_RESET;
+  PinConfig.Busy = LORA_PIN_BUSY;
   PinConfig.SPIChannel = SPI2_HOST;
+  PinConfig.UseTXCO=1;
 
   rtc_gpio_hold_dis(LORA_PIN_RESET);
   // rtc_gpio_hold_dis(BOARD_LED);
 
-  LoRa = new SX1278_LoRa(PinConfig);
+  LoRa = new SX1262_LoRa(PinConfig);
   switch (esp_sleep_get_wakeup_cause())
   {
   case ESP_SLEEP_WAKEUP_TIMER:
@@ -167,25 +160,13 @@ void logger::Run()
   InitGPIO();
   gpio_set_level(BOARD_LED, 1);
 
-  /*
   for (int i = 0; i < 10; i++)
   {
     gpio_set_level(BOARD_LED, 1);
     vTaskDelay(pdMS_TO_TICKS(100));
     gpio_set_level(BOARD_LED, 0);
     vTaskDelay(pdMS_TO_TICKS(100));
-  }*/
-
-  //-------------ADC1 Init---------------//
-  adc_oneshot_unit_init_cfg_t init_config1;
-  init_config1.unit_id = ADC_UNIT_1;
-  init_config1.ulp_mode = ADC_ULP_MODE_DISABLE;
-  init_config1.clk_src = (adc_oneshot_clk_src_t)ADC_DIGI_CLK_SRC_DEFAULT;
-  ESP_ERROR_CHECK(adc_oneshot_new_unit(&init_config1, &mADCHandle));
-  adc_oneshot_chan_cfg_t AdcConfig;
-  AdcConfig.atten = ADC_ATTEN_DB_12;
-  AdcConfig.bitwidth = ADC_BITWIDTH_DEFAULT;
-  ESP_ERROR_CHECK(adc_oneshot_config_channel(mADCHandle, ADC_V_BATT, &AdcConfig));
+  }
 
   // Initialisierung I2C und GPIO
   ESP_LOGI(TAG, "I2C init...");
@@ -193,21 +174,23 @@ void logger::Run()
   if (ret != ESP_OK)
     ESP_LOGE(TAG, "Fehler beim InitI2C(0): %d.", ret);
 
-  // Init Temperatursensor
-  ret = Sht->Init(i2c_bus_h_0, SHT40_ADDR, I2C_FREQ_HZ);
-  if (ret != ESP_OK)
-  {
-    SD.SkipSHT40 = true;
-    ESP_LOGE(TAG, "Fehler beim Initialisieren des SHT40: %d. Sensor ausgeschaltet!", ret);
-  }
+  /*
+    // Init Temperatursensor
+    ret = Sht->Init(i2c_bus_h_0, SHT40_ADDR, I2C_FREQ_HZ);
+    if (ret != ESP_OK)
+    {
+      SD.SkipSHT40 = true;
+      ESP_LOGE(TAG, "Fehler beim Initialisieren des SHT40: %d. Sensor ausgeschaltet!", ret);
+    }
 
-  // Init Drucksensor
-  ret = Bmp->Init(i2c_bus_h_0, BMP390_ADDRESS, I2C_FREQ_HZ);
-  if (ret != ESP_OK)
-  {
-    SD.SkipBMP390 = true;
-    ESP_LOGE(TAG, "Fehler beim Initialisieren des BMP390: %d. Sensor ausgeschaltet!", ret);
-  }
+    // Init Drucksensor
+    ret = Bmp->Init(i2c_bus_h_0, BMP390_ADDRESS, I2C_FREQ_HZ);
+    if (ret != ESP_OK)
+    {
+      SD.SkipBMP390 = true;
+      ESP_LOGE(TAG, "Fehler beim Initialisieren des BMP390: %d. Sensor ausgeschaltet!", ret);
+    }
+  */
 
   // Sendefrequenz: 434,54 MHz
   // Preambellänge: 14
@@ -222,63 +205,48 @@ void logger::Run()
   // Coding-Rate: 6 = 4/6 = 1,5-facher FEC-Overhead
   // Tx-Power 2-17
   bool LoraOK = true;
-  ret = LoRa->SetupModule(LORA_ADDR_GWHS, 434.54e6, 14, LoRaBase::LoRaBandwidth::LORA_BW_500, 0x37, LoRaBase::SpreadingFactor::SF8, LoRaBase::LoRaCodingRate::LORA_CR_4_6, 15);
+  ret = LoRa->SetupModule(LORA_ADDR_GWHS, 434.54e6, 14, LoRaBase::LoRaBandwidth::LORA_BW_500, 0x3474, LoRaBase::SpreadingFactor::SF8, LoRaBase::LoRaCodingRate::LORA_CR_4_8, 15);
   if (ret != ESP_OK)
   {
     LoraOK = false;
-    ESP_LOGE(TAG, "Fehler beim Initialisieren vom LoRa-Modul: %d. Mopdul ausgeschaltet!", ret);
+    ESP_LOGE(TAG, "Fehler beim Initialisieren vom LoRa-Modul: %d", ret);
   }
 
   uint8_t LoraBuf[255];
   uint16_t iCBORBuildSize;
 
-  bool SleepLoggerMode = true;
+  bool SleepLoggerMode = false;
   do
   {
     gpio_set_level(BOARD_LED, 1);
-    ReadSensorData();
+    // ReadSensorData();
     iCBORBuildSize = 0;
+    SD.Hum_per = 12.34;
+    SD.Temp_deg = 43.21;
+    SD.VBatt_V = 4.56;
+    SD.Press_mBar = 1234.56;
     BuildCBORBuf(LoraBuf, sizeof(LoraBuf), iCBORBuildSize, SD);
     if (iCBORBuildSize > sizeof(LoraBuf))
       ESP_LOGE(TAG, "LoRa Buffer overflow...:%d", iCBORBuildSize);
 
     // LoRa-Paket senden
 
-    int RetryCounter = 0;
     bool SendOK = false;
     const int MaxRetries = 5;
     int64_t StartTime = GetTime_us();
-    while (!SendOK && RetryCounter < MaxRetries)
+    gpio_set_level(BOARD_LED, 1);
+    int64_t ts = GetTime_us();
+    ret = LoRa->SendLoraMsg(CMD_CBORDATA, LoraBuf, iCBORBuildSize, SleepCounter);
+    if (ret != ESP_OK)
     {
-      gpio_set_level(BOARD_LED, 1);
-      int64_t ts = GetTime_us();
-      ret = LoRa->SendLoraMsg(CMD_CBORDATA, LoraBuf, iCBORBuildSize, SleepCounter);
-      SendOK = ret == ESP_OK;
-      int64_t te = GetTime_us();
-      gpio_set_level(BOARD_LED, 0);
-      ESP_LOGI(TAG, "Zeit fuer LoRa: %.1f ms. Paketgroesse: %u", double(te - ts) / 1000.0, iCBORBuildSize);
-      if (!SendOK)
-      {
-        RetryCounter++;
-        ESP_LOGE(TAG, "Fehler beim Senden eines LoRa-Paketes: %d Versuch: %d", ret, RetryCounter);
-        ESP_LOGE(TAG, "Resette LORA-Modul...");
-        LoRa->Reset();
-        vTaskDelay(pdMS_TO_TICKS(100));
-        ret = LoRa->SetupModule(LORA_ADDR_GWHS, 434.54e6, 14, LoRaBase::LoRaBandwidth::LORA_BW_500, 0x37, LoRaBase::SpreadingFactor::SF8, LoRaBase::LoRaCodingRate::LORA_CR_4_6, 15);
-        if (ret != ESP_OK)
-          ESP_LOGI(TAG, "Fehler beim Initialisieren des LoRa Moduls: %d", ret);
-        else
-          ESP_LOGI(TAG, "Re-Init LORA erfolgreich");
-      }
+      ESP_LOGE(TAG, "Fehler bei SendLoraMsg: %d", ret);
     }
-    if (!SendOK)
-    {
-      ESP_LOGE(TAG, "Wiederholtes Senden fehlgeschlagen!");
-    }
-
+    int64_t te = GetTime_us();
+    gpio_set_level(BOARD_LED, 0);
+    ESP_LOGI(TAG, "Zeit fuer LoRa: %.1f ms. Paketgroesse: %u", double(te - ts) / 1000.0, iCBORBuildSize);
     gpio_set_level(BOARD_LED, 0);
     if (!SleepLoggerMode)
-      vTaskDelay(pdMS_TO_TICKS(2000));
+      vTaskDelay(pdMS_TO_TICKS(10000));
   } while (!SleepLoggerMode);
   LoRa->Sleep();
   int64_t EndTime = GetTime_us();
@@ -296,6 +264,9 @@ logger::~logger()
 
 void logger::GoSleep()
 {
+  // O. Rutsch, 03.07.24:
+  // Gemessen wurden am Heltec-Wireless-Stick-Lite-Board 20 µA im DeepSleep.
+  // Das ist ein sehr guter Wert...
   ESP_LOGI(TAG, "Configuring sleep mode...");
 
   ESP_LOGI(TAG, "Weckzeit einstellen nach %d s", SLEEP_TIME);
@@ -317,7 +288,6 @@ void logger::GoSleep()
   gpio_set_direction(LORA_PIN_MISO, GPIO_MODE_INPUT);
   gpio_set_direction(LORA_PIN_MOSI, GPIO_MODE_INPUT);
   gpio_set_direction(LORA_PIN_CLK, GPIO_MODE_INPUT);
-  gpio_set_direction(LORA_PIN_DIO0, GPIO_MODE_INPUT);
   gpio_set_direction(LORA_PIN_RESET, GPIO_MODE_INPUT);
   gpio_set_direction(PIN_SDA_BUS0, GPIO_MODE_INPUT);
   gpio_set_direction(PIN_SCL_BUS0, GPIO_MODE_INPUT);
@@ -374,10 +344,8 @@ std::string logger::ReadSensorData()
 
   // Vorher noch kurz die Batteriespannung abfragen. Am besten mit allen eingeschalteten Geräten, dann wird die Spannung unter
   // Belastung gemessen.
-  uint16_t ADCVal;
-  SD.VBatt_V = GetVBatt(&ADCVal);
-  ESP_LOGI(TAG, "VBat: %.2f V (%d)", SD.VBatt_V, ADCVal);
-  //SD.VBatt_V = ADCVal;
+  SD.VBatt_V = GetVBatt();
+  ESP_LOGI(TAG, "VBat: %.2f V", SD.VBatt_V);
 
   // BMP390
   if (!BmpErr)
@@ -407,7 +375,7 @@ std::string logger::ReadSensorData()
 
 // Batteriespannung abfragen. Am besten mit allen eingeschalteten Geräten, dann wird die Spannung unter
 // Belastung gemessen.
-float logger::GetVBatt(uint16_t *aADC)
+float logger::GetVBatt()
 {
   float VBatt_V;
   float AdcMean = 0;
@@ -422,12 +390,10 @@ float logger::GetVBatt(uint16_t *aADC)
     AdcMean += AdcValue;
   }
   AdcMean /= Oversampling;
-  if (aADC)
-    *aADC = uint16_t(AdcMean + 0.5);
   // Referenzspannung 1.1V, Spannungsteiler 100K/100K, Abschwächung 12dB (Faktor 4) = 8.8 V bei Vollausschlag (4095)
   // Evtl. braucht es noch Offset/Gain als Kalibrierung für einen vernünftigen Wert. Alternativ an den ADS1115 anschließen...
   // tmp.VBatt_V = AdcMean / 4095 * 8.8; // -> Das ist die Theorie
-  VBatt_V = AdcMean / 4095 * 8.442 - 0.11324; // -> ... und das die Praxis (Berechnet durch zwei Punkte)
+  VBatt_V = AdcMean / 4095 * 8.8 + 0.4; // -> ... und das die Praxis
   return VBatt_V;
 }
 

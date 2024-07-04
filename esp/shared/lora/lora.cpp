@@ -88,8 +88,8 @@ void LoRaBase::CloseSPI()
   {
     spi_bus_remove_device(mhSpi);
     spi_bus_free(mPinConfig.SPIChannel);
-    gpio_isr_handler_remove(mPinConfig.DIO1);
-    gpio_uninstall_isr_service();
+    //gpio_isr_handler_remove(mPinConfig.DIO1);
+    //gpio_uninstall_isr_service();
     mhSpi = NULL;
   }
 }
@@ -1249,7 +1249,6 @@ esp_err_t SX1262_LoRa::SendPacket(uint8_t *aBuf, uint8_t aSize)
   ret = ClearDeviceError();
   if (ret != ESP_OK)
     return ret;
-  // ESP_LOGI("lora","lora is idle");
   ret = SetBufferBaseAddress(0, 0);
   if (ret != ESP_OK)
     return ret;
@@ -1265,7 +1264,7 @@ esp_err_t SX1262_LoRa::SendPacket(uint8_t *aBuf, uint8_t aSize)
   if (memcmp(aBuf, ReadBuf, aSize) != 0)
     ESP_LOGE("LoRa", "Vergleich Puffer Lesen/Schreiben fehlgeschlagen!");
   */
-  ret = SetPacketParams(mPreambleLength, true, aSize, true);
+  ret = SetPacketParams(mPreambleLength, mImplicit, aSize, true);
   if (ret != ESP_OK)
     return ret;
   ret = ClearIRQStatus(0xFFFF);
@@ -1289,7 +1288,7 @@ esp_err_t SX1262_LoRa::SendPacket(uint8_t *aBuf, uint8_t aSize)
   if (ret != ESP_OK)
     return ret;
   // ESP_LOGI("LoRa", "iIRQStatus: %d", iIRQStatus);
-
+  uint16_t ChipError=0;
   // ESP_LOGI("LoRa", "Warte auf Paketende...");
   while ((iIRQStatus & IRQFlags::TxDone) == 0)
   {
@@ -1306,6 +1305,8 @@ esp_err_t SX1262_LoRa::SendPacket(uint8_t *aBuf, uint8_t aSize)
     if (iIRQStatus & IRQFlags::Timeout)
     {
       ESP_LOGE("LoRa", "Sendetimeout!");
+      GetDeviceError(ChipError);
+      ESP_LOGI("LoRa", "ChipError: %d", ChipError);
       ClearIRQStatus(0xFFFF);
       return ESP_ERR_TIMEOUT;
     }
