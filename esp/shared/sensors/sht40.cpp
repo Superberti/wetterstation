@@ -72,7 +72,7 @@ esp_err_t SHT40::Read(float &aTemp, float &aHum)
     iWaitTime_ms = 100;
     break;
   }
-  vTaskDelay(iWaitTime_ms / portTICK_PERIOD_MS);
+  vTaskDelay(pdMS_TO_TICKS(iWaitTime_ms));
   // Belegung Datenblock in bytes:
   // Temperatur_high, Temperatur_low, Temperatur_crc, Luftfeuchte_high, Luftfeuchte_low, Luftfeuchte_crc
   uint8_t rb[6] = {0};
@@ -116,7 +116,7 @@ esp_err_t SHT40::ReadSerial(uint32_t &aSerialNo)
     return ret;
   }
   // Ohne diese Pause kann die Seriennummer nicht gelesen werden. Es gibt dann ein Timeout
-  vTaskDelay(10 / portTICK_PERIOD_MS);
+  vTaskDelay(pdMS_TO_TICKS(10));
   // Belegung Datenblock in bytes:
   // [2 * 8-bit data; 8-bit CRC; 2 * 8-bit data; 8-bit CRC]
   uint8_t rb[6] = {0};

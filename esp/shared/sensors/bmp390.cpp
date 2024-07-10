@@ -134,8 +134,8 @@ esp_err_t BMP390::ReadTempAndPressAsync(float &rTemp_C, float &rPress_mbar, bool
     while (!DataReady())
     {
       tc++;
-      vTaskDelay(10 / portTICK_PERIOD_MS);
-      if (tc > 50)
+      vTaskDelay(pdMS_TO_TICKS(1));
+      if (tc > 500)
         return ESP_ERR_TIMEOUT;
     }
   }
@@ -241,7 +241,7 @@ float BMP390::WaterBoilingPoint(float pressure)
 void BMP390::Reset(void)
 {
   WriteRegister(BMP390_REGISTER_CMD, BMP390_CMD_SOFTRESET);
-  vTaskDelay(10 / portTICK_PERIOD_MS);
+  vTaskDelay(pdMS_TO_TICKS(1));
 }
 
 uint8_t BMP390::GetStatus(void)

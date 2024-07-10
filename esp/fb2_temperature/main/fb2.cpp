@@ -101,6 +101,8 @@ extern "C"
 {
   void app_main()
   {
+    gpio_set_level(BOARD_LED, 0);
+    esp_log_level_set("*", ESP_LOG_ERROR);
     app_main_cpp();
   }
 }
@@ -235,7 +237,7 @@ void logger::Run()
   bool SleepLoggerMode = true;
   do
   {
-    gpio_set_level(BOARD_LED, 1);
+    //gpio_set_level(BOARD_LED, 1);
     ReadSensorData();
     iCBORBuildSize = 0;
     BuildCBORBuf(LoraBuf, sizeof(LoraBuf), iCBORBuildSize, SD);
@@ -250,12 +252,12 @@ void logger::Run()
     int64_t StartTime = GetTime_us();
     while (!SendOK && RetryCounter < MaxRetries)
     {
-      gpio_set_level(BOARD_LED, 1);
+      //gpio_set_level(BOARD_LED, 1);
       int64_t ts = GetTime_us();
       ret = LoRa->SendLoraMsg(CMD_CBORDATA, LoraBuf, iCBORBuildSize, SleepCounter);
       SendOK = ret == ESP_OK;
       int64_t te = GetTime_us();
-      gpio_set_level(BOARD_LED, 0);
+      //gpio_set_level(BOARD_LED, 0);
       ESP_LOGI(TAG, "Zeit fuer LoRa: %.1f ms. Paketgroesse: %u", double(te - ts) / 1000.0, iCBORBuildSize);
       if (!SendOK)
       {
@@ -276,13 +278,13 @@ void logger::Run()
       ESP_LOGE(TAG, "Wiederholtes Senden fehlgeschlagen!");
     }
 
-    gpio_set_level(BOARD_LED, 0);
+    //gpio_set_level(BOARD_LED, 0);
     if (!SleepLoggerMode)
       vTaskDelay(pdMS_TO_TICKS(2000));
   } while (!SleepLoggerMode);
   LoRa->Sleep();
   int64_t EndTime = GetTime_us();
-  ESP_LOGI(TAG, "Dauer Wachphase: %.1f ms", (EndTime - mStartTime) / 1000.0);
+  //ESP_LOGI(TAG, "Dauer Wachphase: %.1f ms", (EndTime - mStartTime) / 1000.0);
   GoSleep();
 }
 
@@ -305,7 +307,6 @@ void logger::GoSleep()
   // rtc_gpio_pulldown_dis(WAKEUP_INPUT_PIN);
 
   // ESP_ERROR_CHECK(esp_sleep_enable_ext1_wakeup(WAKEUP_INPUT_PIN, ESP_EXT1_WAKEUP_ANY_LOW));
-  gpio_set_level(BOARD_LED, 0);
   // gpio_set_level(LORA_PIN_RESET, false);
 
   // rtc_gpio_isolate(BOARD_LED);
@@ -327,7 +328,9 @@ void logger::GoSleep()
     adc_oneshot_del_unit(mADCHandle);
 
   SleepCounter++;
+  esp_deep_sleep_disable_rom_logging();
   ESP_LOGI(TAG, "Going to sleep now!");
+  gpio_set_level(BOARD_LED, 0);
   esp_deep_sleep_start();
 }
 
@@ -346,7 +349,7 @@ std::string logger::ReadSensorData()
   bool BmpErr = false;
   bool ShtErr = false;
 
-  gpio_set_level(BOARD_LED, 1);
+  //gpio_set_level(BOARD_LED, 1);
 
   SD.uptime_s = GetSecondsAfterStart();
   // ESP_LOGI(TAG,"Alive time: %d s",tmp.alive_timer_s );
@@ -401,7 +404,7 @@ std::string logger::ReadSensorData()
   if (res.length() == 0)
     res = "OK";
 
-  gpio_set_level(BOARD_LED, 0);
+  //gpio_set_level(BOARD_LED, 0);
   return res;
 }
 
@@ -424,7 +427,7 @@ float logger::GetVBatt(uint16_t *aADC)
   AdcMean /= Oversampling;
   if (aADC)
     *aADC = uint16_t(AdcMean + 0.5);
-  // Referenzspannung 1.1V, Spannungsteiler 100K/100K, Abschwächung 12dB (Faktor 4) = 8.8 V bei Vollausschlag (4095)
+  // Referenzspannung 1.1 V (Lt. Datenblatt 1.0-1.2), Spannungsteiler 100K/100K, Abschwächung 12dB (Faktor 4) = 8.8 V bei Vollausschlag (4095)
   // Evtl. braucht es noch Offset/Gain als Kalibrierung für einen vernünftigen Wert. Alternativ an den ADS1115 anschließen...
   // tmp.VBatt_V = AdcMean / 4095 * 8.8; // -> Das ist die Theorie
   VBatt_V = AdcMean / 4095 * 8.442 - 0.11324; // -> ... und das die Praxis (Berechnet durch zwei Punkte)
