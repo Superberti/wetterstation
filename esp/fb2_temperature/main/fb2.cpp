@@ -237,7 +237,7 @@ void logger::Run()
   bool SleepLoggerMode = true;
   do
   {
-    //gpio_set_level(BOARD_LED, 1);
+    // gpio_set_level(BOARD_LED, 1);
     ReadSensorData();
     iCBORBuildSize = 0;
     BuildCBORBuf(LoraBuf, sizeof(LoraBuf), iCBORBuildSize, SD);
@@ -252,12 +252,12 @@ void logger::Run()
     int64_t StartTime = GetTime_us();
     while (!SendOK && RetryCounter < MaxRetries)
     {
-      //gpio_set_level(BOARD_LED, 1);
+      // gpio_set_level(BOARD_LED, 1);
       int64_t ts = GetTime_us();
       ret = LoRa->SendLoraMsg(CMD_CBORDATA, LoraBuf, iCBORBuildSize, SleepCounter);
       SendOK = ret == ESP_OK;
       int64_t te = GetTime_us();
-      //gpio_set_level(BOARD_LED, 0);
+      // gpio_set_level(BOARD_LED, 0);
       ESP_LOGI(TAG, "Zeit fuer LoRa: %.1f ms. Paketgroesse: %u", double(te - ts) / 1000.0, iCBORBuildSize);
       if (!SendOK)
       {
@@ -278,13 +278,13 @@ void logger::Run()
       ESP_LOGE(TAG, "Wiederholtes Senden fehlgeschlagen!");
     }
 
-    //gpio_set_level(BOARD_LED, 0);
+    // gpio_set_level(BOARD_LED, 0);
     if (!SleepLoggerMode)
       vTaskDelay(pdMS_TO_TICKS(2000));
   } while (!SleepLoggerMode);
   LoRa->Sleep();
   int64_t EndTime = GetTime_us();
-  //ESP_LOGI(TAG, "Dauer Wachphase: %.1f ms", (EndTime - mStartTime) / 1000.0);
+  // ESP_LOGI(TAG, "Dauer Wachphase: %.1f ms", (EndTime - mStartTime) / 1000.0);
   GoSleep();
 }
 
@@ -349,7 +349,7 @@ std::string logger::ReadSensorData()
   bool BmpErr = false;
   bool ShtErr = false;
 
-  //gpio_set_level(BOARD_LED, 1);
+  // gpio_set_level(BOARD_LED, 1);
 
   SD.uptime_s = GetSecondsAfterStart();
   // ESP_LOGI(TAG,"Alive time: %d s",tmp.alive_timer_s );
@@ -375,13 +375,6 @@ std::string logger::ReadSensorData()
     ESP_LOGI(TAG, "SHT40 Temperatur: %.2f°C Luftfeuchte: %.2f %%", SD.Temp_deg, SD.Hum_per);
   }
 
-  // Vorher noch kurz die Batteriespannung abfragen. Am besten mit allen eingeschalteten Geräten, dann wird die Spannung unter
-  // Belastung gemessen.
-  uint16_t ADCVal;
-  SD.VBatt_V = GetVBatt(&ADCVal);
-  ESP_LOGI(TAG, "VBat: %.2f V (%d)", SD.VBatt_V, ADCVal);
-  //SD.VBatt_V = ADCVal;
-
   // BMP390
   if (!BmpErr)
   {
@@ -400,18 +393,33 @@ std::string logger::ReadSensorData()
         SD.Temp_deg = temp_bmp;
     }
   }
+
+  // Vorher noch kurz die Batteriespannung abfragen. Am besten mit allen eingeschalteten Geräten, dann wird die Spannung unter
+  // Belastung gemessen.
+  uint16_t ADCVal;
+  SD.VBatt_V = GetVBatt(&ADCVal);
+  ESP_LOGI(TAG, "VBat: %.2f V (%d)", SD.VBatt_V, ADCVal);
+  // SD.VBatt_V = ADCVal;
+
   SD.PC++;
   if (res.length() == 0)
     res = "OK";
 
-  //gpio_set_level(BOARD_LED, 0);
+  // gpio_set_level(BOARD_LED, 0);
   return res;
 }
 
 // Batteriespannung abfragen. Am besten mit allen eingeschalteten Geräten, dann wird die Spannung unter
 // Belastung gemessen.
+// ACHTUNG: Zumindest bei dem hier verwendeten Firebeetle 2 Board hängt die gemessene Batteriespannung stark davon ab, wann
+// gemessen wird. Am genauesten sind die Ergebnisse nach ca. 1 Sekunde nach dem Booten/Reset aus dem Deep-Sleep.
+// So lange wollen wir aber bei Batteriebetrieb natürlich nicht warten und messen deshalb kurz vor dem Deep-Sleep.
+// Misst man sofort nach dem Start, dann misst man mehrere hundert(!) Millivolt zu wenig. Hier sind es momentan 100 mV
+// zu wenig. Sollte aber sich die Wachzeit ändern, dann muss auch der WakeupTimeOffset angepasst werden!
 float logger::GetVBatt(uint16_t *aADC)
 {
+  // Zeitabhängiger ADC-Offset. Ab 1 Sekunde Wachzeit kann der zu 0 gesetzt werden!
+  const float WakeupTimeOffset = 0.1;
   float VBatt_V;
   float AdcMean = 0;
   int AdcValue = 0;
@@ -430,7 +438,7 @@ float logger::GetVBatt(uint16_t *aADC)
   // Referenzspannung 1.1 V (Lt. Datenblatt 1.0-1.2), Spannungsteiler 100K/100K, Abschwächung 12dB (Faktor 4) = 8.8 V bei Vollausschlag (4095)
   // Evtl. braucht es noch Offset/Gain als Kalibrierung für einen vernünftigen Wert. Alternativ an den ADS1115 anschließen...
   // tmp.VBatt_V = AdcMean / 4095 * 8.8; // -> Das ist die Theorie
-  VBatt_V = AdcMean / 4095 * 8.442 - 0.11324; // -> ... und das die Praxis (Berechnet durch zwei Punkte)
+  VBatt_V = AdcMean / 4095 * 8.442 - 0.11324 + WakeupTimeOffset; // -> ... und das die Praxis (Berechnet durch zwei Punkte)
   return VBatt_V;
 }
 
