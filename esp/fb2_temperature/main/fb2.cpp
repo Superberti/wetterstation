@@ -5,7 +5,7 @@
  * Angeschlossene Sensorik:
  * SHT40 - Temperatur und Luftfeuchte
  * BMP390 - Luftdruck
- * LoRa SX1262
+ * LoRa SX1278
  */
 
 #include <stdio.h>
@@ -48,6 +48,9 @@
 
 #define FB2_VERSION "1.0.0.0"
 #define LORA_ORT ORT_SYMPATEC
+
+// Zakluszeit der Temperatur/Druck/Feuchtemessung. Wir machen mal alle zwei Minuten
+#define SLEEP_TIME 120
 using json = nlohmann::json;
 
 /*
@@ -59,12 +62,10 @@ using json = nlohmann::json;
  *
  * BOARD_LED -> 15
  *
- * WAKE-UP-Schalter -> 2 (Pull-Up, Active-Low)
- *
  * Batteriespannung über 2x100 kOhm Spannungsteiler an GPIO2
  */
 
-// SX1262 LoRa-Modul (SPI)
+// SX1278 LoRa-Modul (SPI)
 #define LORA_PIN_MISO GPIO_NUM_2
 #define LORA_PIN_MOSI GPIO_NUM_17
 #define LORA_PIN_CLK GPIO_NUM_3
@@ -82,9 +83,8 @@ using json = nlohmann::json;
 
 // GPIOs
 #define BOARD_LED GPIO_NUM_15
-// #define WAKEUP_INPUT_PIN GPIO_NUM_2
 
-// Interner ADC (ADC1 Channel1)
+// Interner ADC (ADC1 Channel 0)
 #define ADC_V_BATT ADC_CHANNEL_0
 
 // I2C-Speed
@@ -94,7 +94,6 @@ using json = nlohmann::json;
 
 // Globals
 vprintf_like_t orig_log_func = NULL;
-static RTC_DATA_ATTR struct timeval sleep_enter_time;
 static RTC_DATA_ATTR int SleepCounter, LogCounter;
 
 extern "C"
@@ -113,8 +112,6 @@ void app_main_cpp()
   logger l;
   l.Run();
 }
-
-#define NUM_SENSOR_DATA 10
 
 logger::logger()
 {
@@ -142,7 +139,7 @@ logger::logger()
   {
   case ESP_SLEEP_WAKEUP_TIMER:
   {
-    // Modus nicht mehr vorgesehen! (macht jetzt der ULP)
+    // Aufwachen nach dem Sleep-Timer
     mLoggerResetMode = RESET_MODE_TIMER;
     ESP_LOGI(TAG, "Wake up from ESP sleep-timer. SleepCounter=%d", SleepCounter);
     break;
@@ -234,8 +231,10 @@ void logger::Run()
   uint8_t LoraBuf[255];
   uint16_t iCBORBuildSize;
 
-  bool SleepLoggerMode = true;
-  do
+  // Direkt nach dem POR zeigen wir die Messdaten 5 mal an (=10 Sekunden lang). Danach legt sich das Gerät Schlafen und
+  // beim folgenden Timer-WakeUp wird dann nur kurz gemessen, gesendet und dann wieder sofort geschlafen.
+  int WakeRounds = mLoggerResetMode == RESET_MODE_POWERON ? 5 : 1;
+  for (int i = 0; i < WakeRounds; i++)
   {
     // gpio_set_level(BOARD_LED, 1);
     ReadSensorData();
@@ -278,10 +277,9 @@ void logger::Run()
       ESP_LOGE(TAG, "Wiederholtes Senden fehlgeschlagen!");
     }
 
-    // gpio_set_level(BOARD_LED, 0);
-    if (!SleepLoggerMode)
+    if (mLoggerResetMode == RESET_MODE_POWERON)
       vTaskDelay(pdMS_TO_TICKS(2000));
-  } while (!SleepLoggerMode);
+  }
   LoRa->Sleep();
   int64_t EndTime = GetTime_us();
   // ESP_LOGI(TAG, "Dauer Wachphase: %.1f ms", (EndTime - mStartTime) / 1000.0);
@@ -293,8 +291,6 @@ logger::~logger()
   delete Sht;
   delete Bmp;
 }
-
-#define SLEEP_TIME 10
 
 void logger::GoSleep()
 {
@@ -399,7 +395,6 @@ std::string logger::ReadSensorData()
   uint16_t ADCVal;
   SD.VBatt_V = GetVBatt(&ADCVal);
   ESP_LOGI(TAG, "VBat: %.2f V (%d)", SD.VBatt_V, ADCVal);
-  // SD.VBatt_V = ADCVal;
 
   SD.PC++;
   if (res.length() == 0)
@@ -435,7 +430,7 @@ float logger::GetVBatt(uint16_t *aADC)
   AdcMean /= Oversampling;
   if (aADC)
     *aADC = uint16_t(AdcMean + 0.5);
-  // Referenzspannung 1.1 V (Lt. Datenblatt 1.0-1.2), Spannungsteiler 100K/100K, Abschwächung 12dB (Faktor 4) = 8.8 V bei Vollausschlag (4095)
+  // Referenzspannung 1.1 V (Lt. Datenblatt 1.0-1.2 V), Spannungsteiler 100K/100K, Abschwächung 12dB (Faktor 4) = 8.8 V bei Vollausschlag (4095)
   // Evtl. braucht es noch Offset/Gain als Kalibrierung für einen vernünftigen Wert. Alternativ an den ADS1115 anschließen...
   // tmp.VBatt_V = AdcMean / 4095 * 8.8; // -> Das ist die Theorie
   VBatt_V = AdcMean / 4095 * 8.442 - 0.11324 + WakeupTimeOffset; // -> ... und das die Praxis (Berechnet durch zwei Punkte)
