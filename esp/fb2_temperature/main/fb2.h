@@ -53,8 +53,6 @@ protected:
   static const int mSleepIntervalTime_s;
   LoggerResetMode mLoggerResetMode;
   int64_t mStartTime; // gültig nach dem Auslesen des Uhrenchips
-  // Sensorik, global
-  SensorData SD = {};
   i2c_master_bus_handle_t i2c_bus_h_0;
   adc_oneshot_unit_handle_t mADCHandle;
 

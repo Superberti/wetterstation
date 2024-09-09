@@ -241,7 +241,7 @@ float BMP390::WaterBoilingPoint(float pressure)
 void BMP390::Reset(void)
 {
   WriteRegister(BMP390_REGISTER_CMD, BMP390_CMD_SOFTRESET);
-  vTaskDelay(pdMS_TO_TICKS(1));
+  vTaskDelay(pdMS_TO_TICKS(10));
 }
 
 uint8_t BMP390::GetStatus(void)

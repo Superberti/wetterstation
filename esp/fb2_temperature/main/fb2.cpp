@@ -77,10 +77,6 @@ using json = nlohmann::json;
 #define PIN_SDA_BUS0 GPIO_NUM_19
 #define PIN_SCL_BUS0 GPIO_NUM_20
 
-// BMP390 am I2C-Bus 1
-#define PIN_SDA_BUS1 GPIO_NUM_6
-#define PIN_SCL_BUS1 GPIO_NUM_7
-
 // GPIOs
 #define BOARD_LED GPIO_NUM_15
 
@@ -93,8 +89,9 @@ using json = nlohmann::json;
 #define TAG "FB2"
 
 // Globals
-vprintf_like_t orig_log_func = NULL;
 static RTC_DATA_ATTR int SleepCounter, LogCounter;
+// Sensorik, global
+static RTC_DATA_ATTR SensorData SD = {};
 
 extern "C"
 {
@@ -193,6 +190,7 @@ void logger::Run()
     ESP_LOGE(TAG, "Fehler beim InitI2C(0): %d.", ret);
 
   // Init Temperatursensor
+  SD.SkipSHT40 = false;
   ret = Sht->Init(i2c_bus_h_0, SHT40_ADDR, I2C_FREQ_HZ);
   if (ret != ESP_OK)
   {
@@ -201,9 +199,11 @@ void logger::Run()
   }
 
   // Init Drucksensor
+  SD.SkipBMP390 = false;
   ret = Bmp->Init(i2c_bus_h_0, BMP390_ADDRESS, I2C_FREQ_HZ);
   if (ret != ESP_OK)
   {
+    SD.Press_mBar = 800.0;
     SD.SkipBMP390 = true;
     ESP_LOGE(TAG, "Fehler beim Initialisieren des BMP390: %d. Sensor ausgeschaltet!", ret);
   }
@@ -342,50 +342,59 @@ std::string logger::ReadSensorData()
   const int MaxRetries = 5;
   esp_err_t ret = ESP_OK;
   int RetryCounter = 0;
-  bool BmpErr = false;
-  bool ShtErr = false;
 
   // gpio_set_level(BOARD_LED, 1);
 
   SD.uptime_s = GetSecondsAfterStart();
   // ESP_LOGI(TAG,"Alive time: %d s",tmp.alive_timer_s );
 
-  ret = Bmp->StartReadTempAndPress();
-  if (ret != ESP_OK)
+  if (!SD.SkipBMP390)
   {
-    ESP_LOGE(TAG, "Fehler beim Starten des BMP390: %d", ret);
-    SD.BMP390Err++;
-    BmpErr = true;
+    ret = Bmp->StartReadTempAndPress();
+    if (ret != ESP_OK)
+    {
+      SD.Press_mBar = 900.0;
+      SD.SkipBMP390 = true;
+      ESP_LOGE(TAG, "Fehler beim Starten des BMP390: %d", ret);
+      SD.BMP390Err++;
+      // Reset probieren
+      Bmp->Reset();
+    }
   }
-
   // SHT40 (wir verwenden die Temperatur vom SHT, die ist genauer!)
-  ret = Sht->Read(SD.Temp_deg, SD.Hum_per);
-  if (ret != ESP_OK)
+  if (!SD.SkipSHT40)
   {
-    ShtErr = true;
-    SD.SHT40Err++;
-    ESP_LOGE(TAG, "Fehler beim Lesen der Temperatur/Luftfeuchtigkeit des SHT40: %d, Versuch %d", ret, RetryCounter + 1);
-  }
-  else
-  {
-    ESP_LOGI(TAG, "SHT40 Temperatur: %.2f°C Luftfeuchte: %.2f %%", SD.Temp_deg, SD.Hum_per);
+    ret = Sht->Read(SD.Temp_deg, SD.Hum_per);
+    if (ret != ESP_OK)
+    {
+      SD.SkipSHT40 = true;
+      SD.SHT40Err++;
+      ESP_LOGE(TAG, "Fehler beim Lesen der Temperatur/Luftfeuchtigkeit des SHT40: %d, Versuch %d", ret, RetryCounter + 1);
+    }
+    else
+    {
+      ESP_LOGI(TAG, "SHT40 Temperatur: %.2f°C Luftfeuchte: %.2f %%", SD.Temp_deg, SD.Hum_per);
+    }
   }
 
   // BMP390
-  if (!BmpErr)
+  if (!SD.SkipBMP390)
   {
     float temp_bmp;
     ret = Bmp->ReadTempAndPressAsync(temp_bmp, SD.Press_mBar);
     SD.Press_mBar = Bmp->SeaLevelForAltitude(602, SD.Press_mBar);
     if (ret != ESP_OK)
     {
-      BmpErr = true;
+      SD.Press_mBar = 1000.0;
+      SD.SkipBMP390 = true;
       ESP_LOGE(TAG, "Fehler beim Lesen des BMP390: %d", ret);
+      // Reset probieren
+      Bmp->Reset();
     }
     else
     {
       ESP_LOGI(TAG, "Druck: %.2f mbar Temp: %.2f°C", SD.Press_mBar, temp_bmp);
-      if (ShtErr) // Falls der SHT nicht läuft...
+      if (SD.SkipSHT40) // Falls der SHT nicht läuft...
         SD.Temp_deg = temp_bmp;
     }
   }
