@@ -29,7 +29,7 @@ die lokalen libs zu installieren (dafür ist pipx NICHT geeignet):
     cd
     python -m venv wetter
     source wetter/bin/activate
-    pip install paho-mqtt RPi.GPIO spidev pyLoRa cbor2 influxdb
+    pip install paho-mqtt rpi-lgpio spidev pyLoRa cbor2 influxdb
     
 Das LoRa-Modul wird an folgende Pins des Raspberrys angeschlossen:
 
