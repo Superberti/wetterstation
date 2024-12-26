@@ -47,7 +47,7 @@ using json = nlohmann::json;
  * Angeschlossene Sensorik:
  * BMP390 - Luftdruck
  * SHT40 - Temperatur und Luftfeuchte
- * Davis Anemometer (Windgeschwindigkeit und Winrichtung) am 12-Bit-ADC (ADS1015)
+ * Davis Anemometer (Windgeschwindigkeit und Windrichtung) am 12-Bit-ADC (ADS1015)
  * Luxmeter (bis 200000 lx) am ADS1015
  * Davis Niederschlagsmesser (Regenwippe)
  * Gewittersensor AS3935
@@ -94,10 +94,11 @@ using json = nlohmann::json;
 
 #define TAG "HAUPT-WS"
 
-// Temperatursensor, Luftdruck und ADC am I2C-Bus0
+// Luftdruck BMP390 und ADC ADS1015 am I2C-Bus0
 #define PIN_SDA_BUS0 GPIO_NUM_13
 #define PIN_SCL_BUS0 GPIO_NUM_4
 
+// Temperatur- und Luftfeuchtesensor SHT40 am I2C-Bus1
 #define PIN_SDA_BUS1 GPIO_NUM_17
 #define PIN_SCL_BUS1 GPIO_NUM_16
 
