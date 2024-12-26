@@ -22,10 +22,14 @@ Auf dem Raspberry sind folgende Befehle auszuführen:
 
     sudo raspi-config nonint do_spi 0
     sudo apt-get install python3-dev
-    
-Für die Python3-Skripte sind folgende Pakete zu installieren:
 
-    sudo pip3 install paho-mqtt RPi.GPIO spidev pyLoRa cbor2 influxdb
+Neuere Python-Distributionen (Raspberry OS ab bookworm) benötigen ein virtuelles Environment, um dort
+die lokalen libs zu installieren (dafür ist pipx NICHT geeignet):
+    
+    cd
+    python -m venv wetter
+    source wetter/bin/activate
+    pip install paho-mqtt rpi-lgpio spidev pyLoRa cbor2 influxdb
     
 Das LoRa-Modul wird an folgende Pins des Raspberrys angeschlossen:
 

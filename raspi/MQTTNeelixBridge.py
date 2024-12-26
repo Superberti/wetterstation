@@ -9,9 +9,10 @@ import time
 import logging
 import urllib3
 import argparse
+import os
 
 urllib3.disable_warnings()
-logging.basicConfig(format='%(asctime)s %(message)s', filename='/var/log/MQTTNeelixBridge.log', encoding='utf-8', level=logging.INFO)
+logging.basicConfig(format='%(asctime)s %(message)s', filename=os.path.expanduser("~")+'/MQTTNeelixBridge.log', encoding='utf-8', level=logging.INFO)
 #logging.basicConfig(format='%(asctime)s %(message)s', encoding='utf-8', level=logging.INFO)
 
 INFLUXDB_DATABASE = 'wetterstation'
@@ -36,6 +37,7 @@ def on_connect(client, userdata, flags, rc):
     # Sensor Sympatec
     client.subscribe("/wetterstation/SYMPATEC/temperatur")
     client.subscribe("/wetterstation/SYMPATEC/luftfeuchtigkeit")
+    client.subscribe("/wetterstation/SYMPATEC/luftdruck")
     client.subscribe("/wetterstation/SYMPATEC/vbatt")
     
  
@@ -114,7 +116,7 @@ def main(password='test', user='test'):
         time.sleep(20)
         _init_influxdb_database(password, user)
 
-        mqtt_client = mqtt.Client(MQTT_CLIENT_ID)
+        mqtt_client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION1, MQTT_CLIENT_ID)
         #mqtt_client.username_pw_set(MQTT_USER, MQTT_PASSWORD)
         mqtt_client.on_connect = on_connect
         mqtt_client.on_message = on_message

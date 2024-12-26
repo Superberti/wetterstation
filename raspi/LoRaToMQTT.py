@@ -13,8 +13,9 @@ import time
 import threading
 import paho.mqtt.client as mqtt
 import paho.mqtt.publish as publish
+import os
 
-logging.basicConfig(format='%(asctime)s %(message)s', filename='/var/log/LoRa_receiver.log', encoding='utf-8', level=logging.INFO)
+logging.basicConfig(format='%(asctime)s %(message)s', filename=os.path.expanduser("~")+'/LoRa_receiver.log', encoding='utf-8', level=logging.INFO)
 #logging.basicConfig(format='%(asctime)s %(message)s', encoding='utf-8', level=logging.INFO)
 LastReceivedTime = time.time()
 
@@ -147,6 +148,7 @@ class LoRaRcvCont(LoRa):
                 temp=f'{cbor_data["TE"]["W"]:.2f}'
                 hum=f'{cbor_data["LF"]["W"]:.1f}'
                 volt=f'{cbor_data["V"]["W"]:.2f}'
+                druck=f'{cbor_data["LD"]["W"]:.2f}'
                 
                 if TotalCount[Ort]>0:
                     PacketLossPer[Ort]=(PacketLostCounter[Ort]/TotalCount[Ort])*100.0
@@ -156,7 +158,8 @@ class LoRaRcvCont(LoRa):
                 TopicTemp=f'/wetterstation/{Ort}/temperatur'
                 TopicHum=f'/wetterstation/{Ort}/luftfeuchtigkeit'
                 TopicVBatt=f'/wetterstation/{Ort}/vbatt'
-                msgs = [(TopicTemp, temp),(TopicHum, hum, 0, False),(TopicVBatt,volt)]
+                TopicDruck=f'/wetterstation/{Ort}/luftdruck'
+                msgs = [(TopicTemp, temp),(TopicHum, hum, 0, False),(TopicVBatt,volt),(TopicDruck,druck)]
                 pwd = {'username':"rutsch", 'password':"super_mqtt"}
                 publish.multiple(msgs, auth=pwd, hostname="localhost")
             else:
