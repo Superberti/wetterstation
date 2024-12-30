@@ -49,7 +49,7 @@
 #define FB2_VERSION "1.0.0.0"
 #define LORA_ORT ORT_SYMPATEC
 
-// Zakluszeit der Temperatur/Druck/Feuchtemessung. Wir machen mal alle zwei Minuten
+// Zykluszeit der Temperatur/Druck/Feuchtemessung. Wir machen mal alle zwei Minuten
 #define SLEEP_TIME 120
 using json = nlohmann::json;
 
@@ -62,7 +62,7 @@ using json = nlohmann::json;
  *
  * BOARD_LED -> 15
  *
- * Batteriespannung über 2x100 kOhm Spannungsteiler an GPIO2
+ * Batteriespannung über 2x100 kOhm Spannungsteiler an GPIO0 (Pin 6 am ESP32-C6)
  */
 
 // SX1278 LoRa-Modul (SPI)
@@ -80,7 +80,7 @@ using json = nlohmann::json;
 // GPIOs
 #define BOARD_LED GPIO_NUM_15
 
-// Interner ADC (ADC1 Channel 0)
+// Interner ADC (ADC1 Channel 0, GPIO0, Pin 6 am ESP32-C6)
 #define ADC_V_BATT ADC_CHANNEL_0
 
 // I2C-Speed
