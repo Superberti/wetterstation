@@ -93,6 +93,7 @@ struct LoraPacketHeader
 #define SENS_ERR_TAG "SFZ"
 
 // Orte
+#define ORT_FAHRRADSCHUPPEN "SCHU_FAH"
 #define ORT_SCHUPPEN_SCHATTEN "SCHU_SCHA"
 #define ORT_SCHUPPEN_SONNE "SCHU_SO"
 #define ORT_SCHUPPEN_INNEN "SCHU_INN"
