@@ -31,6 +31,7 @@ typedef struct {
   gpio_num_t cs;
   gpio_num_t reset;
   gpio_num_t dc;
+  i2c_master_bus_handle_t I2CBusHandle;
 } u8g2_esp32_hal_t;
 
 #define U8G2_ESP32_HAL_DEFAULT                              \

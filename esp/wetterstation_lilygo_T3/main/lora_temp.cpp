@@ -15,12 +15,12 @@
 #include "driver/rtc_io.h"
 #include "soc/rtc.h"
 #include "sensors/sht40.h"
+#include "sensors/sht35.h"
 #include "esp_random.h"
 #include "tools/json.hpp"
 #include <driver/rtc_io.h>
 #include "lorastructs.h"
 #include "esp_wifi.h"
-#include "lora_temp.h"
 #include "sensors/bmp390.h"
 #include "tools/tools.h"
 #include "driver/i2c_master.h"
@@ -30,6 +30,7 @@ extern "C"
 #include <u8g2/csrc/u8g2.h>
 #include <u8g2/u8g2_esp32_hal.h>
 }
+#include "lora_temp.h"
 
 using json = nlohmann::json;
 
@@ -44,11 +45,11 @@ using json = nlohmann::json;
 
 #define TAG "LORA_TTGO_T3"
 
-// SDA - GPIO21 (DISPLAY)
-#define PIN_SDA_DISPL GPIO_NUM_21
+// SDA - GPIO21 (DISPLAY und zweiter SHT40)
+#define PIN_SDA_BUS1 GPIO_NUM_21
 
-// SCL - GPIO22 (DISPLAY)
-#define PIN_SCL_DISPL GPIO_NUM_22
+// SCL - GPIO22 (DISPLAY und zweiter SHT40)
+#define PIN_SCL_BUS1 GPIO_NUM_22
 
 // Temperatursensor SHT40
 #define PIN_SDA_BUS0 GPIO_NUM_13
@@ -96,12 +97,16 @@ void app_main_cpp()
 
   SX1278_LoRa LoRa(Lilygo);
 
-  // Init Temperatursensor
+  // Init I2C
   ESP_LOGI(TAG, "I2C init...");
-  i2c_master_bus_handle_t i2c_bus_h_0;
+  i2c_master_bus_handle_t i2c_bus_h_0, i2c_bus_h_1;
   ret = InitI2C(I2C_NUM_0, PIN_SDA_BUS0, PIN_SCL_BUS0, &i2c_bus_h_0);
   if (ret != ESP_OK)
     ESP_LOGE(TAG, "Fehler beim InitI2C(0): %d.", ret);
+
+  ret = InitI2C(I2C_NUM_1, PIN_SDA_BUS1, PIN_SCL_BUS1, &i2c_bus_h_1);
+  if (ret != ESP_OK)
+    ESP_LOGE(TAG, "Fehler beim InitI2C(1): %d.", ret);
 
   uint32_t iSerial = 0;
   SHT40 iTempSensor;
@@ -112,7 +117,14 @@ void app_main_cpp()
   ESP_LOGI(TAG, "SHT40 Seriennummer: %lu", iSerial);
   if (ret != ESP_OK)
     ESP_LOGE(TAG, "Fehler beim Lesen der Seriennummer des SHT40: %d", ret);
-  InitSSD1306_u8g2();
+
+
+  SHT35 iTempSensor_SHT35;
+  ret = iTempSensor_SHT35.Init(i2c_bus_h_0, SHT40_ADDR, I2C_FREQ_HZ);
+  if (ret != ESP_OK)
+    ESP_LOGE(TAG, "Fehler beim Initialisieren des SHT35: %d", ret);
+
+  InitSSD1306_u8g2(i2c_bus_h_1);
   int64_t EndTime = GetTime_us();
   ESP_LOGI(TAG, "SSD1306 Init fertig nach %.1f ms", (EndTime - StartTime) / 1000.0);
   gpio_set_level(BOARD_LED, 0);
@@ -261,7 +273,7 @@ esp_err_t InitI2C(i2c_port_t aPort, gpio_num_t aSDA_Pin, gpio_num_t aSCL_Pin, i2
     return ESP_ERR_INVALID_ARG;
 
   i2c_master_bus_config_t conf;
-  conf.i2c_port = -1;
+  conf.i2c_port = aPort;
   conf.sda_io_num = aSDA_Pin;
   conf.scl_io_num = aSCL_Pin;
   conf.clk_source = I2C_CLK_SRC_DEFAULT;
@@ -338,11 +350,12 @@ esp_err_t BuildCBORBuf(uint8_t *aBuf, uint16_t aMaxBufSize, uint16_t &aCBORBuild
   return ESP_OK;
 }
 
-void InitSSD1306_u8g2()
+void InitSSD1306_u8g2(i2c_master_bus_handle_t aBusHandle)
 {
   u8g2_esp32_hal_t u8g2_esp32_hal = U8G2_ESP32_HAL_DEFAULT;
-  u8g2_esp32_hal.sda = PIN_SDA_DISPL;
-  u8g2_esp32_hal.scl = PIN_SCL_DISPL;
+  u8g2_esp32_hal.sda = PIN_SDA_BUS1;
+  u8g2_esp32_hal.scl = PIN_SCL_BUS1;
+  u8g2_esp32_hal.I2CBusHandle=aBusHandle;
   u8g2_esp32_hal_init(u8g2_esp32_hal);
 
   // gpio_set_level(PIN_DISP_RESET, 0);

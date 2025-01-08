@@ -13,9 +13,7 @@ static const char *TAG = "u8g2_hal";
 static const unsigned int I2C_TIMEOUT_MS = 1000;
 
 static spi_device_handle_t handle_spi; // SPI handle.
-// static i2c_cmd_handle_t handle_i2c;     // I2C handle.
 static u8g2_esp32_hal_t u8g2_esp32_hal;               // HAL state data.
-static i2c_master_bus_handle_t i2c_bus_handle = NULL; // I2C bus handle.
 static i2c_master_dev_handle_t i2c_dev_handle = NULL; // I2C device handle
 static uint8_t i2c_buf[128];
 static int i2c_count = 0;
@@ -146,40 +144,13 @@ uint8_t u8g2_esp32_i2c_byte_cb(u8x8_t *u8x8,
     {
       break;
     }
-    i2c_master_bus_config_t conf;
-    conf.i2c_port = -1; // auto select
-    conf.sda_io_num = (gpio_num_t)u8g2_esp32_hal.sda;
-    conf.scl_io_num = (gpio_num_t)u8g2_esp32_hal.scl;
-    conf.clk_source = I2C_CLK_SRC_DEFAULT;
-    conf.glitch_ignore_cnt = 7;
-    conf.intr_priority = 0;
-    conf.trans_queue_depth = 0;
-    conf.flags.enable_internal_pullup = 1;
-    ESP_ERROR_CHECK(i2c_new_master_bus(&conf, &i2c_bus_handle));
-    /* // Alter I2C-Treiber
-    i2c_config_t conf = {0};
-    conf.mode = I2C_MODE_MASTER;
-    ESP_LOGI(TAG, "sda_io_num %d", u8g2_esp32_hal.sda);
-    conf.sda_io_num = u8g2_esp32_hal.sda;
-    conf.sda_pullup_en = GPIO_PULLUP_ENABLE;
-    ESP_LOGI(TAG, "scl_io_num %d", u8g2_esp32_hal.scl);
-    conf.scl_io_num = u8g2_esp32_hal.scl;
-    conf.scl_pullup_en = GPIO_PULLUP_ENABLE;
-    ESP_LOGI(TAG, "clk_speed %d", I2C_MASTER_FREQ_HZ);
-    conf.master.clk_speed = I2C_MASTER_FREQ_HZ;
-    conf.clk_flags = 0;
-    ESP_LOGI(TAG, "i2c_param_config %d", conf.mode);
-    ESP_ERROR_CHECK(i2c_param_config(I2C_MASTER_NUM, &conf));
-    ESP_LOGI(TAG, "i2c_driver_install %d", I2C_MASTER_NUM);
-    ESP_ERROR_CHECK(i2c_driver_install(I2C_MASTER_NUM, conf.mode,
-                                       I2C_MASTER_RX_BUF_DISABLE,
-                                       I2C_MASTER_TX_BUF_DISABLE, 0));
-    */
+    // Master-Bus-Handle wurde bereits initialisiert übergeben
     break;
   }
 
   case U8X8_MSG_BYTE_SEND:
   {
+    // Hier die zu sendenen Bytes nur puffern
     uint8_t *data_ptr = (uint8_t *)arg_ptr;
     // ESP_LOGI(TAG, "Writing %d bytes to I2C.", arg_int );
     ESP_LOG_BUFFER_HEXDUMP(TAG, data_ptr, arg_int, ESP_LOG_VERBOSE);
@@ -192,7 +163,6 @@ uint8_t u8g2_esp32_i2c_byte_cb(u8x8_t *u8x8,
       arg_int--;
     }
 
-    // ESP_ERROR_CHECK(i2c_master_transmit(i2c_dev_handle, data_ptr, arg_int, I2C_TIMEOUT_MS));
     break;
   }
 
@@ -206,15 +176,7 @@ uint8_t u8g2_esp32_i2c_byte_cb(u8x8_t *u8x8,
     conf.device_address = i2c_address;
     conf.scl_speed_hz = I2C_MASTER_FREQ_HZ;
     conf.flags.disable_ack_check = false;
-    ESP_ERROR_CHECK(i2c_master_bus_add_device(i2c_bus_handle, &conf, &i2c_dev_handle));
-
-    /* // alter Treiber
-
-    handle_i2c = i2c_cmd_link_create();
-    ESP_LOGD(TAG, "Start I2C transfer to %02X.", i2c_address >> 1);
-    ESP_ERROR_CHECK(i2c_master_start(handle_i2c));
-    ESP_ERROR_CHECK(i2c_master_write_byte(
-        handle_i2c, i2c_address | I2C_MASTER_WRITE, ACK_CHECK_EN));*/
+    ESP_ERROR_CHECK(i2c_master_bus_add_device(u8g2_esp32_hal.I2CBusHandle, &conf, &i2c_dev_handle));
     break;
   }
 
@@ -230,11 +192,6 @@ uint8_t u8g2_esp32_i2c_byte_cb(u8x8_t *u8x8,
       i2c_master_bus_rm_device(i2c_dev_handle);
       i2c_dev_handle = NULL;
     }
-    /*
-    ESP_ERROR_CHECK(i2c_master_stop(handle_i2c));
-    ESP_ERROR_CHECK(i2c_master_cmd_begin(I2C_MASTER_NUM, handle_i2c,
-                                         I2C_TIMEOUT_MS / portTICK_PERIOD_MS));
-    i2c_cmd_link_delete(handle_i2c);*/
     break;
   }
   }
