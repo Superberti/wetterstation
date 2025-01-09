@@ -63,6 +63,14 @@ struct LoraPacketHeader
 #define HUM_TAG "LF"
 // Luftdruck in mbar
 #define PRESS_TAG "LD"
+
+// Temperatur2 in Grad Celsius
+#define TEMP_TAG2 "TE2"
+// Luftfeuchtigkeit in Prozent
+#define HUM_TAG2 "LF2"
+// Luftdruck in mbar
+#define PRESS_TAG2 "LD2"
+
 // Beleuchtungsstärke in Lux
 #define ILLU_TAG "BS"
 // Lüfterumdrehungen in UpM

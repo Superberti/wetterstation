@@ -79,7 +79,7 @@ extern "C"
 void app_main_cpp()
 {
   esp_err_t ret;
-  float iTemp_deg, iHum_per;
+  float iTemp_deg, iHum_per, iTemp2_deg, iHum2_per;
   float iPress_mBar, t;
   int64_t StartTime = GetTime_us();
   InitGPIO();
@@ -117,7 +117,6 @@ void app_main_cpp()
   ESP_LOGI(TAG, "SHT40 Seriennummer: %lu", iSerial);
   if (ret != ESP_OK)
     ESP_LOGE(TAG, "Fehler beim Lesen der Seriennummer des SHT40: %d", ret);
-
 
   SHT35 iTempSensor_SHT35;
   ret = iTempSensor_SHT35.Init(i2c_bus_h_0, SHT40_ADDR, I2C_FREQ_HZ);
@@ -189,10 +188,16 @@ void app_main_cpp()
     ret = Bmp.StartReadTempAndPress();
     if (ret != ESP_OK)
       ESP_LOGE(TAG, "Fehler beim Starten des BMP390: %d", ret);
+
     ret = iTempSensor.Read(iTemp_deg, iHum_per);
     ESP_LOGI("SHT40", "Temp.: %.2f LF: %.2f %%", iTemp_deg, iHum_per);
     if (ret != ESP_OK)
       ESP_LOGE(TAG, "Fehler beim Lesen der Temperatur/Luftfeuchtigkeit des SHT40: %d", ret);
+
+    ret = iTempSensor_SHT35.Read(iTemp2_deg, iHum2_per);
+    ESP_LOGI("SHT35", "Temp.: %.2f LF: %.2f %%", iTemp2_deg, iHum2_per);
+    if (ret != ESP_OK)
+      ESP_LOGE(TAG, "Fehler beim Lesen der Temperatur/Luftfeuchtigkeit des SHT35: %d", ret);
 
     ret = Bmp.ReadTempAndPressAsync(t, iPress_mBar);
     // Jerstedt 210 m üNN
@@ -202,7 +207,7 @@ void app_main_cpp()
     ESP_LOGI("BMP390", "Druck: %.2f mbar Temp: %.2f°C", iPress_mBar, t);
 
     iCBORBuildSize = 0;
-    BuildCBORBuf(LoraBuf, sizeof(LoraBuf), iCBORBuildSize, iPC, iTemp_deg, iHum_per, (float)iPress_mBar);
+    BuildCBORBuf(LoraBuf, sizeof(LoraBuf), iCBORBuildSize, iPC, iTemp_deg, iTemp2_deg, iHum_per, iHum2_per, (float)iPress_mBar);
     if (iCBORBuildSize > sizeof(LoraBuf))
       ESP_LOGE(TAG, "LoRa Buffer overflow...:%d", iCBORBuildSize);
 
@@ -246,20 +251,14 @@ void app_main_cpp()
       sprintf(DisplayBuf, "Paket Nr.: %lu", iPC);
       u8g2_DrawStr(&u8g2, 2, 14, DisplayBuf);
 
-      sprintf(DisplayBuf, "Temp: %.2f%cC[%.2f]", iTemp_deg, 176, t);
+      sprintf(DisplayBuf, "Temp: %.2f%cC %.2f%cC", iTemp_deg, 176, iTemp2_deg, 176);
       u8g2_DrawStr(&u8g2, 2, 28, DisplayBuf);
 
-      // sprintf(DisplayBuf, "Wach: %.1f ms", (EndTime - StartTime) / 1000.0);
-      // u8g2_DrawStr(&u8g2, 2, 42, DisplayBuf);
-
-      sprintf(DisplayBuf, "Feuchte: %.2f %%", iHum_per);
+      sprintf(DisplayBuf, "Feuchte: %.2f %% %.2f %%", iHum_per, iHum2_per);
       u8g2_DrawStr(&u8g2, 2, 42, DisplayBuf);
 
       sprintf(DisplayBuf, "Druck: %.2f mBar", iPress_mBar);
       u8g2_DrawStr(&u8g2, 2, 56, DisplayBuf);
-
-      // sprintf(DisplayBuf, "Sleep: %.3f s", sleep_time_ms / 1000.0);
-      // u8g2_DrawStr(&u8g2, 2, 56, DisplayBuf);
 
       u8g2_SendBuffer(&u8g2);
     }
@@ -321,7 +320,7 @@ void error(const char *format, ...)
   }
 }
 
-esp_err_t BuildCBORBuf(uint8_t *aBuf, uint16_t aMaxBufSize, uint16_t &aCBORBuildSize, uint32_t aPC, float aTemp_deg, float aHum_per, float aPress_mBar)
+esp_err_t BuildCBORBuf(uint8_t *aBuf, uint16_t aMaxBufSize, uint16_t &aCBORBuildSize, uint32_t aPC, float aTemp_deg, float aTemp2_deg, float aHum_per, float aHum2_per, float aPress_mBar)
 {
   json j =
       {
@@ -330,6 +329,8 @@ esp_err_t BuildCBORBuf(uint8_t *aBuf, uint16_t aMaxBufSize, uint16_t &aCBORBuild
            {{PC_TAG, aPC},
             {TEMP_TAG, {{VAL_TAG, aTemp_deg}}},
             {HUM_TAG, {{VAL_TAG, aHum_per}}},
+            {TEMP_TAG2, {{VAL_TAG, aTemp2_deg}}},
+            {HUM_TAG2, {{VAL_TAG, aHum2_per}}},
             {PRESS_TAG, {{VAL_TAG, aPress_mBar}}}}}};
 
   // serialize it to CBOR
@@ -355,7 +356,7 @@ void InitSSD1306_u8g2(i2c_master_bus_handle_t aBusHandle)
   u8g2_esp32_hal_t u8g2_esp32_hal = U8G2_ESP32_HAL_DEFAULT;
   u8g2_esp32_hal.sda = PIN_SDA_BUS1;
   u8g2_esp32_hal.scl = PIN_SCL_BUS1;
-  u8g2_esp32_hal.I2CBusHandle=aBusHandle;
+  u8g2_esp32_hal.I2CBusHandle = aBusHandle;
   u8g2_esp32_hal_init(u8g2_esp32_hal);
 
   // gpio_set_level(PIN_DISP_RESET, 0);
