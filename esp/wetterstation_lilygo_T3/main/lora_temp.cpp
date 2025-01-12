@@ -152,9 +152,9 @@ void app_main_cpp()
   uint16_t iCBORBuildSize;
   uint32_t iPC = 0;
   vTaskDelay(100 / portTICK_PERIOD_MS);
-  const double UpdateTime_ys = 10E6; // Alle 10 s messen
-  // Das Display (OLED) schaltet sich nach 10 s aus.
-  const double DisplayOnTime_ys = 30E6; // Das Display ist 30 s an
+  const double UpdateTime_ys = 20E6; // Alle 20 s messen
+  // Das Display (OLED) schaltet sich nach 60 s aus.
+  const double DisplayOnTime_ys = 60E6; // Das Display ist 60 s an
   int64_t RunTime, DisplayRunTime;
   StartTime = GetTime_us();
   int64_t DisplayStartTime = GetTime_us();
@@ -177,6 +177,7 @@ void app_main_cpp()
       DisplayOn = true;
       u8g2_SetPowerSave(&u8g2, 0); // Display an
       DisplayStartTime = GetTime_us();
+      first=true; // Sofort messen!
     }
     if (RunTime < UpdateTime_ys && !first)
     {
@@ -226,7 +227,7 @@ void app_main_cpp()
     ESP_LOGI("BMP390", "Druck: %.2f mbar Temp: %.2f°C", iPress_mBar, t);
 
     iCBORBuildSize = 0;
-    BuildCBORBuf(LoraBuf, sizeof(LoraBuf), iCBORBuildSize, iPC, iTemp_deg, iTemp2_deg, iHum_per, iHum2_per, (float)iPress_mBar);
+    BuildCBORBuf(LoraBuf, sizeof(LoraBuf), iCBORBuildSize, iPC, iTemp2_deg, iTemp_deg, iHum2_per, iHum_per, (float)iPress_mBar);
     if (iCBORBuildSize > sizeof(LoraBuf))
       ESP_LOGE(TAG, "LoRa Buffer overflow...:%d", iCBORBuildSize);
 
@@ -350,7 +351,8 @@ esp_err_t BuildCBORBuf(uint8_t *aBuf, uint16_t aMaxBufSize, uint16_t &aCBORBuild
             {HUM_TAG, {{VAL_TAG, aHum_per}}},
             {TEMP_TAG2, {{VAL_TAG, aTemp2_deg}}},
             {HUM_TAG2, {{VAL_TAG, aHum2_per}}},
-            {PRESS_TAG, {{VAL_TAG, aPress_mBar}}}}}};
+            {PRESS_TAG, {{VAL_TAG, aPress_mBar}}},
+            {VOL_TAG, {{VAL_TAG, 0.0}}}}}};
 
   // serialize it to CBOR
   std::vector<std::uint8_t> v = json::to_cbor(j);
