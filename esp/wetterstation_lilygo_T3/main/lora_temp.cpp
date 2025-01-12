@@ -119,7 +119,7 @@ void app_main_cpp()
     ESP_LOGE(TAG, "Fehler beim Lesen der Seriennummer des SHT40: %d", ret);
 
   SHT35 iTempSensor_SHT35;
-  ret = iTempSensor_SHT35.Init(i2c_bus_h_0, SHT40_ADDR, I2C_FREQ_HZ);
+  ret = iTempSensor_SHT35.Init(i2c_bus_h_1, SHT40_ADDR, I2C_FREQ_HZ);
   if (ret != ESP_OK)
     ESP_LOGE(TAG, "Fehler beim Initialisieren des SHT35: %d", ret);
 
@@ -160,7 +160,7 @@ void app_main_cpp()
   int64_t DisplayStartTime = GetTime_us();
   bool first = true;
   bool DisplayOn = true;
-  int DisplayOnSwitch = 0;
+  int DisplayOnSwitch = 1;
   for (;;)
   {
     DisplayOnSwitch = gpio_get_level(DISPLAY_ON_SWITCH);
@@ -171,7 +171,7 @@ void app_main_cpp()
       DisplayOn = false;
       u8g2_SetPowerSave(&u8g2, 1); // Display aus
     }
-    if (DisplayOnSwitch)
+    if (DisplayOnSwitch==0)
     {
       // Display-Einschalter wurde gedrückt
       DisplayOn = true;
@@ -184,26 +184,45 @@ void app_main_cpp()
       continue;
     }
     first = false;
+    bool SHT40OK=true, SHT35OK=true, BMP390OK=true;
     StartTime = GetTime_us();
     ret = Bmp.StartReadTempAndPress();
     if (ret != ESP_OK)
+    {
       ESP_LOGE(TAG, "Fehler beim Starten des BMP390: %d", ret);
+      BMP390OK=false;
+    }
 
     ret = iTempSensor.Read(iTemp_deg, iHum_per);
     ESP_LOGI("SHT40", "Temp.: %.2f LF: %.2f %%", iTemp_deg, iHum_per);
     if (ret != ESP_OK)
+    {
       ESP_LOGE(TAG, "Fehler beim Lesen der Temperatur/Luftfeuchtigkeit des SHT40: %d", ret);
+      SHT40OK=false;
+      iTemp_deg=0;
+      iHum_per=0;
+    }
 
     ret = iTempSensor_SHT35.Read(iTemp2_deg, iHum2_per);
     ESP_LOGI("SHT35", "Temp.: %.2f LF: %.2f %%", iTemp2_deg, iHum2_per);
     if (ret != ESP_OK)
+    {
       ESP_LOGE(TAG, "Fehler beim Lesen der Temperatur/Luftfeuchtigkeit des SHT35: %d", ret);
+      SHT35OK=false;
+      iTemp2_deg=0;
+      iHum2_per=0;
+    }
 
     ret = Bmp.ReadTempAndPressAsync(t, iPress_mBar);
     // Jerstedt 210 m üNN
     iPress_mBar = Bmp.SeaLevelForAltitude(210, iPress_mBar);
     if (ret != ESP_OK)
+    {
       ESP_LOGE(TAG, "Fehler beim Lesen des BMP390: %d", ret);
+      BMP390OK=false;
+      t=0;
+      iPress_mBar=0;
+    }
     ESP_LOGI("BMP390", "Druck: %.2f mbar Temp: %.2f°C", iPress_mBar, t);
 
     iCBORBuildSize = 0;
