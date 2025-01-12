@@ -25,6 +25,7 @@
 #include "tools/tools.h"
 #include "driver/i2c_master.h"
 #include "esp_check.h"
+#include "esp_timer.h"
 extern "C"
 {
 #include <u8g2/csrc/u8g2.h>
@@ -81,7 +82,7 @@ void app_main_cpp()
   esp_err_t ret;
   float iTemp_deg, iHum_per, iTemp2_deg, iHum2_per;
   float iPress_mBar, t;
-  int64_t StartTime = GetTime_us();
+  int64_t StartTime = esp_timer_get_time();
   InitGPIO();
 
   LoRa_PinConfiguration Lilygo = {};
@@ -124,7 +125,7 @@ void app_main_cpp()
     ESP_LOGE(TAG, "Fehler beim Initialisieren des SHT35: %d", ret);
 
   InitSSD1306_u8g2(i2c_bus_h_1);
-  int64_t EndTime = GetTime_us();
+  int64_t EndTime = esp_timer_get_time();
   ESP_LOGI(TAG, "SSD1306 Init fertig nach %.1f ms", (EndTime - StartTime) / 1000.0);
   gpio_set_level(BOARD_LED, 0);
 
@@ -142,7 +143,7 @@ void app_main_cpp()
   ret = InitLoRa(LoRa);
   if (ret != ESP_OK)
     ESP_LOGE(TAG, "Fehler beim Initialisieren des LoRa Moduls: %d", ret);
-  EndTime = GetTime_us();
+  EndTime = esp_timer_get_time();
   ESP_LOGI(TAG, "LoRa Init fertig nach %.1f ms", (EndTime - StartTime) / 1000.0);
 
   // vTaskDelay(2000 / portTICK_PERIOD_MS);
@@ -156,16 +157,16 @@ void app_main_cpp()
   // Das Display (OLED) schaltet sich nach 60 s aus.
   const double DisplayOnTime_ys = 60E6; // Das Display ist 60 s an
   int64_t RunTime, DisplayRunTime;
-  StartTime = GetTime_us();
-  int64_t DisplayStartTime = GetTime_us();
+  StartTime = esp_timer_get_time();
+  int64_t DisplayStartTime = esp_timer_get_time();
   bool first = true;
   bool DisplayOn = true;
   int DisplayOnSwitch = 1;
   for (;;)
   {
     DisplayOnSwitch = gpio_get_level(DISPLAY_ON_SWITCH);
-    RunTime = GetTime_us() - StartTime;
-    DisplayRunTime = GetTime_us() - DisplayStartTime;
+    RunTime = esp_timer_get_time() - StartTime;
+    DisplayRunTime = esp_timer_get_time() - DisplayStartTime;
     if (DisplayRunTime > DisplayOnTime_ys && DisplayOn)
     {
       DisplayOn = false;
@@ -176,7 +177,7 @@ void app_main_cpp()
       // Display-Einschalter wurde gedrückt
       DisplayOn = true;
       u8g2_SetPowerSave(&u8g2, 0); // Display an
-      DisplayStartTime = GetTime_us();
+      DisplayStartTime = esp_timer_get_time();
       first=true; // Sofort messen!
     }
     if (RunTime < UpdateTime_ys && !first)
@@ -186,7 +187,7 @@ void app_main_cpp()
     }
     first = false;
     bool SHT40OK=true, SHT35OK=true, BMP390OK=true;
-    StartTime = GetTime_us();
+    StartTime = esp_timer_get_time();
     ret = Bmp.StartReadTempAndPress();
     if (ret != ESP_OK)
     {
@@ -239,10 +240,10 @@ void app_main_cpp()
     while (!SendOK && RetryCounter < MaxRetries)
     {
       gpio_set_level(BOARD_LED, 1);
-      int64_t ts = GetTime_us();
+      int64_t ts = esp_timer_get_time();
       ret = LoRa.SendLoraMsg(CMD_CBORDATA, LoraBuf, iCBORBuildSize, iPC);
       SendOK = ret == ESP_OK;
-      int64_t te = GetTime_us();
+      int64_t te = esp_timer_get_time();
       gpio_set_level(BOARD_LED, 0);
       ESP_LOGI(TAG, "Zeit fuer LoRa: %.1f ms. Paketgroesse: %u", double(te - ts) / 1000.0, iCBORBuildSize);
       if (!SendOK)
