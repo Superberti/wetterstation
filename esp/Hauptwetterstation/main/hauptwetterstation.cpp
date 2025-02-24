@@ -143,6 +143,27 @@ volatile uint32_t gWindspeedCounter = 0;
 volatile uint32_t gRainCounter = 0;
 volatile uint32_t gFlashCounter = 0;
 
+static void IRAM_ATTR gpio_isr_handler(void *arg)
+{
+  // Input-IRQ Windgeschw., Regen und Blitze
+  gpio_num_t InputPin = (gpio_num_t)((uint32_t)arg);
+  // xQueueSendFromISR(gpio_evt_queue, &gpio_num, NULL);
+  switch (InputPin)
+  {
+  case RAIN_INPUT:
+    gRainCounter++;
+    break;
+  case FLASH_INPUT:
+    gFlashCounter++;
+    break;
+  case WINDSPEED_INPUT:
+    gWindspeedCounter++;
+    break;
+  default:
+    break;
+  }
+}
+
 void app_main_cpp()
 {
   rtc_wdt_protect_off();
@@ -348,7 +369,7 @@ void app_main_cpp()
 
           ret = LoRa.SendLoraMsg(CMD_CBORDATA, LoraBuf, iCBORBuildSize, SD.PC);
           SendOK = ret == ESP_OK;
-          int64_t te = GetTime_us();
+          //int64_t te = GetTime_us();
           gpio_set_level(LORA_SEND_LED, 0);
           // ESP_LOGI(TAG, "Zeit fuer LoRa: %.1f ms. Paketgroesse: %u", double(te - ts) / 1000.0, iCBORBuildSize);
           if (!SendOK)
@@ -585,27 +606,6 @@ esp_err_t InitGPIO()
   ESP_RETURN_ON_ERROR(gpio_isr_handler_add(FLASH_INPUT, gpio_isr_handler, (void *)FLASH_INPUT), TAG, "Fehler bei FLASH_INPUT IRQ");
   ESP_RETURN_ON_ERROR(gpio_isr_handler_add(WINDSPEED_INPUT, gpio_isr_handler, (void *)WINDSPEED_INPUT), TAG, "Fehler bei WINDSPEED_INPUT IRQ");
   return ESP_OK;
-}
-
-static void IRAM_ATTR gpio_isr_handler(void *arg)
-{
-  // Input-IRQ Windgeschw., Regen und Blitze
-  gpio_num_t InputPin = (gpio_num_t)((uint32_t)arg);
-  // xQueueSendFromISR(gpio_evt_queue, &gpio_num, NULL);
-  switch (InputPin)
-  {
-  case RAIN_INPUT:
-    gRainCounter++;
-    break;
-  case FLASH_INPUT:
-    gFlashCounter++;
-    break;
-  case WINDSPEED_INPUT:
-    gWindspeedCounter++;
-    break;
-  default:
-    break;
-  }
 }
 
 esp_err_t InitI2C(i2c_port_t aPort, gpio_num_t aSDA_Pin, gpio_num_t aSCL_Pin, i2c_master_bus_handle_t *aBusHandle)
