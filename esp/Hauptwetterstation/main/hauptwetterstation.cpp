@@ -240,17 +240,17 @@ void app_main_cpp()
   }
 
   // LoRa-Modul
-  LoRa_PinConfiguration Devkit = {};
-  Devkit.ChipSelect = GPIO_NUM_18;
-    Devkit.Reset = GPIO_NUM_14;
-    Devkit.Miso = GPIO_NUM_19;
-    Devkit.Mosi = GPIO_NUM_27;
-    Devkit.Clock = GPIO_NUM_5;
-    Devkit.DIO0 = GPIO_NUM_33;
-    Devkit.DIO1 = GPIO_NUM_0;
-    Devkit.SPIChannel = SPI3_HOST;
-    Devkit.Busy = GPIO_NUM_0; //(n.B.)
-  SX1278_LoRa LoRa(Devkit);
+  LoRa_PinConfiguration LoraConfig = {};
+  LoraConfig.ChipSelect = GPIO_NUM_18;
+  LoraConfig.Reset = GPIO_NUM_14;
+  LoraConfig.Miso = GPIO_NUM_19;
+  LoraConfig.Mosi = GPIO_NUM_27;
+  LoraConfig.Clock = GPIO_NUM_5;
+  LoraConfig.DIO0 = GPIO_NUM_33;
+  LoraConfig.DIO1 = GPIO_NUM_0;
+  LoraConfig.SPIChannel = SPI3_HOST;
+  LoraConfig.Busy = GPIO_NUM_0; //(n.B.)
+  SX1278_LoRa LoRa(LoraConfig);
   // Parameter s. InitLoRa
   ret = InitLoRa(LoRa);
   if (ret != ESP_OK)
@@ -369,7 +369,7 @@ void app_main_cpp()
 
           ret = LoRa.SendLoraMsg(CMD_CBORDATA, LoraBuf, iCBORBuildSize, SD.PC);
           SendOK = ret == ESP_OK;
-          //int64_t te = GetTime_us();
+          // int64_t te = GetTime_us();
           gpio_set_level(LORA_SEND_LED, 0);
           // ESP_LOGI(TAG, "Zeit fuer LoRa: %.1f ms. Paketgroesse: %u", double(te - ts) / 1000.0, iCBORBuildSize);
           if (!SendOK)
