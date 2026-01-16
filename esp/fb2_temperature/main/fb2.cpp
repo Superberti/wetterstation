@@ -36,9 +36,7 @@
 #include "esp_random.h"
 #include <esp_sleep.h>
 #include "fb2.h"
-#include "sensors/ads1015.h"
 #include "esp_check.h"
-#include "sensors/ds3231.h"
 #include "tools/tools.h"
 #include "tools/json.hpp"
 #include <memory>
@@ -46,8 +44,11 @@
 #include "lora/lorastructs.h"
 #include "lora/lora.h"
 
-#define FB2_VERSION "1.0.0.0"
-#define LORA_ORT ORT_SYMPATEC
+#define FB2_VERSION "1.1.0.0"
+#define LORA_ORT ORT_GEWAECHSHAUS
+
+// Der neue Sensor für das Gewächshaus (16.01.2026) hat keinen Luftdrucksensor
+// #define USE_BMP390
 
 // Zykluszeit der Temperatur/Druck/Feuchtemessung. Wir machen mal alle zwei Minuten
 #define SLEEP_TIME 120
@@ -118,7 +119,9 @@ logger::logger()
   mStartTime = GetTime_us();
   // Log auf eigene Funktion umbiegen
   Sht = new SHT40;
+#ifdef USE_BMP390
   Bmp = new BMP390;
+#endif
   LoRa_PinConfiguration PinConfig = {};
   PinConfig.ChipSelect = LORA_PIN_CS;
   PinConfig.Clock = LORA_PIN_CLK;
@@ -197,7 +200,7 @@ void logger::Run()
     SD.SkipSHT40 = true;
     ESP_LOGE(TAG, "Fehler beim Initialisieren des SHT40: %d. Sensor ausgeschaltet!", ret);
   }
-
+#ifdef USE_BMP390
   // Init Drucksensor
   SD.SkipBMP390 = false;
   ret = Bmp->Init(i2c_bus_h_0, BMP390_ADDRESS, I2C_FREQ_HZ);
@@ -207,7 +210,7 @@ void logger::Run()
     SD.SkipBMP390 = true;
     ESP_LOGE(TAG, "Fehler beim Initialisieren des BMP390: %d. Sensor ausgeschaltet!", ret);
   }
-
+#endif
   // Sendefrequenz: 434,54 MHz
   // Preambellänge: 14
   // Bandbreite 500 kHz
@@ -348,6 +351,7 @@ std::string logger::ReadSensorData()
   SD.uptime_s = GetSecondsAfterStart();
   // ESP_LOGI(TAG,"Alive time: %d s",tmp.alive_timer_s );
 
+#ifdef USE_BMP390
   if (!SD.SkipBMP390)
   {
     ret = Bmp->StartReadTempAndPress();
@@ -361,6 +365,7 @@ std::string logger::ReadSensorData()
       Bmp->Reset();
     }
   }
+#endif
   // SHT40 (wir verwenden die Temperatur vom SHT, die ist genauer!)
   if (!SD.SkipSHT40)
   {
@@ -377,6 +382,7 @@ std::string logger::ReadSensorData()
     }
   }
 
+#ifdef USE_BMP390
   // BMP390
   if (!SD.SkipBMP390)
   {
@@ -398,6 +404,7 @@ std::string logger::ReadSensorData()
         SD.Temp_deg = temp_bmp;
     }
   }
+#endif
 
   // Vorher noch kurz die Batteriespannung abfragen. Am besten mit allen eingeschalteten Geräten, dann wird die Spannung unter
   // Belastung gemessen.
@@ -519,7 +526,9 @@ esp_err_t logger::BuildCBORBuf(uint8_t *aBuf, uint16_t aMaxBufSize, uint16_t &aC
            {{PC_TAG, aSD.PC},
             {TEMP_TAG, {{VAL_TAG, aSD.Temp_deg}}},
             {HUM_TAG, {{VAL_TAG, aSD.Hum_per}}},
+#ifdef USE_BMP390
             {PRESS_TAG, {{VAL_TAG, aSD.Press_mBar}}},
+#endif
             {VOL_TAG, {{VAL_TAG, aSD.VBatt_V}}}}}};
 
   // serialize it to CBOR
