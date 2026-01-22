@@ -39,7 +39,7 @@ typedef struct {
     U8G2_ESP32_HAL_UNDEFINED, U8G2_ESP32_HAL_UNDEFINED,     \
         U8G2_ESP32_HAL_UNDEFINED, U8G2_ESP32_HAL_UNDEFINED, \
         U8G2_ESP32_HAL_UNDEFINED, U8G2_ESP32_HAL_UNDEFINED, \
-        U8G2_ESP32_HAL_UNDEFINED                            \
+        U8G2_ESP32_HAL_UNDEFINED, NULL                      \
   }
 
 void u8g2_esp32_hal_init(u8g2_esp32_hal_t u8g2_esp32_hal_param);

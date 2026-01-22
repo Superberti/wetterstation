@@ -17,6 +17,7 @@
 #include <algorithm>
 #include "esp_log.h"
 #include <regex.h>
+#include "esp_timer.h"
 //----------------------------------------------------------------------------
 
 /// Parse-Funktion für Zeilen. Kommt auch mit
@@ -284,7 +285,7 @@ void HexDump(unsigned char *Buffer, const unsigned int dwBytes, const unsigned i
 
 int64_t GetTime_us()
 {
-  return xTaskGetTickCount()*1000;//esp_timer_get_time();
+  return esp_timer_get_time();
 }
 
 //----------------------------------------------------------------------------
