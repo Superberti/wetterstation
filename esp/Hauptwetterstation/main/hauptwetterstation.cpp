@@ -41,7 +41,7 @@ extern "C"
 using json = nlohmann::json;
 
 /*
- * Die Hauptwetterstation. Verwendet wird ein ESP32-DevKit-V4-Board
+ * Die Hauptwetterstation. Verwendet wird ein ESP32-DevKitC-V4-Board
  * mit 433 MHz-SX1278-LoRa-Modul.
  *
  * Angeschlossene Sensorik:
