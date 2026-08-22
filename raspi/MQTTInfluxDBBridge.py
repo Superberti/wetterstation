@@ -39,9 +39,12 @@ def on_connect(client, userdata, flags, rc):
     print('Connected with result code ' + str(rc))
     
     # Fahrradschuppen
-    client.subscribe("/wetterstation/aussen/temperatur")
-    client.subscribe("/wetterstation/aussen/luftdruck")
-    client.subscribe("/wetterstation/aussen/luftfeuchtigkeit")
+    client.subscribe("/wetterstation/SCHU_FAH/temperatur") # außen
+    client.subscribe("/wetterstation/SCHU_FAH/temperatur2") # innen
+    client.subscribe("/wetterstation/SCHU_FAH/luftfeuchtigkeit") # außen
+    client.subscribe("/wetterstation/SCHU_FAH/luftfeuchtigkeit2") # innen
+    client.subscribe("/wetterstation/SCHU_FAH/luftdruck")
+    
     
     # Gewächshaus
     client.subscribe("/wetterstation/gwhs/temperatur")
