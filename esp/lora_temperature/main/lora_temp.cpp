@@ -12,7 +12,7 @@
 #include "esp_sleep.h"
 #include "driver/rtc_io.h"
 #include "soc/rtc.h"
-#include "sht40.h"
+#include "sensors/sht40.h"
 #include "esp_adc/adc_oneshot.h"
 #include "esp_adc/adc_cali.h"
 #include "esp_adc/adc_cali_scheme.h"
@@ -23,13 +23,18 @@
 #include "lorastructs.h"
 #include "esp_wifi.h"
 #include "lora_temp.h"
+#include "sensors/bmp390.h"
+#include "tools/tools.h"
 extern "C"
 {
-#include <u8g2.h>
-#include <u8g2_esp32_hal.h>
+#include <u8g2/csrc/u8g2.h>
+#include <u8g2/u8g2_esp32_hal.h>
 }
 
 using json = nlohmann::json;
+
+// I2C-Speed
+#define I2C_FREQ_HZ 400000
 
 /*
  * Boardauswahl: Ich verwende bisher mit diesem Code 3 verschiedene Boards. Bitte hier definieren
@@ -44,6 +49,10 @@ using json = nlohmann::json;
 
 // Nur definieren, falls der SHT40 nicht angeschlossen ist, man aber trotzdem ein paar Daten haben möchte
 // #define FAKE_SHT40
+
+/// BMP390 Luftdrucksensor angeschlossen
+#define USE_BMP390
+#define BMP390_SENSOR_ADDR 0x77 // Adresse BMP390 wenn SDO auf high, auf low = 0x76
 
 // ADC-Batteriespannungsmessung benutzen?
 #define USE_ADC
@@ -61,8 +70,8 @@ using json = nlohmann::json;
 #define PIN_SCL_DISPL GPIO_NUM_22
 
 // Temperatursensor SHT40
-#define PIN_SDA_TEMP GPIO_NUM_13
-#define PIN_SCL_TEMP GPIO_NUM_14
+#define PIN_SDA_BUS0 GPIO_NUM_13
+#define PIN_SCL_BUS0 GPIO_NUM_14
 
 #define SDCARD_MOSI GPIO_NUM_15
 #define SDCARD_MISO GPIO_NUM_2
@@ -98,8 +107,8 @@ void app_main_cpp()
   ESP_ERROR_CHECK(adc_oneshot_new_unit(&init_config1, &adc1_handle));
 #endif
   esp_err_t ret;
-  float iTemp_deg, iHum_per, iPress_mBar;
-  bool iCRCErr;
+  float iTemp_deg, iHum_per;
+  float iPress_mBar, t;
   int64_t StartTime = GetTime_us();
   // Strom-Reset oder Wakeup-Timer?
   switch (esp_sleep_get_wakeup_cause())
@@ -136,18 +145,34 @@ void app_main_cpp()
 #endif
 
 #if defined(LILYGO_T3)
-  SX1278_LoRa LoRa(LilygoT3);
+  LoRa_PinConfiguration Lilygo = {};
+  Lilygo.ChipSelect = GPIO_NUM_18;
+  Lilygo.Reset = GPIO_NUM_23;
+  Lilygo.Miso = GPIO_NUM_19;
+  Lilygo.Mosi = GPIO_NUM_27;
+  Lilygo.Clock = GPIO_NUM_5;
+  Lilygo.DIO0 = GPIO_NUM_26;
+  Lilygo.DIO1 = GPIO_NUM_33;
+  Lilygo.Busy = GPIO_NUM_32;
+  Lilygo.SPIChannel = SPI2_HOST;
+  SX1278_LoRa LoRa(Lilygo);
+  gpio_num_t LoraLed = GPIO_NUM_25;
+  adc_channel_t AdcChannel = (adc_channel_t)7;
 #ifdef USE_ADC
-  AdcConfig.atten = ADC_ATTEN_DB_11;
+  AdcConfig.atten = ADC_ATTEN_DB_12;
 #endif
 #elif defined(HELTEC_ESP_LORA) // Nur die beiden Heltec-Boards haben die Reset-Leitung an einem RTC-Pin des ESP32!
   SX1278_LoRa LoRa(HeltecESPLoRa);
+  gpio_num_t LoraLed = GPIO_NUM_25;
+  adc_channel_t AdcChannel = (adc_channel_t)0;
   rtc_gpio_hold_dis((gpio_num_t)LoRa.PinConfig->Reset);
 #ifdef USE_ADC
   AdcConfig.atten = ADC_ATTEN_DB_0;
 #endif
 #elif defined(HELTEC_STICK_V3)
   SX1278_LoRa LoRa(HeltecWirelessStick_V3);
+  gpio_num_t LoraLed = GPIO_NUM_35;
+  adc_channel_t AdcChannel = (adc_channel_t)0;
   rtc_gpio_hold_dis((gpio_num_t)LoRa.PinConfig->Reset);
 #ifdef USE_ADC
   AdcConfig.atten = ADC_ATTEN_DB_0;
@@ -155,10 +180,9 @@ void app_main_cpp()
 #endif
 
   // gpio_num_t LoraReset = (gpio_num_t)LoRa.PinConfig->Reset;
-  gpio_num_t LoraLed = (gpio_num_t)LoRa.PinConfig->Led;
+  // gpio_num_t LoraLed = (gpio_num_t)LoRa.PinConfig->Led;
 
 #ifdef USE_ADC
-  adc_channel_t AdcChannel = (adc_channel_t)LoRa.PinConfig->AdcChannel;
 
   //-------------ADC1 Config---------------//
   AdcConfig.bitwidth = ADC_BITWIDTH_DEFAULT;
@@ -171,18 +195,22 @@ void app_main_cpp()
   gpio_set_level(LoraLed, 1);
 
   // Init Temperatursensor
+  ESP_LOGI(TAG, "I2C init...");
+  i2c_master_bus_handle_t i2c_bus_h_0;
+  ret = InitI2C(I2C_NUM_0, PIN_SDA_BUS0, PIN_SCL_BUS0, &i2c_bus_h_0);
+  if (ret != ESP_OK)
+    ESP_LOGE(TAG, "Fehler beim InitI2C(0): %d.", ret);
+    
   uint32_t iSerial = 0;
 #ifndef FAKE_SHT40
-  SHT40 iTempSensor(I2C_NUM_0, PIN_SDA_TEMP, PIN_SCL_TEMP);
-  ret = iTempSensor.Init();
+  SHT40 iTempSensor;
+  ret = iTempSensor.Init(i2c_bus_h_0, SHT40_ADDR, I2C_FREQ_HZ);
   if (ret != ESP_OK)
     ESP_LOGE(TAG, "Fehler beim Initialisieren des SHT40: %d", ret);
-  ret = iTempSensor.ReadSerial(iSerial, iCRCErr);
+  ret = iTempSensor.ReadSerial(iSerial);
   ESP_LOGI(TAG, "SHT40 Seriennummer: %lu", iSerial);
   if (ret != ESP_OK)
     ESP_LOGE(TAG, "Fehler beim Lesen der Seriennummer des SHT40: %d", ret);
-  if (iCRCErr)
-    ESP_LOGE(TAG, "Fehler beim Lesen des SHT40 CRC (Seriennummer)");
 #endif
   if (UseDisplay)
     InitSSD1306_u8g2();
@@ -190,18 +218,27 @@ void app_main_cpp()
   ESP_LOGI(TAG, "SSD1306 Init fertig nach %.1f ms", (EndTime - StartTime) / 1000.0);
   gpio_set_level(LoraLed, 0);
 
-  // Sendefrequenz: 434,54 MHz
-  // Preambellänge: 14
-  // Bandbreite 500 kHz
-  // Achtung: Damit auch der neuere SX1262 verwendet wird, muss man sich über die Sync-Words ein paar mehr
-  // Gedanken machen. Der SX1262 hat 2 Bytes Sync, nicht nur 1 Byte. Damit sich trotzdem beide verstehen, muss man
-  // folgendes beachten:
-  // SX1276: Jedes Nibble unterschiedlich von 1-7, also z.B. 0x37 => 0xYZ (Y!=Z, Z und Y <8 && >0)
-  // SX1262: 0Y4Z4, also hier 0x3474
-  // Sync-Byte: 0x37
-  // Spreading-Factor: 8 = 256 Chips/symbol
-  // Coding-Rate: 6 = 4/6 = 1,5-facher FEC-Overhead
-  ret = LoRa.SetupModule(LORA_ADDR_GWHS, 434.54e6, 14, 500E3, 0x37, 8, 6);
+// Temperatur und Luftdruck BMP390
+#ifdef USE_BMP390
+  BMP390 Bmp;
+  ret = Bmp.Init(i2c_bus_h_0, BMP390_ADDRESS, I2C_FREQ_HZ);
+  if (ret != ESP_OK)
+    ESP_LOGE(TAG, "Fehler beim Initialisieren des BMP390: %d", ret);
+  else
+  {
+    ESP_LOGI(TAG, "BMP390 Init OK");
+    /*
+    ret = Bmp.ReadTempAndPress(t, iPress_mBar);
+    if (ret != ESP_OK)
+      ESP_LOGE(TAG, "Fehler beim Auslesen des BMP390: %d", ret);
+    else
+      ESP_LOGI(TAG, "Aktuelle Temperatur: %.2f°C. Luftdruck(raw): %.1f mbar", t, iPress_mBar);
+      */
+  }
+#endif
+
+  // Parameter s. InitLoRa
+  ret = InitLoRa(LoRa);
   if (ret != ESP_OK)
     ESP_LOGE(TAG, "Fehler beim Initialisieren des LoRa Moduls: %d", ret);
   EndTime = GetTime_us();
@@ -221,13 +258,16 @@ void app_main_cpp()
   int Loops = FirstBoot ? 6 : 1;
   for (int i = 0; i < Loops; i++)
   {
+#ifdef USE_BMP390
+    ret = Bmp.StartReadTempAndPress();
+    if (ret != ESP_OK)
+      ESP_LOGE(TAG, "Fehler beim Starten des BMP390: %d", ret);
+#endif
 #ifndef FAKE_SHT40
-    ret = iTempSensor.Read(iTemp_deg, iHum_per, iCRCErr);
-    ESP_LOGI(TAG, "Temp.: %.2f LF: %.2f %%", iTemp_deg, iHum_per);
+    ret = iTempSensor.Read(iTemp_deg, iHum_per);
+    ESP_LOGI("SHT40", "Temp.: %.2f LF: %.2f %%", iTemp_deg, iHum_per);
     if (ret != ESP_OK)
       ESP_LOGE(TAG, "Fehler beim Lesen der Temperatur/Luftfeuchtigkeit des SHT40: %d", ret);
-    if (iCRCErr)
-      ESP_LOGE(TAG, "Fehler beim Lesen des SHT40 CRC (T/L)");
 #else
     iTemp_deg = 20 + sin((SleepCounter * 6) / 360.0 * 2 * 3.141592) * 15;
     iHum_per = 50 + cos((SleepCounter * 3) / 360.0 * 2 * 3.141592) * 30;
@@ -244,6 +284,14 @@ void app_main_cpp()
     AdcMean /= 64.0;
 #endif
 
+#ifdef USE_BMP390
+    ret = Bmp.ReadTempAndPressAsync(t, iPress_mBar);
+    iPress_mBar = Bmp.SeaLevelForAltitude(602, iPress_mBar);
+    if (ret != ESP_OK)
+      ESP_LOGE(TAG, "Fehler beim Lesen des BMP390: %d", ret);
+    ESP_LOGI("BMP390", "Druck: %.2f mbar Temp: %.2f°C", iPress_mBar, t);
+#endif
+
 #ifdef LILYGO_T3
     // Referenzspannung 1.1V, Spannungsteiler 100K/100K, Abschwächung 11dB (Faktor 3.55) = 7.81 V bei Vollausschlag (4095)
     // Der Kalibrierwert -0.448 muss für jedes Board neu nachgemessen werden, da die Referenzspannung des ESP32-ADCs einfach
@@ -255,11 +303,11 @@ void app_main_cpp()
 
     ESP_LOGI(TAG, "ADC raw value: %.0f = %.2f V", AdcMean, iVBatt_V);
 
-    // iTemp_deg = 20 + 20 * sin(3.141592 * (SleepCounter / 360.0));
-    // iHum_per = 60 + 30 * sin(0.8 + 3.141592 * (SleepCounter / 360.0));
+#ifndef USE_BMP390
     iPress_mBar = 1000 + 30 * cos(3.141592 * (SleepCounter / 360.0));
+#endif
     iCBORBuildSize = 0;
-    BuildCBORBuf(LoraBuf, sizeof(LoraBuf), iCBORBuildSize, SleepCounter, iTemp_deg, iHum_per, iPress_mBar, iVBatt_V);
+    BuildCBORBuf(LoraBuf, sizeof(LoraBuf), iCBORBuildSize, SleepCounter, iTemp_deg, iHum_per, (float)iPress_mBar, iVBatt_V);
     if (iCBORBuildSize > sizeof(LoraBuf))
       ESP_LOGE(TAG, "LoRa Buffer overflow...:%d", iCBORBuildSize);
 
@@ -284,7 +332,7 @@ void app_main_cpp()
         ESP_LOGE(TAG, "Resette LORA-Modul...");
         LoRa.Reset();
         vTaskDelay(pdMS_TO_TICKS(1000));
-        ret = LoRa.SetupModule(LORA_ADDR_GWHS, 434.54e6, 14, 500E3, 0x3d, 10, 7);
+        ret = InitLoRa(LoRa);
         if (ret != ESP_OK)
           ESP_LOGI(TAG, "Fehler beim Initialisieren des LoRa Moduls: %d", ret);
         else
@@ -303,10 +351,13 @@ void app_main_cpp()
     if (UseDisplay)
     {
       u8g2_ClearBuffer(&u8g2);
-      sprintf(DisplayBuf, "Paket Nr.: %lu", SleepCounter);
+      sprintf(DisplayBuf, "[%lu] Vbatt: %.2f V", SleepCounter, iVBatt_V);
       u8g2_DrawStr(&u8g2, 2, 14, DisplayBuf);
 
-      sprintf(DisplayBuf, "Temp: %.2f%cC", iTemp_deg, 176);
+      // sprintf(DisplayBuf, "Paket Nr.: %lu", SleepCounter);
+      // u8g2_DrawStr(&u8g2, 2, 14, DisplayBuf);
+
+      sprintf(DisplayBuf, "Temp: %.2f%cC[%.2f]", iTemp_deg, 176, t);
       u8g2_DrawStr(&u8g2, 2, 28, DisplayBuf);
 
       // sprintf(DisplayBuf, "Wach: %.1f ms", (EndTime - StartTime) / 1000.0);
@@ -315,14 +366,11 @@ void app_main_cpp()
       sprintf(DisplayBuf, "Feuchte: %.2f %%", iHum_per);
       u8g2_DrawStr(&u8g2, 2, 42, DisplayBuf);
 
-      // sprintf(DisplayBuf, "Druck: %.2f mBar", iPress_mBar);
-      // u8g2_DrawStr(&u8g2, 2, 56, DisplayBuf);
+      sprintf(DisplayBuf, "Druck: %.2f mBar", iPress_mBar);
+      u8g2_DrawStr(&u8g2, 2, 56, DisplayBuf);
 
       // sprintf(DisplayBuf, "Sleep: %.3f s", sleep_time_ms / 1000.0);
       // u8g2_DrawStr(&u8g2, 2, 56, DisplayBuf);
-
-      sprintf(DisplayBuf, "Vbatt: %.2f V", iVBatt_V);
-      u8g2_DrawStr(&u8g2, 2, 56, DisplayBuf);
 
       u8g2_SendBuffer(&u8g2);
     }
@@ -359,14 +407,14 @@ void app_main_cpp()
 
   // Pins auf Input
   gpio_set_direction(LoraLed, GPIO_MODE_INPUT);
-  gpio_set_direction((gpio_num_t)LoRa.PinConfig->ChipSelect, GPIO_MODE_INPUT);
-  gpio_set_direction((gpio_num_t)LoRa.PinConfig->Reset, GPIO_MODE_INPUT);
-  gpio_set_direction((gpio_num_t)LoRa.PinConfig->DIO0, GPIO_MODE_INPUT);
-  gpio_set_direction(PIN_SCL_TEMP, GPIO_MODE_INPUT);
-  gpio_set_direction(PIN_SDA_TEMP, GPIO_MODE_INPUT);
-  gpio_set_direction((gpio_num_t)LoRa.PinConfig->Clock, GPIO_MODE_INPUT);
-  gpio_set_direction((gpio_num_t)LoRa.PinConfig->Miso, GPIO_MODE_INPUT);
-  gpio_set_direction((gpio_num_t)LoRa.PinConfig->Mosi, GPIO_MODE_INPUT);
+  gpio_set_direction(LoRa.mPinConfig.ChipSelect, GPIO_MODE_INPUT);
+  gpio_set_direction(LoRa.mPinConfig.Reset, GPIO_MODE_INPUT);
+  gpio_set_direction(LoRa.mPinConfig.DIO0, GPIO_MODE_INPUT);
+  gpio_set_direction(PIN_SCL_BUS0, GPIO_MODE_INPUT);
+  gpio_set_direction(PIN_SDA_BUS0, GPIO_MODE_INPUT);
+  gpio_set_direction(LoRa.mPinConfig.Clock, GPIO_MODE_INPUT);
+  gpio_set_direction(LoRa.mPinConfig.Miso, GPIO_MODE_INPUT);
+  gpio_set_direction(LoRa.mPinConfig.Mosi, GPIO_MODE_INPUT);
 
   // Peripeherie-Spezialitäten Lilygo_T3
 #ifdef LILYGO_T3
@@ -389,11 +437,38 @@ void app_main_cpp()
   esp_deep_sleep_start();
 }
 
-int64_t GetTime_us()
+esp_err_t InitI2C(i2c_port_t aPort, gpio_num_t aSDA_Pin, gpio_num_t aSCL_Pin, i2c_master_bus_handle_t * aBusHandle)
+  {
+    if (aPort > 1)
+      return ESP_ERR_INVALID_ARG;
+
+    i2c_master_bus_config_t conf;
+    conf.i2c_port = aPort;
+    conf.sda_io_num = aSDA_Pin;
+    conf.scl_io_num = aSCL_Pin;
+    conf.clk_source = I2C_CLK_SRC_DEFAULT;
+    conf.glitch_ignore_cnt = 7;
+    conf.intr_priority = 0;
+    conf.trans_queue_depth = 0;
+    conf.flags.enable_internal_pullup = 1;
+    return i2c_new_master_bus(&conf, aBusHandle);
+  }
+
+esp_err_t InitLoRa(SX1278_LoRa &aLoRa)
 {
-  struct timeval tv_now;
-  gettimeofday(&tv_now, NULL);
-  return (int64_t)tv_now.tv_sec * 1000000L + (int64_t)tv_now.tv_usec;
+  // Sendefrequenz: 434,54 MHz
+  // Preambellänge: 14
+  // Bandbreite 500 kHz
+  // Achtung: Damit auch der neuere SX1262 verwendet wird, muss man sich über die Sync-Words ein paar mehr
+  // Gedanken machen. Der SX1262 hat 2 Bytes Sync, nicht nur 1 Byte. Damit sich trotzdem beide verstehen, muss man
+  // folgendes beachten:
+  // SX1276: Jedes Nibble unterschiedlich von 1-7, also z.B. 0x37 => 0xYZ (Y!=Z, Z und Y <8 && >0)
+  // SX1262: 0Y4Z4, also hier 0x3474
+  // Sync-Byte: 0x37
+  // Spreading-Factor: 8 = 256 Chips/symbol
+  // Coding-Rate: 6 = 4/6 = 1,5-facher FEC-Overhead
+  // Tx-Power 2-17
+  return aLoRa.SetupModule(LORA_ADDR_GWHS, 434.54e6, 14, LoRaBase::LoRaBandwidth::LORA_BW_500, 0x37, LoRaBase::SpreadingFactor::SF8, LoRaBase::LoRaCodingRate::LORA_CR_4_6, 15);
 }
 
 #define MAX_VPBUFLEN 256
