@@ -21,16 +21,29 @@ Ansonsten kann man mit einer Wetterstation heutzutage niemanden mehr hinter'm Of
 Auf dem Raspberry sind folgende Befehle auszuführen:
 
     sudo raspi-config nonint do_spi 0
-    sudo apt-get install python3-dev
+    sudo apt-get install python3-dev mosquitto
 
 Neuere Python-Distributionen (Raspberry OS ab bookworm) benötigen ein virtuelles Environment, um dort
 die lokalen libs zu installieren (dafür ist pipx NICHT geeignet):
     
     cd
-    python -m venv wetter
+    python3 -m venv --system-site-packages wetter
     source wetter/bin/activate
-    pip install paho-mqtt rpi-lgpio spidev pyLoRa cbor2 influxdb
     
+Beim Bauen von rpi-lgpio gibt es Fehler mit swig, so dass man lieber das vorkompilierte Paket nimmt:
+    
+    sudo apt install python3-lgpio -y
+    pip install paho-mqtt rpi-lgpio spidev pyLoRa cbor2 influxdb
+
+# Konfiguration
+Nach der Installation von mosquitto sollte man in /etc/mosquitto/mosquitto.conf folgende Zeilen ganz unten ergänzen:
+
+    listener 1883
+    allow_anonymous true
+
+
+
+# Hardware
 Das LoRa-Modul wird an folgende Pins des Raspberrys angeschlossen:
 
 |LoRa-Modul|Raspberry|
