@@ -13,8 +13,9 @@ import time
 import threading
 import paho.mqtt.client as mqtt
 import paho.mqtt.publish as publish
+import os
 
-logging.basicConfig(format='%(asctime)s %(message)s', filename='/var/log/LoRa_receiver.log', encoding='utf-8', level=logging.INFO)
+logging.basicConfig(format='%(asctime)s %(message)s', filename=os.path.expanduser("~")+'/LoRa_receiver.log', encoding='utf-8', level=logging.INFO)
 #logging.basicConfig(format='%(asctime)s %(message)s', encoding='utf-8', level=logging.INFO)
 LastReceivedTime = time.time()
 PacketLostCounter={}
@@ -153,27 +154,36 @@ class LoRaRcvCont(LoRa):
                     temp=f'{cbor_data["TE"]["W"]:.2f}'
                     hum=f'{cbor_data["LF"]["W"]:.1f}'
                     volt=f'{cbor_data["V"]["W"]:.2f}'               
-                    #print(f'Temperatur: {temp}°C')
-                    #print(f'Luftfeuchtigkeit: {hum}%')
                     TopicTemp=f'/wetterstation/{Ort}/temperatur'
                     TopicHum=f'/wetterstation/{Ort}/luftfeuchtigkeit'
                     TopicVBatt=f'/wetterstation/{Ort}/vbatt'
                     print(f'{Ort}: TE: {temp}°C LF: {hum}% VB: {volt} V')
                     msgs = [(TopicTemp, temp),(TopicHum, hum, 0, False),(TopicVBatt,volt)]
+                # Sensor bei der SYMPATEC: Luftdruck und Temperatur
+                elif Ort=="SYMPATEC":
+                    temp=f'{cbor_data["TE"]["W"]:.2f}'
+                    press=f'{cbor_data["LD"]["W"]:.2f}'
+                    volt=f'{cbor_data["V"]["W"]:.2f}'
+                    hum=f'{cbor_data["LF"]["W"]:.1f}'
+                    TopicTemp=f'/wetterstation/{Ort}/temperatur'
+                    TopicPress=f'/wetterstation/{Ort}/luftdruck'
+                    TopicHum=f'/wetterstation/{Ort}/luftfeuchtigkeit'
+                    TopicVBatt=f'/wetterstation/{Ort}/vbatt'
+                    print(f'{Ort}: TE: {temp}°C LD: {press} mbar VB: {volt} V')
+                    msgs = [(TopicTemp, temp),(TopicHum, hum, 0, False),(TopicVBatt,volt)]
+                # Sensor Fahrradschuppen: Innen- und Außentemperatur, Luftdruck und Luftfeuchte
                 elif Ort=="SCHU_FAH":
                     temp=f'{cbor_data["TE"]["W"]:.2f}'
                     hum=f'{cbor_data["LF"]["W"]:.1f}'
                     temp2=f'{cbor_data["TE2"]["W"]:.2f}'
                     hum2=f'{cbor_data["LF2"]["W"]:.1f}'
-                    press=f'{cbor_data["LD"]["W"]:.2f}'               
-                    #print(f'Temperatur: {temp}°C')
-                    #print(f'Luftfeuchtigkeit: {hum}%')
+                    press=f'{cbor_data["LD"]["W"]:.2f}'
                     TopicTemp=f'/wetterstation/{Ort}/temperatur'
                     TopicHum=f'/wetterstation/{Ort}/luftfeuchtigkeit'
                     TopicTemp2=f'/wetterstation/{Ort}/temperatur2'
                     TopicHum2=f'/wetterstation/{Ort}/luftfeuchtigkeit2'
                     TopicPress=f'/wetterstation/{Ort}/luftdruck'
-                    print(f'{Ort}: TE: {temp}°C LF: {hum}% TE2: {temp2}°C LF2: {hum2}% LD: {press}mbar')
+                    print(f'{Ort}: TE: {temp}°C LF: {hum}% TE2: {temp2}°C LF2: {hum2}% LD: {press} mbar')
                     msgs = [(TopicTemp, temp),(TopicTemp2, temp2),(TopicHum, hum, 0, False),(TopicHum2, hum2, 0, False),(TopicPress,press)]
                 
                 pwd = {'username':"rutsch", 'password':"super_mqtt"}
