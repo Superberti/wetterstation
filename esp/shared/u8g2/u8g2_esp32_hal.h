@@ -9,10 +9,10 @@
 
 #ifndef U8G2_ESP32_HAL_H_
 #define U8G2_ESP32_HAL_H_
-#include <driver/gpio.h>
+#include "driver/gpio.h"
 #include "driver/i2c_master.h"
-#include <driver/spi_master.h>
-#include <u8g2.h>
+#include "driver/spi_master.h"
+#include "csrc/u8g2.h"
 
 #define U8G2_ESP32_HAL_UNDEFINED (GPIO_NUM_NC)
 

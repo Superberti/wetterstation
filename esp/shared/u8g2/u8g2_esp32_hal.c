@@ -9,6 +9,10 @@
 
 #include "u8g2_esp32_hal.h"
 
+#ifndef HSPI_HOST
+#define HSPI_HOST SPI2_HOST
+#endif
+
 static const char *TAG = "u8g2_hal";
 static const unsigned int I2C_TIMEOUT_MS = 1000;
 

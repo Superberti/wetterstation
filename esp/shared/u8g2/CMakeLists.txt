@@ -1,5 +1,6 @@
-set(COMPONENT_ADD_INCLUDEDIRS csrc)
-set(COMPONENT_SRCS "csrc/u8x8_setup.c"
+# Die alte Dateiliste bleibt bestehen (nur zur besseren Lesbarkeit hier abgekürzt)
+set(COMPONENT_SRCS 
+    "csrc/u8x8_setup.c"
                     "csrc/u8x8_u8toa.c"
                     "csrc/u8x8_d_ssd1306_96x16.c"
                     "csrc/u8g2_d_memory.c"
@@ -89,13 +90,12 @@ set(COMPONENT_SRCS "csrc/u8x8_setup.c"
                     "csrc/u8x8_d_a2printer.c"
                     "csrc/u8x8_d_st7565.c"
                     "csrc/u8x8_capture.c"
-                    "csrc/u8g2_button.c")
+                    "csrc/u8g2_button.c"
+)
 
-if(COMMAND register_component)
-    set(COMPONENT_NAME ".")
-    register_component()
-else()
-    add_library(u8g2 ${COMPONENT_SRCS})
-    target_include_directories(u8g2 PUBLIC ${CMAKE_CURRENT_LIST_DIR}/csrc )
-endif()
-
+# KORREKTE REGISTRIERUNG FÜR ESP-IDF v6.1
+idf_component_register(
+    SRCS ${COMPONENT_SRCS}
+    INCLUDE_DIRS "csrc"
+    REQUIRES esp_driver_gpio esp_driver_spi esp_driver_i2c
+)
