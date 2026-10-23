@@ -77,8 +77,8 @@ struct bmp390_calib_data
 class BMP390
 {
 protected:
-  i2c_master_bus_handle_t mBusHandle;
-  i2c_master_dev_handle_t mDevHandle;
+  i2c_master_bus_handle_t mBusHandle=NULL;
+  i2c_master_dev_handle_t mDevHandle=NULL;
   // Berechnete Kalibrierfaktoren aus dem NVM
   float PAR_T1, PAR_T2, PAR_T3;
   float PAR_P1, PAR_P2, PAR_P3, PAR_P4, PAR_P5, PAR_P6, PAR_P7, PAR_P8, PAR_P9, PAR_P10, PAR_P11;

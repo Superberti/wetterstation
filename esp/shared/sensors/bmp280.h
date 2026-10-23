@@ -5,6 +5,8 @@
 #ifndef __BMP280_H__
 #define __BMP280_H__
 
+#include "driver/i2c_master.h"
+#include "SensorTypes.h"
 
 /*!
  *  I2C ADDRESS/BITS/SETTINGS
@@ -68,6 +70,9 @@ typedef struct
  */
 class BMP280
 {
+  protected: 
+  i2c_master_bus_handle_t mBusHandle=NULL;
+  i2c_master_dev_handle_t mDevHandle=NULL;
 public:
   /** Oversampling rate for the sensor. */
   enum sensor_sampling
@@ -139,7 +144,7 @@ public:
 
   ~BMP280(void);
 
-  bool init(uint8_t addr = BMP280_ADDRESS, uint8_t chipid = BMP280_CHIPID);
+  esp_err_t Init(i2c_master_bus_handle_t aBusHandle, uint8_t aI2CAddr, uint32_t aI2CSpeed_Hz);
   void reset(void);
   uint8_t getStatus();
 

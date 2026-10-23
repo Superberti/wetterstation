@@ -11,9 +11,9 @@
 /*
 
 // Der ESP32 hat SPI0 und SPI1 intern mit dem Flash verdrahtet. Frei sind SPI2/3
- 
+
   UseTXCO = false;
- 
+
   switch (aBoard)
   {
   case LilygoT3:
@@ -152,9 +152,9 @@ public:
                                 uint16_t aSyncWord, SpreadingFactor aSpreadingFactor, LoRaCodingRate aCodingRate, int8_t aTxPower) = 0;
   virtual esp_err_t SendLoraMsg(LoraCommand aCmd, uint8_t *aBuf, uint16_t aSize, uint32_t aTag);
   virtual esp_err_t SendPacket(uint8_t *buf, uint8_t size) = 0;
-  virtual esp_err_t ReceivePacket(uint8_t *buf, uint8_t size, uint8_t *BytesRead) = 0;
+  virtual esp_err_t ReceivePacket(uint8_t *buf, uint8_t size, uint8_t *BytesRead, uint32_t timeout_ms) = 0;
   virtual esp_err_t Sleep() = 0;
-  LoRaBase(const LoRa_PinConfiguration & aPinConfig);
+  LoRaBase(const LoRa_PinConfiguration &aPinConfig);
   virtual ~LoRaBase();
 };
 
@@ -237,7 +237,7 @@ public:
   esp_err_t Receive();
   esp_err_t Sleep();
   esp_err_t SendPacket(uint8_t *buf, uint8_t size);
-  esp_err_t ReceivePacket(uint8_t *buf, uint8_t size, uint8_t *BytesRead);
+  esp_err_t ReceivePacket(uint8_t *buf, uint8_t size, uint8_t *BytesRead, uint32_t timeout_ms);
   uint8_t Received();
   uint8_t PacketRssi();
   float PacketSnr();
@@ -246,9 +246,19 @@ public:
   esp_err_t SetupModule(uint8_t aAddress, uint32_t aFrq, uint16_t aPreambleLength, LoRaBandwidth aBandwidth,
                         uint16_t aSyncWord, SpreadingFactor aSpreadingFactor, LoRaCodingRate aCodingRate, int8_t aTxPower);
 
-  SX1278_LoRa(const LoRa_PinConfiguration & aPinConfig);
+  SX1278_LoRa(const LoRa_PinConfiguration &aPinConfig);
   //~SX1278_LoRa();
 };
+
+typedef struct
+{
+  int16_t rssi_pkt;    // RSSI of the packet in dBm
+  float snr_pkt;       // SNR in dB
+  int16_t signal_rssi; // Signal RSSI in dBm
+} sx1262_packet_status_t;
+
+// Callback function type for async receive
+typedef void (*sx1262_rx_callback_t)(uint8_t *data, uint8_t len, sx1262_packet_status_t *status);
 
 class SX1262_LoRa : public LoRaBase
 {
@@ -383,6 +393,8 @@ class SX1262_LoRa : public LoRaBase
   uint8_t SPIRecBuf[262];
   uint8_t SPITransBuf[262];
   uint16_t mPreambleLength;
+  static TaskHandle_t rx_task_handle;
+  static sx1262_rx_callback_t rx_callback_ptr;
 
   esp_err_t SetRadioMode(RadioMode aRM, uint32_t aTimeout);
   esp_err_t SetPacketType(PacketType);
@@ -407,20 +419,27 @@ class SX1262_LoRa : public LoRaBase
   esp_err_t SetDio3AsTcxoCtrl(TXCO_Voltage, uint32_t aTimeout);
   esp_err_t SetCalibrateSections(uint8_t aCP);
   esp_err_t Calibrate(double aFrq_MHz);
+  static void RxTask(void *arg);
+  static void Dio1IsrHandler(void *arg);
+  esp_err_t SpiReadGeneral(uint8_t *tx_header, uint8_t tx_header_len, uint8_t *rx_data, uint8_t rx_len);
+  esp_err_t ReadCommand(uint8_t cmd, uint8_t *data, uint8_t len);
+  esp_err_t WriteCommand(uint8_t cmd, uint8_t *data, uint8_t len);
+  esp_err_t WriteCommandNowait(uint8_t cmd, uint8_t *data, uint8_t len);
+  esp_err_t SpiWriteGeneral(uint8_t *tx_header, uint8_t tx_header_len, uint8_t *data, uint8_t data_len, bool wait_after);
 
 public:
-  esp_err_t Receive();
+  SX1262_LoRa(const LoRa_PinConfiguration &aPinConfig);
+
   esp_err_t Sleep();
+  esp_err_t StartReceiveAsync(sx1262_rx_callback_t callback);
+  void StopReceiveAsync(void);
   esp_err_t SendPacket(uint8_t *buf, uint8_t size);
-  esp_err_t ReceivePacket(uint8_t *buf, uint8_t size, uint8_t *BytesRead);
-  uint8_t Received();
+  esp_err_t ReceivePacket(uint8_t *buf, uint8_t size, uint8_t *BytesRead, uint32_t timeout_ms);
   uint8_t PacketRssi();
   float PacketSnr();
-
+  esp_err_t GetPacketStatus(sx1262_packet_status_t &status);
   esp_err_t DumpRegisters();
   esp_err_t SetupModule(uint8_t aAddress, uint32_t aFrq, uint16_t aPreambleLength, LoRaBandwidth aBandwidth,
                         uint16_t aSyncWord, SpreadingFactor aSpreadingFactor, LoRaCodingRate aCodingRate, int8_t aTxPower);
-
-  SX1262_LoRa(const LoRa_PinConfiguration & aPinConfig);
 };
 #endif

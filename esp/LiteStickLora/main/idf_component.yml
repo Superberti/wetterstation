@@ -1,0 +1,6 @@
+dependencies:
+  espressif/network_provisioning:
+    version: '*'
+  espressif/qrcode:
+    version: ^0.1.0
+version: 1.0.0

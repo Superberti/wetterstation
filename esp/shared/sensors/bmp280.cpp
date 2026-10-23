@@ -4,49 +4,44 @@
 
 #include <stdio.h>
 #include "esp_log.h"
-#include "driver/i2c.h"
+#include "driver/i2c_master.h"
 #include <stdint.h>
 #include "bmp280.h"
 #include <math.h>
+#include "freertos/FreeRTOS.h"
 
-#define ACK_CHECK_EN 0x1                        /*!< I2C master will check ack from slave*/
-#define ACK_CHECK_DIS 0x0                       /*!< I2C master will not check ack from slave */
+#define DEV_TIMEOUT 100
 
-/*!
- * @brief  BMP280 constructor using i2c
- * @param  *theWire
- *         optional wire
- */
 BMP280::BMP280()
 {
-
 }
 
 BMP280::~BMP280(void)
 {
-
+  if (mDevHandle != NULL)
+    i2c_master_bus_rm_device(mDevHandle);
 }
 
-/*!
- *  Initialises the sensor.
- *  @param addr
- *         The I2C address to use (default = 0x77)
- *  @param chipid
- *         The expected chip ID (used to validate connection).
- *  @return True if the init was successful, otherwise false.
- */
-bool BMP280::init(uint8_t addr, uint8_t chipid)
+esp_err_t BMP280::Init(i2c_master_bus_handle_t aBusHandle, uint8_t aI2CAddr, uint32_t aI2CSpeed_Hz)
 {
-  _i2caddr = addr;
-  esp_err_t err;
-  if (read8(BMP280_REGISTER_CHIPID,&err) != chipid)
-    return false;
+  esp_err_t ret = ESP_OK;
+  mBusHandle = aBusHandle;
+  i2c_device_config_t conf;
+  conf.dev_addr_length = I2C_ADDR_BIT_LEN_7;
+  conf.device_address = aI2CAddr;
+  conf.scl_speed_hz = aI2CSpeed_Hz;
+  conf.flags.disable_ack_check = false;
+  ret = i2c_master_bus_add_device(mBusHandle, &conf, &mDevHandle);
+  if (ret != ESP_OK)
+    return ret;
+
+  if (read8(BMP280_REGISTER_CHIPID, &ret) != BMP280_CHIPID)
+    return ESP_ERR_INVALID_ARG;
 
   readCoefficients();
-  // WriteRegister(BMP280_REGISTER_CONTROL, 0x3F); /* needed? */
   setSampling();
   vTaskDelay(100 / portTICK_PERIOD_MS);
-  return true;
+  return ESP_OK;
 }
 
 /*!
@@ -79,52 +74,24 @@ void BMP280::setSampling(sensor_mode mode,
   WriteRegister(BMP280_REGISTER_CONTROL, _measReg.get());
 }
 
-
-/**************************************************************************/
-/*!
-    @brief  Writes an 8 bit value over I2C/SPI
-*/
-/**************************************************************************/
 esp_err_t BMP280::WriteRegister(uint8_t reg_addr, uint8_t value)
 {
   esp_err_t ret;
-  i2c_cmd_handle_t cmd = i2c_cmd_link_create();
-  i2c_master_start(cmd);
-  i2c_master_write_byte(cmd, _i2caddr << 1 | I2C_MASTER_WRITE, ACK_CHECK_EN);
-  i2c_master_write_byte(cmd, reg_addr, ACK_CHECK_EN);
-  i2c_master_write_byte(cmd, value, ACK_CHECK_EN);
-  i2c_master_stop(cmd);
-  ret = i2c_master_cmd_begin(I2C_NUM_0, cmd, 1000 / portTICK_PERIOD_MS);
-  i2c_cmd_link_delete(cmd);
-  if (ret!=ESP_OK)
-    ESP_LOGE("BMP280::WriteRegister", "I2C error no.: %d",ret);
+  uint8_t data[2] = {reg_addr, value};
+  ret = i2c_master_transmit(mDevHandle, data, sizeof(data), DEV_TIMEOUT);
+  if (ret != ESP_OK)
+    ESP_LOGE("BMP390::WriteRegister", "I2C error no.: %d", ret);
   return ret;
 }
 
 esp_err_t BMP280::ReadRegister(uint8_t reg_addr, uint8_t *data, uint16_t len)
 {
   esp_err_t ret;
-  i2c_cmd_handle_t cmd = i2c_cmd_link_create();
-  i2c_master_start(cmd);
-  i2c_master_write_byte(cmd, _i2caddr << 1 | I2C_MASTER_WRITE, ACK_CHECK_EN);
-  i2c_master_write_byte(cmd, reg_addr, ACK_CHECK_EN);
-  i2c_master_stop(cmd);
-  ret = i2c_master_cmd_begin(I2C_NUM_0, cmd, 1000 / portTICK_PERIOD_MS);
-  i2c_cmd_link_delete(cmd);
+  uint8_t RegAddr = reg_addr;
+  ret = i2c_master_transmit_receive(mDevHandle, &RegAddr, 1, data, len, DEV_TIMEOUT);
   if (ret != ESP_OK)
-  {
-    ESP_LOGE("BMP280::ReadRegister", "I2C error no.: %d",ret);
-    return ret;
-  }
-  cmd = i2c_cmd_link_create();
-  i2c_master_start(cmd);
-  i2c_master_write_byte(cmd, _i2caddr << 1 | I2C_MASTER_READ, ACK_CHECK_EN);
-  i2c_master_read(cmd, data, len,  I2C_MASTER_LAST_NACK);
-  i2c_master_stop(cmd);
-  ret = i2c_master_cmd_begin(I2C_NUM_0, cmd, 1000 / portTICK_PERIOD_MS);
-  i2c_cmd_link_delete(cmd);
-  if (ret!=ESP_OK)
-    ESP_LOGE("BMP280::ReadRegister", "I2C error no.: %d",ret);
+    ESP_LOGE("BMP390::ReadRegister", "I2C error no.: %d", ret);
+
   return ret;
 }
 
@@ -134,39 +101,38 @@ esp_err_t BMP280::ReadRegister(uint8_t reg_addr, uint8_t *data, uint16_t len)
  *          selected register
  *  @return value from selected register
  */
-uint8_t BMP280::read8(uint8_t reg, esp_err_t* rError)
+uint8_t BMP280::read8(uint8_t reg, esp_err_t *rError)
 {
   uint8_t value;
-  esp_err_t res=ReadRegister(reg, &value, sizeof(value));
+  esp_err_t res = ReadRegister(reg, &value, sizeof(value));
   if (rError)
-    *rError=res;
+    *rError = res;
   return value;
 }
 
 /*!
  *  @brief  Reads a 16 bit value over I2C/SPI
  */
-uint16_t BMP280::read16(uint8_t reg, esp_err_t* rError)
+uint16_t BMP280::read16(uint8_t reg, esp_err_t *rError)
 {
   uint16_t value;
-  esp_err_t res=ReadRegister(reg, (uint8_t*)&value, sizeof(value));
+  esp_err_t res = ReadRegister(reg, (uint8_t *)&value, sizeof(value));
   if (rError)
-    *rError=res;
+    *rError = res;
   return value;
 }
 
 /*!
  *  @brief  Reads a 24 bit value over I2C/SPI
  */
-uint32_t BMP280::read24(uint8_t reg, esp_err_t* rError)
+uint32_t BMP280::read24(uint8_t reg, esp_err_t *rError)
 {
   uint8_t tmp[3];
-  esp_err_t res=ReadRegister(reg, tmp, sizeof(tmp));
+  esp_err_t res = ReadRegister(reg, tmp, sizeof(tmp));
   if (rError)
-    *rError=res;
-  return (tmp[0]<<16) | (tmp[1]<<8) | tmp[2];
+    *rError = res;
+  return (tmp[0] << 16) | (tmp[1] << 8) | tmp[2];
 }
-
 
 /*!
  *  @brief  Reads the factory-set coefficients
@@ -192,10 +158,10 @@ void BMP280::readCoefficients()
  * Reads the temperature from the device.
  * @return The temperature in degress celcius.
  */
-esp_err_t BMP280::ReadTemperature(double & aTemp)
+esp_err_t BMP280::ReadTemperature(double &aTemp)
 {
   int32_t var1, var2;
-  esp_err_t Status=ESP_OK;
+  esp_err_t Status = ESP_OK;
   int32_t adc_T = read24(BMP280_REGISTER_TEMPDATA, &Status);
   adc_T >>= 4;
 
@@ -220,15 +186,15 @@ esp_err_t BMP280::ReadTemperature(double & aTemp)
  * Reads the barometric pressure from the device.
  * @return Barometric pressure in Pa.
  */
-esp_err_t BMP280::ReadPressure(double & aPress)
+esp_err_t BMP280::ReadPressure(double &aPress)
 {
-  esp_err_t Status=ESP_OK;
+  esp_err_t Status = ESP_OK;
   int64_t var1, var2, p;
 
   // Must be done first to get the t_fine variable set up
   double dum;
-  Status=ReadTemperature(dum);
-  if (Status!=ESP_OK)
+  Status = ReadTemperature(dum);
+  if (Status != ESP_OK)
     return Status;
 
   int32_t adc_P = read24(BMP280_REGISTER_PRESSUREDATA, &Status);
@@ -241,7 +207,7 @@ esp_err_t BMP280::ReadPressure(double & aPress)
   var1 = ((var1 * var1 * (int64_t)_bmp280_calib.dig_P3) >> 8) +
          ((var1 * (int64_t)_bmp280_calib.dig_P2) << 12);
   var1 =
-    (((((int64_t)1) << 47) + var1)) * ((int64_t)_bmp280_calib.dig_P1) >> 33;
+      (((((int64_t)1) << 47) + var1)) * ((int64_t)_bmp280_calib.dig_P1) >> 33;
 
   if (var1 == 0)
   {
@@ -264,7 +230,7 @@ esp_err_t BMP280::ReadPressure(double & aPress)
  *        The current hPa at sea level.
  * @return The approximate altitude above sea level in meters.
  */
-esp_err_t BMP280::readAltitude(double & aAlt, double seaLevelhPa)
+esp_err_t BMP280::readAltitude(double &aAlt, double seaLevelhPa)
 {
   double pressure;
   esp_err_t Status = ReadPressure(pressure); // in Si units for Pascal
@@ -312,7 +278,6 @@ double BMP280::waterBoilingPoint(double pressure)
  *  !!!todo!!!
  */
 
-
 /*!
  *  @brief  Resets the chip via soft reset
  */
@@ -329,6 +294,3 @@ uint8_t BMP280::getStatus(void)
 {
   return read8(BMP280_REGISTER_STATUS);
 }
-
-
-

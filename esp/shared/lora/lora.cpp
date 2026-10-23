@@ -11,11 +11,11 @@
 #include "../tools/tools.h"
 #include "esp_check.h"
 
-
 // Quarzfrequenz aller Module
 #define XTAL_FRQ 32000000
+static const char *TAG = "lora";
 
-LoRaBase::LoRaBase(const LoRa_PinConfiguration & aPinConfig)
+LoRaBase::LoRaBase(const LoRa_PinConfiguration &aPinConfig)
     : mhSpi(NULL), mInitialized(false), mImplicit(false), mAddress(0)
 {
   mPinConfig = aPinConfig;
@@ -88,8 +88,8 @@ void LoRaBase::CloseSPI()
   {
     spi_bus_remove_device(mhSpi);
     spi_bus_free(mPinConfig.SPIChannel);
-    //gpio_isr_handler_remove(mPinConfig.DIO1);
-    //gpio_uninstall_isr_service();
+    // gpio_isr_handler_remove(mPinConfig.DIO1);
+    // gpio_uninstall_isr_service();
     mhSpi = NULL;
   }
 }
@@ -160,7 +160,7 @@ LoRaBase::~LoRaBase()
 // ----------------------------------------------------------------------------------
 // ----------------------------------------------------------------------------------
 
-SX1278_LoRa::SX1278_LoRa(const LoRa_PinConfiguration & aPinConfig) : LoRaBase(aPinConfig)
+SX1278_LoRa::SX1278_LoRa(const LoRa_PinConfiguration &aPinConfig) : LoRaBase(aPinConfig)
 {
 }
 
@@ -662,7 +662,7 @@ esp_err_t SX1278_LoRa::SendPacket(uint8_t *buf, uint8_t size)
  * @return BytesRead Number of bytes received (zero if no packet available).
  * @return Error status.
  */
-esp_err_t SX1278_LoRa::ReceivePacket(uint8_t *buf, uint8_t size, uint8_t *BytesRead)
+esp_err_t SX1278_LoRa::ReceivePacket(uint8_t *buf, uint8_t size, uint8_t *BytesRead, uint32_t timeout_ms)
 {
   esp_err_t ret;
   uint8_t len = 0;
@@ -780,8 +780,10 @@ esp_err_t SX1278_LoRa::DumpRegisters(void)
 // ----------------------------------------------------------------------------------
 // ----------------------------------------------------------------------------------
 // ----------------------------------------------------------------------------------
+TaskHandle_t SX1262_LoRa::rx_task_handle = NULL;
+sx1262_rx_callback_t SX1262_LoRa::rx_callback_ptr = NULL;
 
-SX1262_LoRa::SX1262_LoRa(const LoRa_PinConfiguration & aPinConfig) : LoRaBase(aPinConfig)
+SX1262_LoRa::SX1262_LoRa(const LoRa_PinConfiguration &aPinConfig) : LoRaBase(aPinConfig)
 {
 }
 
@@ -1049,6 +1051,114 @@ esp_err_t SX1262_LoRa::WriteBuffer(uint8_t aOffset, uint8_t *aParams, uint8_t aP
   return ChipCommand(SPITransBuf, aParamLength + 2);
 }
 
+esp_err_t SX1262_LoRa::ReadCommand(uint8_t cmd, uint8_t *data, uint8_t len)
+{
+  // Send [CMD, NOP], read 'len' bytes
+  uint8_t tx_header[2];
+  tx_header[0] = cmd;
+  tx_header[1] = 0x00; // NOP
+
+  // Header is 2 bytes long
+  return SpiReadGeneral(tx_header, 2, data, len);
+}
+
+esp_err_t SX1262_LoRa::WriteCommand(uint8_t cmd, uint8_t *data, uint8_t len)
+{
+  return SpiWriteGeneral(&cmd, 1, data, len, true);
+}
+
+esp_err_t SX1262_LoRa::WriteCommandNowait(uint8_t cmd, uint8_t *data, uint8_t len)
+{
+  return SpiWriteGeneral(&cmd, 1, data, len, false);
+}
+
+/**
+ * @brief General, flexible SPI write function
+ * Sends a variable-length header, followed by optional data.
+ * This function implements the correct "wait-transmit-wait" cycle.
+ *
+ * @param tx_header         Buffer with the command/address bytes to be sent
+ * @param tx_header_len     Number of bytes in tx_header
+ * @param data              Optional data sent after the header
+ * @param data_len          Number of optional data bytes
+ * @return esp_err_t
+ */
+esp_err_t SX1262_LoRa::SpiWriteGeneral(uint8_t *tx_header, uint8_t tx_header_len, uint8_t *data, uint8_t data_len, bool wait_after)
+{
+  // Wait until the chip is ready for a command
+  WaitBusy();
+
+  // Total transaction size
+  uint8_t total_len = tx_header_len + data_len;
+
+  // We need a single, contiguous buffer for SPI
+  uint8_t tx_buffer[total_len];
+
+  // Copy header into the buffer
+  memcpy(tx_buffer, tx_header, tx_header_len);
+  // Copy optional data into the buffer
+  if (data != NULL && data_len > 0)
+    memcpy(&tx_buffer[tx_header_len], data, data_len);
+
+  spi_transaction_t trans = {};
+      trans.length = total_len * 8;
+      trans.tx_buffer = tx_buffer;
+      trans.rx_buffer = NULL;
+
+  esp_err_t ret = spi_device_transmit(mhSpi, &trans);
+
+  // Wait until the chip has finished executing the command
+  if (wait_after)
+    WaitBusy();
+
+  return ret;
+}
+
+/**
+ * @brief General, flexible SPI read function
+ * Sends a variable-length header (e.g., [CMD] or [CMD, OFFSET] or [CMD, ADDR_H, ADDR_L])
+ * followed by NOPs to receive 'rx_len' bytes.
+ *
+ * @param tx_header         Buffer with the command/address bytes to be sent
+ * @param tx_header_len     Number of bytes in tx_header
+ * @param rx_data           Destination buffer for the read data
+ * @param rx_len            Number of data bytes to read
+ * @return esp_err_t
+ */
+esp_err_t SX1262_LoRa::SpiReadGeneral(uint8_t *tx_header, uint8_t tx_header_len, uint8_t *rx_data, uint8_t rx_len)
+{
+  WaitBusy();
+
+  // We need a transaction buffer that can hold the header + read part
+  // The ESP-IDF SPI drivers require buffers suitable for DMA.
+  // A static buffer is often problematic here. It is better to
+  // allocate tx_buffer and rx_buffer dynamically on the stack.
+
+  uint8_t tx_buffer[tx_header_len + rx_len];
+  uint8_t rx_buffer[tx_header_len + rx_len];
+
+  // 1. Copy send header
+  memcpy(tx_buffer, tx_header, tx_header_len);
+
+  // 2. Fill the rest of the send buffer with NOPs (optional, 0x00 is default)
+  // memset(&tx_buffer[tx_header_len], 0x00, rx_len);
+
+  spi_transaction_t trans = {};
+  trans.length = (tx_header_len + rx_len) * 8; // Total length in bits
+  trans.tx_buffer = tx_buffer;
+  trans.rx_buffer = rx_buffer;
+
+  esp_err_t ret = spi_device_transmit(mhSpi, &trans);
+
+  if (ret == ESP_OK && rx_data != NULL && rx_len > 0)
+  {
+    // The read data starts *after* the header part
+    memcpy(rx_data, &rx_buffer[tx_header_len], rx_len);
+  }
+
+  return ret;
+}
+
 esp_err_t SX1262_LoRa::GetIRQStatus(uint16_t &aStatus)
 {
   esp_err_t ret;
@@ -1288,7 +1398,7 @@ esp_err_t SX1262_LoRa::SendPacket(uint8_t *aBuf, uint8_t aSize)
   if (ret != ESP_OK)
     return ret;
   // ESP_LOGI("LoRa", "iIRQStatus: %d", iIRQStatus);
-  uint16_t ChipError=0;
+  uint16_t ChipError = 0;
   // ESP_LOGI("LoRa", "Warte auf Paketende...");
   while ((iIRQStatus & IRQFlags::TxDone) == 0)
   {
@@ -1317,21 +1427,97 @@ esp_err_t SX1262_LoRa::SendPacket(uint8_t *aBuf, uint8_t aSize)
   return ret;
 }
 
-esp_err_t SX1262_LoRa::ReceivePacket(uint8_t *buf, uint8_t size, uint8_t *BytesRead)
+esp_err_t SX1262_LoRa::ReceivePacket(uint8_t *data, uint8_t len, uint8_t *BytesRead, uint32_t timeout_ms)
 {
   esp_err_t ret = 0;
-  return ret;
-}
 
-esp_err_t SX1262_LoRa::Receive()
-{
-  esp_err_t ret = 0;
-  return ret;
-}
+  if (data == NULL || len == 0)
+  {
+    return ESP_ERR_INVALID_ARG;
+  }
 
-uint8_t SX1262_LoRa::Received()
-{
-  return 0;
+  // Standby Mode
+  ret = SetRadioMode(RadioMode::RM_STANDBY, 0);
+  if (ret != ESP_OK)
+  {
+    return ret;
+  }
+
+  // Clear IRQ Status
+  ClearIRQStatus(0xFFFF);
+
+  // Set RX Mode
+
+  SetRadioMode(RM_RX_ENABLE, timeout_ms == 0 ? 0xFFFFFF : timeout_ms);
+
+  // Wait for RX Done
+  uint32_t wait_timeout = timeout_ms == 0 ? 60000 : timeout_ms + 1000;
+  uint32_t start = xTaskGetTickCount();
+
+  while ((xTaskGetTickCount() - start) < pdMS_TO_TICKS(wait_timeout))
+  {
+    uint16_t irq_status;
+    ret = GetIRQStatus(irq_status);
+    if (ret != ESP_OK)
+    {
+      return ret;
+    }
+
+    if (irq_status & (IRQFlags::HeaderErr | IRQFlags::CRCErr))
+    {
+      ClearIRQStatus(IRQFlags::HeaderErr | IRQFlags::CRCErr | IRQFlags::RxDone);
+      ESP_LOGW(TAG, "CRC/Header Error");
+      ret = ESP_FAIL;
+      return ret;
+    }
+    else if (irq_status & IRQFlags::RxDone)
+    {
+      ClearIRQStatus(IRQFlags::RxDone);
+
+      // Read Buffer Status
+      uint8_t buffer_status[2];
+      ret = ReadCommand(Opcodes::OP_GET_RX_BUF_STAT, buffer_status, 2);
+      if (ret != ESP_OK)
+      {
+        return ret;
+      }
+
+      uint8_t payload_len = buffer_status[0];
+      uint8_t rx_start_ptr = buffer_status[1];
+
+      // Read data from buffer using the general function
+      // We need the SPI sequence: [CMD_READ_BUFFER, OFFSET, NOP]
+
+      // Read 'payload_len' bytes directly into the 'data' buffer
+      // after sending the 3-byte header.
+      // ret = sx1262_spi_read_general(tx_header, 3, data, payload_len);
+      ret = ReadBuffer(rx_start_ptr, data, payload_len);
+      if (ret != ESP_OK)
+      {
+        ESP_LOGE(TAG, "ReadBuffer failed");
+        return ret;
+      }
+
+      // No more memcpy() needed, data was filled directly!
+      if (BytesRead)
+        *BytesRead = payload_len;
+
+      ESP_LOGD(TAG, "RX Done: %d bytes", payload_len);
+      ret = ESP_OK;
+      return ret;
+    }
+    else if (irq_status & IRQFlags::Timeout)
+    {
+      ClearIRQStatus(IRQFlags::Timeout);
+      ESP_LOGD(TAG, "RX Timeout");
+      ret = ESP_ERR_TIMEOUT;
+      return ret;
+    }
+
+    vTaskDelay(pdMS_TO_TICKS(1));
+  }
+  ret = ESP_ERR_TIMEOUT;
+  return ret;
 }
 
 uint8_t SX1262_LoRa::PacketRssi()
@@ -1347,5 +1533,224 @@ float SX1262_LoRa::PacketSnr()
 esp_err_t SX1262_LoRa::DumpRegisters()
 {
   esp_err_t ret = 0;
+  return ret;
+}
+
+// The actual interrupt handler (runs in ISR context -> NO SPI here!)
+void IRAM_ATTR SX1262_LoRa::Dio1IsrHandler(void *arg)
+{
+  BaseType_t xHigherPriorityTaskWoken = pdFALSE;
+
+  // Notify the RX task that DIO1 has fired
+  if (rx_task_handle != NULL)
+  {
+    vTaskNotifyGiveFromISR(rx_task_handle, &xHigherPriorityTaskWoken);
+  }
+
+  // Force a context switch if the task has a higher priority than the current one
+  portYIELD_FROM_ISR(xHigherPriorityTaskWoken);
+}
+
+// The background task that does the work (runs in task context -> SPI allowed)
+void SX1262_LoRa::RxTask(void *arg)
+{
+  esp_err_t res;
+  uint8_t rx_buffer[255];
+  sx1262_packet_status_t pkt_status;
+  SX1262_LoRa *Instance = static_cast<SX1262_LoRa *>(arg);
+  if (Instance == NULL)
+  {
+    ESP_LOGE(TAG, "Instance==NULL in RxTask");
+    return;
+  }
+  ESP_LOGI(TAG, "RX Interrupt Task started");
+
+  while (1)
+  {
+    // Wait for signal from ISR (blocking, consumes no CPU)
+    ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+
+    // Check what happened (read IRQ status)
+    uint16_t irq_status;
+    res = Instance->GetIRQStatus(irq_status);
+    if (res != ESP_OK)
+    {
+      ESP_LOGE("TAG", "Error in GetIRQStatus: %d", res);
+    }
+
+    if (irq_status & (IRQFlags::CRCErr | IRQFlags::HeaderErr))
+    {
+      ESP_LOGW(TAG, "RX Error (CRC/Header), record dropped");
+      Instance->ClearIRQStatus(IRQFlags::CRCErr | IRQFlags::HeaderErr | IRQFlags::RxDone);
+    }
+    else if (irq_status & IRQFlags::RxDone)
+    {
+      // Clear IRQ
+      Instance->ClearIRQStatus(IRQFlags::RxDone);
+
+      // Read Buffer Status
+      uint8_t buffer_status[2];
+      res = Instance->ReadCommand(Opcodes::OP_GET_RX_BUF_STAT, buffer_status, 2);
+      if (res != ESP_OK)
+      {
+        ESP_LOGE("TAG", "Error in ReadCommand: %d", res);
+      }
+
+      uint8_t payload_len = buffer_status[0];
+      uint8_t rx_start_ptr = buffer_status[1];
+
+      // Read data from buffer using the general function
+      // We need the SPI sequence: [CMD_READ_BUFFER, OFFSET, NOP]
+
+      // Read 'payload_len' bytes directly into the 'data' buffer
+      // after sending the 3-byte header.
+      // ret = sx1262_spi_read_general(tx_header, 3, data, payload_len);
+      res = Instance->ReadBuffer(rx_start_ptr, rx_buffer, payload_len);
+      if (res != ESP_OK)
+      {
+        ESP_LOGE("TAG", "Error in ReadBuffer: %d", res);
+      }
+
+      // Get packet info (RSSI/SNR)
+      res = Instance->GetPacketStatus(pkt_status);
+      if (res != ESP_OK)
+      {
+        ESP_LOGE("TAG", "Error in GetPacketStatus: %d", res);
+      }
+
+      // CALL CALLBACK
+      if (rx_callback_ptr != NULL)
+      {
+        rx_callback_ptr(rx_buffer, payload_len, &pkt_status);
+      }
+    }
+  }
+
+  // Important: REACTIVATE reception mode (Continuous Mode)
+  // Since we often fall back to Standby in Fallback Mode, we reset RX here.
+  // 0xFFFFFF = Continuous RX
+  uint8_t rx_params[3] = {0xFF, 0xFF, 0xFF};
+  res = Instance->WriteCommand(Opcodes::OP_SET_RX, rx_params, 3);
+  if (res != ESP_OK)
+  {
+    ESP_LOGE("TAG", "Error in WriteCommand: %d", res);
+  }
+}
+
+esp_err_t SX1262_LoRa::StartReceiveAsync(sx1262_rx_callback_t callback)
+{
+  esp_err_t ret;
+
+  if (callback == NULL)
+  {
+    return ESP_ERR_INVALID_ARG;
+  }
+
+  if (rx_task_handle != NULL)
+  {
+    ESP_LOGW(TAG, "RX Interrupt mode already running");
+    return ESP_ERR_INVALID_STATE;
+  }
+
+  // Save callback
+  rx_callback_ptr = callback;
+
+  // Set radio to standby to change config
+  SetRadioMode(RadioMode::RM_STANDBY, 0);
+
+  // Configure DIO1 pin for interrupt
+  // We need to update the GPIO config to allow interrupts
+  gpio_config_t io_conf = {
+      .pin_bit_mask = (1ULL << mPinConfig.DIO1),
+      .mode = GPIO_MODE_INPUT,
+      .pull_up_en = GPIO_PULLUP_DISABLE,
+      .pull_down_en = GPIO_PULLDOWN_DISABLE,
+      .intr_type = GPIO_INTR_POSEDGE // Interrupt bei steigender Flanke (High = Done)
+  };
+  gpio_config(&io_conf);
+
+  // Create FreeRTOS task
+  // Stack size 4096 is safe for SPI and logs, high priority (e.g. 10) so packet is processed quickly
+  BaseType_t task_ret = xTaskCreate(RxTask, "RxTask", 4096, this, 10, &rx_task_handle);
+  if (task_ret != pdPASS)
+  {
+    ESP_LOGE(TAG, "Failed to create RX task");
+    return ESP_FAIL;
+  }
+
+  // Install ISR service (if not already done) and add handler
+  // Ignore error if service is already running (ESP_ERR_INVALID_STATE)
+  gpio_install_isr_service(0);
+
+  ret = gpio_isr_handler_add(mPinConfig.DIO1, Dio1IsrHandler, NULL);
+  if (ret != ESP_OK && ret != ESP_ERR_INVALID_STATE)
+  {
+    // Only fail on real errors, not "already installed"
+    ESP_LOGE(TAG, "Failed to add ISR handler");
+    vTaskDelete(rx_task_handle);
+    rx_task_handle = NULL;
+    return ret;
+  }
+
+  // Set IRQ mask on chip (RX Done, CRC Error)
+  
+  uint16_t IRQMask=IRQFlags::RxDone | IRQFlags::CRCErr | IRQFlags::HeaderErr;
+  ret = SetIRQParams(IRQMask, IRQMask, 0, 0);
+  if (ret != ESP_OK)
+  {
+    ESP_LOGE(TAG, "SetIRQParams failed: %d", ret);
+  }
+
+  // Put radio in Continuous RX mode
+  uint8_t rx_params[3] = {0xFF, 0xFF, 0xFF}; // Continuous
+  ret = WriteCommand(Opcodes::OP_SET_RX, rx_params, 3);
+
+  if (ret == ESP_OK)
+  {
+    ESP_LOGI(TAG, "RX Interrupt Mode started");
+  }
+
+  return ret;
+}
+
+void SX1262_LoRa::StopReceiveAsync(void)
+{
+  if (rx_task_handle == NULL)
+    return;
+
+  // Deactivate interrupt
+  gpio_isr_handler_remove(mPinConfig.DIO1);
+
+  // Set GPIO back to interrupt-less
+  gpio_set_intr_type(mPinConfig.DIO1, GPIO_INTR_DISABLE);
+
+  // Delete task
+  vTaskDelete(rx_task_handle);
+  rx_task_handle = NULL;
+  rx_callback_ptr = NULL;
+
+  // Radio in standby
+  SetRadioMode(RadioMode::RM_STANDBY, 0);
+
+  ESP_LOGI(TAG, "RX Interrupt Mode stopped");
+}
+
+esp_err_t SX1262_LoRa::GetPacketStatus(sx1262_packet_status_t &status)
+{
+  esp_err_t ret = ESP_OK;
+
+  uint8_t pkt_status[3];
+  ret = ReadCommand(Opcodes::OP_GET_PKG_STAT, pkt_status, 3);
+
+  if (ret != ESP_OK)
+  {
+    return ret;
+  }
+
+  // LoRa Mode
+  status.rssi_pkt = -(int16_t)(pkt_status[0]) / 2;
+  status.snr_pkt = ((int8_t)pkt_status[1]) * 0.25;
+  status.signal_rssi = -(int16_t)(pkt_status[2]) / 2;
+
   return ret;
 }

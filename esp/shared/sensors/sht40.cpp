@@ -8,6 +8,7 @@
 #include "sht40.h"
 #include <math.h>
 #include "freertos/FreeRTOS.h"
+#include <algorithm>
 
 #define DEV_TIMEOUT 100
 

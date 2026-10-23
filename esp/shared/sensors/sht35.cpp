@@ -8,6 +8,7 @@
 #include "sht35.h"
 #include <math.h>
 #include "freertos/FreeRTOS.h"
+#include <algorithm>
 
 #define ACK_CHECK_EN 0x1                        /*!< I2C master will check ack from slave*/
 #define ACK_CHECK_DIS 0x0                       /*!< I2C master will not check ack from slave */
