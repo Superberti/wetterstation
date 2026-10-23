@@ -834,7 +834,7 @@ esp_err_t SX1262_LoRa::ChipCommand(uint8_t *aParams, uint8_t aParamLength)
   return ret;
 }
 
-esp_err_t SX1262_LoRa::SetRadioMode(RadioMode aRM, uint32_t aTimeout)
+esp_err_t SX1262_LoRa::SetRadioMode(RadioMode aRM, uint32_t aTimeout_ms)
 {
   esp_err_t ret;
   uint8_t Params[4];
@@ -845,7 +845,8 @@ esp_err_t SX1262_LoRa::SetRadioMode(RadioMode aRM, uint32_t aTimeout)
   ret = ChipCommand(Params, 2);
   if (ret != ESP_OK)
     return ret;
-
+  // Timeout in 15.625 us steps
+  uint32_t timeout_steps = (aTimeout_ms * 1000) / 15.625;
   switch (aRM)
   {
   case RM_STANDBY:
@@ -861,17 +862,17 @@ esp_err_t SX1262_LoRa::SetRadioMode(RadioMode aRM, uint32_t aTimeout)
   case RM_RX_ENABLE:
     Params[0] = Opcodes::OP_SET_RX;
     // Timeout Bit 23:0
-    Params[1] = (aTimeout >> 16) & 0xFF; // MSB
-    Params[2] = (aTimeout >> 8) & 0xFF;
-    Params[3] = aTimeout & 0xFF;
+    Params[1] = (timeout_steps >> 16) & 0xFF; // MSB
+    Params[2] = (timeout_steps >> 8) & 0xFF;
+    Params[3] = timeout_steps & 0xFF;
     ret = ChipCommand(Params, 4);
     break;
   case RM_TX_ENABLE:
     Params[0] = Opcodes::OP_SET_TX;
     // Timeout Bit 23:0, 64000 = 1 s
-    Params[1] = (aTimeout >> 16) & 0xFF; // MSB
-    Params[2] = (aTimeout >> 8) & 0xFF;
-    Params[3] = aTimeout & 0xFF;
+    Params[1] = (timeout_steps >> 16) & 0xFF; // MSB
+    Params[2] = (timeout_steps >> 8) & 0xFF;
+    Params[3] = timeout_steps & 0xFF;
     ret = ChipCommand(Params, 4);
     break;
   }
@@ -1451,7 +1452,7 @@ esp_err_t SX1262_LoRa::ReceivePacket(uint8_t *data, uint8_t len, uint8_t *BytesR
   SetRadioMode(RM_RX_ENABLE, timeout_ms == 0 ? 0xFFFFFF : timeout_ms);
 
   // Wait for RX Done
-  uint32_t wait_timeout = timeout_ms == 0 ? 60000 : timeout_ms + 1000;
+  uint32_t wait_timeout = timeout_ms == 0 ? 60000 : timeout_ms;
   uint32_t start = xTaskGetTickCount();
 
   while ((xTaskGetTickCount() - start) < pdMS_TO_TICKS(wait_timeout))

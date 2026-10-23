@@ -396,7 +396,7 @@ class SX1262_LoRa : public LoRaBase
   static TaskHandle_t rx_task_handle;
   static sx1262_rx_callback_t rx_callback_ptr;
 
-  esp_err_t SetRadioMode(RadioMode aRM, uint32_t aTimeout);
+  esp_err_t SetRadioMode(RadioMode aRM, uint32_t aTimeout_ms);
   esp_err_t SetPacketType(PacketType);
   esp_err_t SetTxParams(RampTime aRampTime, int8_t aTXPower_DB);
   esp_err_t SetModulationParams(SpreadingFactor aSF, LoRaBandwidth aBW, LoRaCodingRate aCR, bool aLowDataRateOpt);

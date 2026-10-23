@@ -79,6 +79,10 @@ esp_err_t HeltecStick::Run()
   /* Start main application now */
   gpio_set_level(WHITE_LED, 0);
   int64_t StartTime_ms = GetTime_ms();
+  uint8_t buf[255];
+  uint8_t BytesRead = 0;
+  esp_err_t ret;
+  ESP_LOGI(TAG, "Waiting for new LoRa message...");
   while (1)
   {
     int key = gpio_get_level(USER_BUTTON);
@@ -102,8 +106,24 @@ esp_err_t HeltecStick::Run()
     }
     else
       StartTime_ms = GetTime_ms();
+
+    ret = LoRa->ReceivePacket(buf, 255, &BytesRead, 1000);
+    if (ret==ESP_OK)
+    {
+      ESP_LOGI(TAG, "New packet received with %d bytes", BytesRead);
+    }
+    else if (ret == ESP_ERR_TIMEOUT)
+    {
+      //ESP_LOGI(TAG, "Nothing received...");
+    }
+    else if (ret != ESP_OK)
+    {
+      ESP_LOGE(TAG, "Fehler bei ReceivePacket: %d", ret);
+      vTaskDelay(1000 / portTICK_PERIOD_MS);
+    }
     vTaskDelay(100 / portTICK_PERIOD_MS);
   }
+
   return ESP_OK;
 }
 
@@ -118,7 +138,7 @@ esp_err_t HeltecStick::Init()
   PinConfig.Reset = LORA_PIN_RESET;
   PinConfig.Busy = LORA_PIN_BUSY;
   PinConfig.SPIChannel = SPI2_HOST;
-  PinConfig.UseTXCO=1;
+  PinConfig.UseTXCO = 1;
 
   LoRa = new SX1262_LoRa(PinConfig);
   // Sendefrequenz: 434,54 MHz
@@ -134,7 +154,11 @@ esp_err_t HeltecStick::Init()
   // Coding-Rate: 6 = 4/6 = 1,5-facher FEC-Overhead
   // Tx-Power 2-17
   bool LoraOK = true;
-  ret = LoRa->SetupModule(LORA_ADDR_GWHS, 434.54e6, 14, LoRaBase::LoRaBandwidth::LORA_BW_500, 0x3474, LoRaBase::SpreadingFactor::SF8, LoRaBase::LoRaCodingRate::LORA_CR_4_8, 15);
+  ret = LoRa->SetupModule(LORA_ADDR_GWHS, 434.54e6, 14, LoRaBase::LoRaBandwidth::LORA_BW_500, 0x3474, LoRaBase::SpreadingFactor::SF8, LoRaBase::LoRaCodingRate::LORA_CR_4_6, 15);
+  
+  //    LoRa->SetupModule(LORA_ADDR_GWHS, 434.54e6, 14, LoRaBase::LoRaBandwidth::LORA_BW_500, 0x37, LoRaBase::SpreadingFactor::SF8, LoRaBase::LoRaCodingRate::LORA_CR_4_6, 15);
+
+  
   if (ret != ESP_OK)
   {
     LoraOK = false;
@@ -144,7 +168,6 @@ esp_err_t HeltecStick::Init()
   {
     ESP_LOGE(TAG, "Init SX1262 OK!");
   }
-  
 
   const char *username = EXAMPLE_PROV_SEC2_USERNAME;
   const char *pop = EXAMPLE_PROV_SEC2_PWD;
@@ -566,4 +589,3 @@ int64_t HeltecStick::GetTime_ms()
   // Zeit in Mikrosekunden abfragen und in Millisekunden umrechnen
   return esp_timer_get_time() / 1000;
 }
-
