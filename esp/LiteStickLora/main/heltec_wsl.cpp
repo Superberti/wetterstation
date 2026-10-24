@@ -29,6 +29,7 @@
 #include "lora/lorastructs.h"
 #include "lora/lora.h"
 #include "heltec_wsl.h"
+#include "cbor.h"
 
 // RadioLib einbinden
 #include <RadioLib.h>
@@ -175,22 +176,22 @@ void HeltecStick::LoRaTask(void *arg)
       }
 
       // Erfolg: Paket ist da und CRC ist korrekt!
-      ESP_LOGI(TAG,"\n--- PAKET EMPFANGEN ---\n");
-      ESP_LOGI(TAG,"Daten: %s", (char *)rx_buffer);
-      ESP_LOGI(TAG,"Länge: %d Bytes", paket_laenge);
-      ESP_LOGI(TAG,"RSSI:  %.2f dBm", radio.getRSSI());
-      ESP_LOGI(TAG,"SNR:   %.2f dB", radio.getSNR());
-      ESP_LOGI(TAG,"-----------------------");
+      ESP_LOGI(TAG, "\n--- PAKET EMPFANGEN ---\n");
+      ESP_LOGI(TAG, "Daten: %s", (char *)rx_buffer);
+      ESP_LOGI(TAG, "Länge: %d Bytes", paket_laenge);
+      ESP_LOGI(TAG, "RSSI:  %.2f dBm", radio.getRSSI());
+      ESP_LOGI(TAG, "SNR:   %.2f dB", radio.getSNR());
+      ESP_LOGI(TAG, "-----------------------");
     }
     else if (rx_state == RADIOLIB_ERR_CRC_MISMATCH)
     { // Code -3
-      ESP_LOGE(TAG,"[SX1262] CRC-Fehler: Paket im Äther beschädigt oder Parameter-Fehlmatch.\n");
+      ESP_LOGE(TAG, "[SX1262] CRC-Fehler: Paket im Äther beschädigt oder Parameter-Fehlmatch.\n");
     }
     else
     {
       // Ein anderer Fehlercode (z.B. -6 = Timeout)
-      if (rx_state!=-6)
-        ESP_LOGI(TAG,"[SX1262] Empfangsfehler. Code: %d\n", rx_state);
+      if (rx_state != -6)
+        ESP_LOGI(TAG, "[SX1262] Empfangsfehler. Code: %d\n", rx_state);
     }
 
     // Winzige Pause, um den FreeRTOS-Watchdog zu füttern
@@ -690,4 +691,50 @@ int64_t HeltecStick::GetTime_ms()
 {
   // Zeit in Mikrosekunden abfragen und in Millisekunden umrechnen
   return esp_timer_get_time() / 1000;
+}
+
+void HeltecStick::ParseCborPayload(uint8_t *buffer, size_t len)
+{
+  CborParser parser;
+  CborValue map_value;
+
+  // Parser auf den Puffer ansetzen
+  if (cbor_parser_init(buffer, len, 0, &parser, &map_value) != CborNoError)
+    return;
+
+  // Prüfen, ob das Wurzel-Element eine Map/Dictionary ist
+  if (cbor_value_is_container(&map_value))
+  {
+    CborValue it;
+    cbor_value_enter_container(&map_value, &it);
+
+    float temperature = 0.0;
+    int sender_id = 0;
+
+    while (!cbor_value_at_end(&it))
+    {
+      // Key lesen (wird als String erwartet)
+      char key[16];
+      size_t key_len = sizeof(key);
+      if (cbor_value_get_string_length(&it, &key_len) == CborNoError)
+      {
+        _cbor_value_copy_string(&it, key, &key_len, &it);
+      }
+
+      // Zum Value springen
+      if (strcmp(key, "temp") == 0 && cbor_value_is_float(&it))
+      {
+        cbor_value_get_float(&it, &temperature);
+      }
+      else if (strcmp(key, "id") == 0 && cbor_value_is_integer(&it))
+      {
+        cbor_value_get_int(&it, &sender_id);
+      }
+
+      cbor_value_advance(&it); // Nächstes Element
+    }
+
+    printf("Geparst - Sender: %d, Temp: %.2f\n", sender_id, temperature);
+    // Hier folgt jetzt die Weitergabe an InfluxDB...
+  }
 }

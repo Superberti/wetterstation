@@ -1,4 +1,14 @@
 dependencies:
+  espressif/cbor:
+    component_hash: 704904602bc1df70c5e7becbd0c32368522df21c0f2153b36b2e72607b66b460
+    dependencies:
+    - name: idf
+      require: private
+      version: '>=5.0'
+    source:
+      registry_url: https://components.espressif.com/
+      type: service
+    version: 7.0.0
   espressif/cjson:
     component_hash: e788323270d90738662d66fffa910bfe1fba019bba087f01557e70c40485b469
     dependencies:
@@ -47,9 +57,10 @@ dependencies:
       type: service
     version: 7.8.1
 direct_dependencies:
+- espressif/cbor
 - espressif/network_provisioning
 - espressif/qrcode
 - jgromes/radiolib
-manifest_hash: 0bf66e140963d0a9ef9eaf8644135e9476fc9f02a764477b06b682cbc678b588
+manifest_hash: 23d56915c51571c5264ea98af1da0f770eabc755735f59fffd72b023e660164c
 target: esp32s3
 version: 3.0.0

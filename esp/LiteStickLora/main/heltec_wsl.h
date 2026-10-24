@@ -46,7 +46,7 @@ class SX1262_LoRa;
 class HeltecStick
 {
 protected:
-  SX1262_LoRa *LoRa=NULL;
+  SX1262_LoRa *LoRa = NULL;
   TaskHandle_t LoRaTaskHandle;
   TaskHandle_t WifiTaskHandle;
   static void LoRaTask(void *arg);
@@ -57,12 +57,13 @@ protected:
   void wifi_init_sta(void);
   void get_device_service_name(char *service_name, size_t max);
   static esp_err_t custom_prov_data_handler(uint32_t session_id, const uint8_t *inbuf, ssize_t inlen,
-                                     uint8_t **outbuf, ssize_t *outlen, void *priv_data);
+                                            uint8_t **outbuf, ssize_t *outlen, void *priv_data);
   void wifi_prov_print_qr(const char *name, const char *username, const char *pop, const char *transport);
   // void wifi_prov_app_callback(void *user_data, wifi_prov_cb_event_t event, void *event_data);
   esp_err_t example_get_sec2_salt(const char **salt, uint16_t *salt_len);
   esp_err_t example_get_sec2_verifier(const char **verifier, uint16_t *verifier_len);
   int64_t GetTime_ms();
+  void ParseCborPayload(uint8_t *buffer, size_t len);
 
 public:
   esp_err_t Run();
