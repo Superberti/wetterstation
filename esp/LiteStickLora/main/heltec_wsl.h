@@ -47,6 +47,10 @@ class HeltecStick
 {
 protected:
   SX1262_LoRa *LoRa=NULL;
+  TaskHandle_t LoRaTaskHandle;
+  TaskHandle_t WifiTaskHandle;
+  static void LoRaTask(void *arg);
+  static void WifiTask(void *arg);
 
   esp_err_t InitGPIO();
   static void event_handler(void *arg, esp_event_base_t event_base, int32_t event_id, void *event_data);
@@ -61,7 +65,6 @@ protected:
   int64_t GetTime_ms();
 
 public:
-  esp_err_t Init();
   esp_err_t Run();
 };
 

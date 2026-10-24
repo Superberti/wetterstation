@@ -30,6 +30,9 @@
 #include "lora/lora.h"
 #include "heltec_wsl.h"
 
+// RadioLib einbinden
+#include <RadioLib.h>
+
 /* Signal Wi-Fi events on this event-group */
 const int WIFI_CONNECTED_EVENT = BIT0;
 static EventGroupHandle_t wifi_event_group;
@@ -46,6 +49,7 @@ static const char *TAG = "app";
 #define LORA_PIN_CS GPIO_NUM_8
 #define LORA_PIN_RESET GPIO_NUM_12
 #define LORA_PIN_BUSY GPIO_NUM_13
+#define LORA_PIN_DIO1 GPIO_NUM_14
 
 #define LORA_ORT ORT_SYMPATEC
 
@@ -66,23 +70,32 @@ extern "C"
     }
 
     HeltecStick wsl;
-    ESP_ERROR_CHECK(wsl.Init());
-    ESP_ERROR_CHECK(wsl.Run());
+    wsl.Run();
   }
 }
 
 esp_err_t HeltecStick::Run()
 {
-  /* Wait for Wi-Fi connection */
-  xEventGroupWaitBits(wifi_event_group, WIFI_CONNECTED_EVENT, true, true, portMAX_DELAY);
+  BaseType_t task_ret = xTaskCreate(LoRaTask, "LoRaTask", 4096, this, 10, &LoRaTaskHandle);
+  if (task_ret != pdPASS)
+  {
+    ESP_LOGE(TAG, "Failed to create LoRaTask task");
+    // return ESP_FAIL;
+  }
+
+  task_ret = xTaskCreate(WifiTask, "WifiTask", 4096, this, 10, &WifiTaskHandle);
+  if (task_ret != pdPASS)
+  {
+    ESP_LOGE(TAG, "Failed to create WifiTask task");
+    // return ESP_FAIL;
+  }
+
   InitGPIO();
   /* Start main application now */
+
   gpio_set_level(WHITE_LED, 0);
+
   int64_t StartTime_ms = GetTime_ms();
-  uint8_t buf[255];
-  uint8_t BytesRead = 0;
-  esp_err_t ret;
-  ESP_LOGI(TAG, "Waiting for new LoRa message...");
   while (1)
   {
     int key = gpio_get_level(USER_BUTTON);
@@ -107,28 +120,84 @@ esp_err_t HeltecStick::Run()
     else
       StartTime_ms = GetTime_ms();
 
-    ret = LoRa->ReceivePacket(buf, 255, &BytesRead, 1000);
-    if (ret==ESP_OK)
-    {
-      ESP_LOGI(TAG, "New packet received with %d bytes", BytesRead);
-    }
-    else if (ret == ESP_ERR_TIMEOUT)
-    {
-      //ESP_LOGI(TAG, "Nothing received...");
-    }
-    else if (ret != ESP_OK)
-    {
-      ESP_LOGE(TAG, "Fehler bei ReceivePacket: %d", ret);
-      vTaskDelay(1000 / portTICK_PERIOD_MS);
-    }
     vTaskDelay(100 / portTICK_PERIOD_MS);
   }
-
-  return ESP_OK;
 }
 
-esp_err_t HeltecStick::Init()
+void HeltecStick::LoRaTask(void *arg)
 {
+  // Globale Instanz des Funkchips anlegen
+  // 1. Die richtige HAL für ESP-IDF instanziieren
+  // Dieser Treiber übernimmt im Hintergrund automatisch die spi_master-Steuerung von ESP-IDF!
+  EspHal *hal = new EspHal(LORA_PIN_CLK, LORA_PIN_MISO, LORA_PIN_MOSI);
+  Module *mod = new Module(hal, LORA_PIN_CS, LORA_PIN_DIO1, LORA_PIN_RESET, LORA_PIN_BUSY);
+
+  // 4. Den SX1262 mit dem Modul verknüpfen
+  SX1262 radio = mod;
+
+  printf("Starte RadioLib im ESP-IDF Modus...\n");
+
+  // SetupModule(uint8_t aAddress, uint32_t aFrq, uint16_t aPreambleLength, LoRaBandwidth aBandwidth, uint16_t aSyncWord, SpreadingFactor aSpreadingFactor, LoRaCodingRate aCodingRate, int8_t aTxPower);
+  // SetupModule(LORA_ADDR_GWHS, 434.54e6, 14, LoRaBase::LoRaBandwidth::LORA_BW_500, 0x3575, LoRaBase::SpreadingFactor::SF8, LoRaBase::LoRaCodingRate::LORA_CR_4_6, 15);
+  // 3. Radio initialisieren (Frequenz, Bandbreite, SF, CR, SyncWord, Power, Preamble)
+  int state = radio.begin(434.54, 500, 8, 6, 0x37, 10, 14);
+
+  if (state == RADIOLIB_ERR_NONE)
+  {
+    ESP_LOGI(TAG, "SX1262 erfolgreich erkannt!\n");
+
+    // Zwingend erforderlich bei Heltec V3 Boards (TCXO)
+    radio.setTCXO(1.6);
+  }
+  else
+  {
+    ESP_LOGE(TAG, "Fehler bei SX1262 Initialisierung: %d\n", state);
+  }
+  radio.setSyncWord(0x37);
+
+  // 1. Puffer für die maximal erlaubte LoRa-Paketgröße bereitstellen (max. 256 Bytes)
+  uint8_t rx_buffer[256];
+  while (1)
+  {
+    // 2. radio.receive() mit dem Buffer aufrufen.
+    // Wenn die Länge auf 0 gesetzt wird, ermittelt RadioLib die Paketgröße automatisch.
+    int rx_state = radio.receive(rx_buffer, 0, 1000);
+
+    if (rx_state == RADIOLIB_ERR_NONE)
+    {
+      // Reale Anzahl der empfangenen Bytes auslesen
+      size_t paket_laenge = radio.getPacketLength();
+
+      // Nullterminator am Ende der echten Daten setzen, damit printf weiß, wo der Text aufhört
+      if (paket_laenge < 256)
+      {
+        rx_buffer[paket_laenge] = '\0';
+      }
+
+      // Erfolg: Paket ist da und CRC ist korrekt!
+      ESP_LOGI(TAG,"\n--- PAKET EMPFANGEN ---\n");
+      ESP_LOGI(TAG,"Daten: %s", (char *)rx_buffer);
+      ESP_LOGI(TAG,"Länge: %d Bytes", paket_laenge);
+      ESP_LOGI(TAG,"RSSI:  %.2f dBm", radio.getRSSI());
+      ESP_LOGI(TAG,"SNR:   %.2f dB", radio.getSNR());
+      ESP_LOGI(TAG,"-----------------------");
+    }
+    else if (rx_state == RADIOLIB_ERR_CRC_MISMATCH)
+    { // Code -3
+      ESP_LOGE(TAG,"[SX1262] CRC-Fehler: Paket im Äther beschädigt oder Parameter-Fehlmatch.\n");
+    }
+    else
+    {
+      // Ein anderer Fehlercode (z.B. -6 = Timeout)
+      if (rx_state!=-6)
+        ESP_LOGI(TAG,"[SX1262] Empfangsfehler. Code: %d\n", rx_state);
+    }
+
+    // Winzige Pause, um den FreeRTOS-Watchdog zu füttern
+    vTaskDelay(pdMS_TO_TICKS(10));
+  }
+  /*
+  HeltecStick *Instance = (HeltecStick *)arg;
   esp_err_t ret;
   LoRa_PinConfiguration PinConfig = {};
   PinConfig.ChipSelect = LORA_PIN_CS;
@@ -140,7 +209,7 @@ esp_err_t HeltecStick::Init()
   PinConfig.SPIChannel = SPI2_HOST;
   PinConfig.UseTXCO = 1;
 
-  LoRa = new SX1262_LoRa(PinConfig);
+  Instance->LoRa = new SX1262_LoRa(PinConfig);
   // Sendefrequenz: 434,54 MHz
   // Preambellänge: 14
   // Bandbreite 500 kHz
@@ -154,11 +223,10 @@ esp_err_t HeltecStick::Init()
   // Coding-Rate: 6 = 4/6 = 1,5-facher FEC-Overhead
   // Tx-Power 2-17
   bool LoraOK = true;
-  ret = LoRa->SetupModule(LORA_ADDR_GWHS, 434.54e6, 14, LoRaBase::LoRaBandwidth::LORA_BW_500, 0x3474, LoRaBase::SpreadingFactor::SF8, LoRaBase::LoRaCodingRate::LORA_CR_4_6, 15);
-  
+  ret = Instance->LoRa->SetupModule(LORA_ADDR_GWHS, 434.54e6, 14, LoRaBase::LoRaBandwidth::LORA_BW_500, 0x3575, LoRaBase::SpreadingFactor::SF8, LoRaBase::LoRaCodingRate::LORA_CR_4_6, 15);
+
   //    LoRa->SetupModule(LORA_ADDR_GWHS, 434.54e6, 14, LoRaBase::LoRaBandwidth::LORA_BW_500, 0x37, LoRaBase::SpreadingFactor::SF8, LoRaBase::LoRaCodingRate::LORA_CR_4_6, 15);
 
-  
   if (ret != ESP_OK)
   {
     LoraOK = false;
@@ -168,7 +236,38 @@ esp_err_t HeltecStick::Init()
   {
     ESP_LOGE(TAG, "Init SX1262 OK!");
   }
+  int64_t StartTime_ms = Instance->GetTime_ms();
+  uint8_t buf[255];
+  uint8_t BytesRead = 0;
+  ESP_LOGI(TAG, "Waiting for new LoRa message...");
+  while (1)
+  {
+    ret = Instance->LoRa->ReceivePacket(buf, 255, &BytesRead, 1000);
+    // Gibt einen Punkt aus, sofern das INFO-Level für diesen TAG aktiv ist
+    esp_log_write(ESP_LOG_INFO, TAG, ".");
+    fflush(stdout);
+    if (ret == ESP_OK)
+    {
+      ESP_LOGI(TAG, "\r\nNew packet received with %d bytes", BytesRead);
+    }
+    else if (ret == ESP_ERR_TIMEOUT)
+    {
+      // ESP_LOGI(TAG, "Nothing received...");
+    }
+    else if (ret != ESP_OK)
+    {
+      ESP_LOGE(TAG, "\r\nFehler bei ReceivePacket: %d", ret);
+      vTaskDelay(1000 / portTICK_PERIOD_MS);
+    }
+    vTaskDelay(100 / portTICK_PERIOD_MS);
+  }
+  */
+  vTaskDelete(NULL);
+}
 
+void HeltecStick::WifiTask(void *arg)
+{
+  HeltecStick *Instance = (HeltecStick *)arg;
   const char *username = EXAMPLE_PROV_SEC2_USERNAME;
   const char *pop = EXAMPLE_PROV_SEC2_PWD;
 
@@ -186,7 +285,7 @@ esp_err_t HeltecStick::Init()
   if (mac_err != ESP_OK)
   {
     ESP_LOGE("MAIN", "Fehler beim Lesen der MAC-Adresse!");
-    return ESP_ERR_INVALID_ARG;
+    // return ESP_ERR_INVALID_ARG;
   }
 
   // 3. Dynamischen Gerätenamen und optionales Passwort (PoP) generieren
@@ -256,12 +355,12 @@ esp_err_t HeltecStick::Init()
      *     - device name when scheme is network_prov_scheme_ble
      */
     char service_name[12];
-    get_device_service_name(service_name, sizeof(service_name));
+    Instance->get_device_service_name(service_name, sizeof(service_name));
 
     network_prov_security2_params_t sec2_params = {};
 
-    ESP_ERROR_CHECK(example_get_sec2_salt(&sec2_params.salt, &sec2_params.salt_len));
-    ESP_ERROR_CHECK(example_get_sec2_verifier(&sec2_params.verifier, &sec2_params.verifier_len));
+    ESP_ERROR_CHECK(Instance->example_get_sec2_salt(&sec2_params.salt, &sec2_params.salt_len));
+    ESP_ERROR_CHECK(Instance->example_get_sec2_verifier(&sec2_params.verifier, &sec2_params.verifier_len));
 
     network_prov_security2_params_t *sec_params = &sec2_params;
 
@@ -324,7 +423,7 @@ esp_err_t HeltecStick::Init()
     // network_prov_mgr_wait();
     // network_prov_mgr_deinit();
     /* Print QR code for provisioning */
-    wifi_prov_print_qr(service_name, username, pop, PROV_TRANSPORT_BLE);
+    Instance->wifi_prov_print_qr(service_name, username, pop, PROV_TRANSPORT_BLE);
     // wifi_prov_print_qr(device_name, "egal", device_pop, PROV_TRANSPORT_BLE);
   }
   else
@@ -337,9 +436,12 @@ esp_err_t HeltecStick::Init()
 
     ESP_ERROR_CHECK(esp_event_handler_register(WIFI_EVENT, ESP_EVENT_ANY_ID, &event_handler, NULL));
     /* Start Wi-Fi station */
-    wifi_init_sta();
+    Instance->wifi_init_sta();
   }
-  return ESP_OK;
+  /* Wait for Wi-Fi connection */
+  xEventGroupWaitBits(wifi_event_group, WIFI_CONNECTED_EVENT, true, true, portMAX_DELAY);
+  ESP_LOGI(TAG, "Wifi successfully started!");
+  vTaskDelete(NULL);
 }
 
 esp_err_t HeltecStick::InitGPIO()

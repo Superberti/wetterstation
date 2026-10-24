@@ -1102,9 +1102,9 @@ esp_err_t SX1262_LoRa::SpiWriteGeneral(uint8_t *tx_header, uint8_t tx_header_len
     memcpy(&tx_buffer[tx_header_len], data, data_len);
 
   spi_transaction_t trans = {};
-      trans.length = total_len * 8;
-      trans.tx_buffer = tx_buffer;
-      trans.rx_buffer = NULL;
+  trans.length = total_len * 8;
+  trans.tx_buffer = tx_buffer;
+  trans.rx_buffer = NULL;
 
   esp_err_t ret = spi_device_transmit(mhSpi, &trans);
 
@@ -1466,10 +1466,19 @@ esp_err_t SX1262_LoRa::ReceivePacket(uint8_t *data, uint8_t len, uint8_t *BytesR
 
     if (irq_status & (IRQFlags::HeaderErr | IRQFlags::CRCErr))
     {
+      esp_err_t err_type;
+      if (irq_status & IRQFlags::CRCErr)
+      {
+        err_type = ESP_ERR_INVALID_CRC;
+        ESP_LOGW(TAG, "CRC Error");
+      }
+      else
+      {
+        err_type = ESP_ERR_INVALID_RESPONSE;
+        ESP_LOGW(TAG, "Header Error");
+      }
       ClearIRQStatus(IRQFlags::HeaderErr | IRQFlags::CRCErr | IRQFlags::RxDone);
-      ESP_LOGW(TAG, "CRC/Header Error");
-      ret = ESP_FAIL;
-      return ret;
+      return err_type;
     }
     else if (irq_status & IRQFlags::RxDone)
     {
@@ -1581,7 +1590,15 @@ void SX1262_LoRa::RxTask(void *arg)
 
     if (irq_status & (IRQFlags::CRCErr | IRQFlags::HeaderErr))
     {
-      ESP_LOGW(TAG, "RX Error (CRC/Header), record dropped");
+      if (irq_status & IRQFlags::CRCErr)
+      {
+        ESP_LOGW(TAG, "RX Error (CRC), record dropped");
+      }
+      else
+      {
+        ESP_LOGW(TAG, "RX Error (Header), record dropped");
+      }
+
       Instance->ClearIRQStatus(IRQFlags::CRCErr | IRQFlags::HeaderErr | IRQFlags::RxDone);
     }
     else if (irq_status & IRQFlags::RxDone)
@@ -1694,8 +1711,8 @@ esp_err_t SX1262_LoRa::StartReceiveAsync(sx1262_rx_callback_t callback)
   }
 
   // Set IRQ mask on chip (RX Done, CRC Error)
-  
-  uint16_t IRQMask=IRQFlags::RxDone | IRQFlags::CRCErr | IRQFlags::HeaderErr;
+
+  uint16_t IRQMask = IRQFlags::RxDone | IRQFlags::CRCErr | IRQFlags::HeaderErr;
   ret = SetIRQParams(IRQMask, IRQMask, 0, 0);
   if (ret != ESP_OK)
   {

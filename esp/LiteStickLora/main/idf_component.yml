@@ -3,4 +3,5 @@ dependencies:
     version: '*'
   espressif/qrcode:
     version: ^0.1.0
+  jgromes/radiolib: "^7.8.1"
 version: 1.0.0
