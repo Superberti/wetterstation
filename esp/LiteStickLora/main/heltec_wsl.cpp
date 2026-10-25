@@ -251,7 +251,7 @@ void init_rmt_hardware_driver()
   tx_chan_config.resolution_hz = 1000000; // 1 MHz = 1 Tick pro Mikrosekunde
   tx_chan_config.mem_block_symbols = 128; // Genug Speicher für das v1.0 Signal
   tx_chan_config.trans_queue_depth = 4;
-  tx_chan_config.flags.invert_out = false;
+  tx_chan_config.flags.invert_out = true;
   tx_chan_config.flags.with_dma = false;
   ESP_ERROR_CHECK(rmt_new_tx_channel(&tx_chan_config, &tx_channel));
 
