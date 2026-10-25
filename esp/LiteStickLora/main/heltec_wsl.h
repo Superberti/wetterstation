@@ -49,8 +49,10 @@ protected:
   SX1262_LoRa *LoRa = NULL;
   TaskHandle_t LoRaTaskHandle;
   TaskHandle_t WifiTaskHandle;
+  TaskHandle_t CCTaskHandle;
   static void LoRaTask(void *arg);
   static void WifiTask(void *arg);
+  static void CCTask(void *arg);
 
   esp_err_t InitGPIO();
   static void event_handler(void *arg, esp_event_base_t event_base, int32_t event_id, void *event_data);
@@ -64,9 +66,12 @@ protected:
   esp_err_t example_get_sec2_verifier(const char **verifier, uint16_t *verifier_len);
   int64_t GetTime_ms();
   void ParseCborPayload(uint8_t *buffer, size_t len);
-
+  void init_rmt_direct_drive();
+  void send_oregon_v1_packet(uint8_t channel, uint8_t rollingCode, float temperature);
 public:
   esp_err_t Run();
 };
+
+
 
 #endif

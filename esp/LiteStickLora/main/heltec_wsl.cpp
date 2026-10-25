@@ -30,7 +30,8 @@
 #include "lora/lora.h"
 #include "heltec_wsl.h"
 #include "cbor.h"
-
+#include "driver/rmt_tx.h"
+#include "driver/spi_master.h"
 // RadioLib einbinden
 #include <RadioLib.h>
 
@@ -52,7 +53,14 @@ static const char *TAG = "app";
 #define LORA_PIN_BUSY GPIO_NUM_13
 #define LORA_PIN_DIO1 GPIO_NUM_14
 
-#define LORA_ORT ORT_SYMPATEC
+// CC1101-Funkmodul (für Fielmann-Wetterstation)
+#define CC_PIN_CSN GPIO_NUM_2
+#define CC_PIN_SCK GPIO_NUM_18
+#define CC_PIN_MISO GPIO_NUM_19
+#define CC_PIN_MOSI GPIO_NUM_21
+#define CC_PIN_GDO0 GPIO_NUM_3
+#define PIN_RST RADIOLIB_NC
+#define CC_PIN_GDO2 GPIO_NUM_1
 
 extern "C"
 {
@@ -80,14 +88,21 @@ esp_err_t HeltecStick::Run()
   BaseType_t task_ret = xTaskCreate(LoRaTask, "LoRaTask", 4096, this, 10, &LoRaTaskHandle);
   if (task_ret != pdPASS)
   {
-    ESP_LOGE(TAG, "Failed to create LoRaTask task");
+    ESP_LOGE(TAG, "Failed to create LoRaTask");
     // return ESP_FAIL;
   }
 
   task_ret = xTaskCreate(WifiTask, "WifiTask", 4096, this, 10, &WifiTaskHandle);
   if (task_ret != pdPASS)
   {
-    ESP_LOGE(TAG, "Failed to create WifiTask task");
+    ESP_LOGE(TAG, "Failed to create WifiTask");
+    // return ESP_FAIL;
+  }
+
+  task_ret = xTaskCreate(CCTask, "CCTask", 4096, this, 10, &CCTaskHandle);
+  if (task_ret != pdPASS)
+  {
+    ESP_LOGE(TAG, "Failed to create CCTask");
     // return ESP_FAIL;
   }
 
@@ -97,6 +112,8 @@ esp_err_t HeltecStick::Run()
   gpio_set_level(WHITE_LED, 0);
 
   int64_t StartTime_ms = GetTime_ms();
+  // Abfrage User-Button. Ist der 5 Sekunden lang gedrückt, dann werden die WLAN-Einstellungen
+  // vergessen und man kann das Gerät mit der BLE-Provisioning App von ESP wieder mit einem neuen WLAN verbinden
   while (1)
   {
     int key = gpio_get_level(USER_BUTTON);
@@ -125,21 +142,301 @@ esp_err_t HeltecStick::Run()
   }
 }
 
+spi_device_handle_t spi_handle;
+rmt_channel_handle_t tx_channel = NULL;
+rmt_encoder_handle_t copy_encoder = NULL;
+
+// Korrektes Schreiben einzelner Register im ESP-IDF
+void cc1101_write_reg(uint8_t reg, uint8_t val)
+{
+  spi_transaction_t t;
+  memset(&t, 0, sizeof(t));
+  t.flags = SPI_TRANS_USE_TXDATA;
+  t.length = 16; // 16 Bit Gesamtübertragung (8 Bit Adresse + 8 Bit Daten)
+
+  // Adresse (Bits 7=0 für Write, 6=0 für Single) in das erste Byte packen
+  t.tx_data[0] = reg & 0x3F;
+  t.tx_data[1] = val; // Der eigentliche Registerwert
+
+  spi_device_transmit(spi_handle, &t);
+}
+
+// Senden von Befehls-Strobes (z. B. SRES, STX)
+void cc1101_send_strobe(uint8_t strobe)
+{
+  spi_transaction_t t;
+  memset(&t, 0, sizeof(t));
+  t.flags = SPI_TRANS_USE_TXDATA;
+  t.length = 8; // Ein Strobe ist genau 8 Bit lang
+  t.tx_data[0] = strobe;
+
+  spi_device_transmit(spi_handle, &t);
+}
+
+// Initialisiert das CC1101-Modul direkt über den ESP-IDF SPI-Treiber
+void init_cc1101_hardware_direct()
+{
+  // 1. SPI-Bus auf den Heltec-Universal-GPIOs starten
+  spi_bus_config_t buscfg = {};
+  buscfg.mosi_io_num = CC_PIN_MOSI;
+  buscfg.miso_io_num = CC_PIN_MISO;
+  buscfg.sclk_io_num = CC_PIN_SCK;
+  buscfg.quadwp_io_num = -1;
+  buscfg.quadhd_io_num = -1;
+  buscfg.max_transfer_sz = 0;
+  ESP_ERROR_CHECK(spi_bus_initialize(SPI3_HOST, &buscfg, SPI_DMA_CH_AUTO));
+
+  // 2. SPI-Gerät mit moderaten 1 MHz hinzufügen (extrem stabil)
+  spi_device_interface_config_t devcfg = {};
+  devcfg.mode = 0;
+  devcfg.clock_speed_hz = 1000000;
+  devcfg.spics_io_num = CC_PIN_CSN;
+  devcfg.queue_size = 7;
+  ESP_ERROR_CHECK(spi_bus_add_device(SPI3_HOST, &devcfg, &spi_handle));
+
+  // 1. Reset ausführen (Zwingend erforderlich!)
+  cc1101_send_strobe(0x30); // SRES
+  vTaskDelay(pdMS_TO_TICKS(20));
+
+  // 2. WICHTIG: Erst in den IDLE-Modus versetzen, bevor Register geschrieben werden
+  cc1101_send_strobe(0x36); // SIDLE
+
+  // 3. REGISTER BEFÜLLEN (Mit funktionierender SPI-Funktion)
+  cc1101_write_reg(0x02, 0x0D); // IOCFG0: GDO0 als asynchronen Dateneingang definieren
+  cc1101_write_reg(0x08, 0x30); // PKTCTRL0: Asynchroner Serial Mode (FIFO aus)
+
+  // Automatische Kalibrierung beim Wechsel zu TX aktivieren!
+  cc1101_write_reg(0x18, 0x18); // MCSM0: Auto-Kalibrierung einschalten
+
+  // Frequenzeinstellung 433.92 MHz
+  cc1101_write_reg(0x0D, 0x10); // FREQ2
+  cc1101_write_reg(0x0E, 0xB1); // FREQ1
+  cc1101_write_reg(0x0F, 0x3B); // FREQ0
+
+  // OOK Modulation und Endstufe scharf schalten
+  cc1101_write_reg(0x12, 0x30); // MDMCFG2: ASK/OOK Modulation
+  cc1101_write_reg(0x22, 0x11); // FREND0: OOK-Leistungsstufe ein
+
+  // 4. BUNDESWEITE SYNCHRONISIERUNG AUSLÖSEN (STX)
+  cc1101_send_strobe(0x35); // STX Befehl absetzen -> Wechselt in TX und kalibriert
+
+  ESP_LOGI(TAG, "CC1101 erfolgreich kalibriert und Modulator für GPIO 3 geöffnet!");
+}
+
+// Initialisiert den ESP32-S3 Hardware RMT-Treiber
+void init_rmt_hardware_driver()
+{
+  rmt_tx_channel_config_t tx_chan_config = {};
+  tx_chan_config.gpio_num = CC_PIN_GDO0;
+  tx_chan_config.clk_src = RMT_CLK_SRC_DEFAULT;
+  tx_chan_config.resolution_hz = 1000000; // 1 MHz = 1 Tick pro Mikrosekunde
+  tx_chan_config.mem_block_symbols = 128; // Genug Speicher für das v1.0 Signal
+  tx_chan_config.trans_queue_depth = 4;
+  tx_chan_config.flags.invert_out = false;
+  tx_chan_config.flags.with_dma = false;
+  ESP_ERROR_CHECK(rmt_new_tx_channel(&tx_chan_config, &tx_channel));
+
+  rmt_copy_encoder_config_t copy_encoder_cfg = {};
+  ESP_ERROR_CHECK(rmt_new_copy_encoder(&copy_encoder_cfg, &copy_encoder));
+  ESP_ERROR_CHECK(rmt_enable(tx_channel));
+}
+
+#define T_PREAMBLE_SPACE_US 3000
+#define T_SYNC_US 5500
+#define T_BIT_US 1450
+
+// Berechnet die originale Oregon v1 Nibble-CRC laut Erriez-Spezifikation
+uint8_t calculate_thn128_crc(uint8_t b0, uint8_t b1, uint8_t b2)
+{
+  // Das Protokoll summiert alle 6 Daten-Nibbles einzeln auf
+  uint8_t nibble_sum = 0;
+
+  nibble_sum += (b0 & 0x0F);        // Nibble 0: Rolling Address
+  nibble_sum += ((b0 >> 4) & 0x0F); // Nibble 1: Channel & Leerbits
+  nibble_sum += (b1 & 0x0F);        // Nibble 2: TH3 (1/10 Grad)
+  nibble_sum += ((b1 >> 4) & 0x0F); // Nibble 3: TH2 (1 Grad)
+  nibble_sum += (b2 & 0x0F);        // Nibble 4: TH1 (10 Grad)
+  nibble_sum += ((b2 >> 4) & 0x0F); // Nibble 5: Sign-Bit & Flags
+
+  // Die finale CRC ist die invertierte Summe plus 1 (Zweierkomplement-Logik)
+  return (uint8_t)(nibble_sum);
+}
+
+void send_fielmann_v1_packet(uint8_t channel, uint8_t rollingCode, float temperature)
+{
+  rmt_symbol_word_t raw_symbols[200]; // Als festes Array deklariert für ausreichend Speicher
+  memset(raw_symbols, 0, sizeof(raw_symbols));
+  size_t sym_idx = 0;
+
+  // --- SCHRITT 1: DATA STRUKTUR IM ARDUINO-FORMAT BAUEN ---
+  uint32_t rawData = 0;
+
+  // Byte 0: Bit 0..3 Rolling Address, Bit 6..7 Channel (0=Ch1, 1=Ch2, 2=Ch3)
+  uint8_t byte0 = (rollingCode & 0x0F);
+  if (channel == 2)
+    byte0 |= (1 << 6);
+  if (channel == 3)
+    byte0 |= (2 << 6);
+  rawData |= ((uint32_t)byte0);
+
+  // Temperatur in BCD wandeln
+  bool isNegative = (temperature < 0);
+  if (isNegative)
+    temperature = -temperature;
+  int tempInt = (int)(temperature * 10.0f + 0.5f);
+
+  uint8_t th3 = tempInt % 10;         // 1/10 Grad
+  uint8_t th2 = (tempInt / 10) % 10;  // 1 Grad
+  uint8_t th1 = (tempInt / 100) % 10; // 10 Grad
+
+  // Byte 1: Bit 0..3 = TH3, Bit 4..7 = TH2
+  uint8_t byte1 = (th3 & 0x0F) | ((th2 & 0x0F) << 4);
+  rawData |= ((uint32_t)byte1 << 8);
+
+  // Byte 2: Bit 0..3 = TH1, Bit 5 = Sign (1=negativ)
+  uint8_t byte2 = (th1 & 0x0F);
+  if (isNegative)
+    byte2 |= (1 << 5);
+  rawData |= ((uint32_t)byte2 << 16);
+
+  // Byte 3: CRC (Einfache Summe aus Byte 0 + Byte 1 + Byte 2)
+  uint8_t crc = calculate_thn128_crc(byte0, byte1, byte2);
+  rawData |= ((uint32_t)crc << 24);
+
+  // --- SCHRITT 2: ZWEI DURCHGÄNGE CODIEREN (Doppel-Senden) ---
+  for (int tx_run = 0; tx_run < 2; tx_run++)
+  {
+
+    // A) Preamble: 12x Bit 1 senden
+    for (uint8_t i = 0; i < 12; i++)
+    {
+      raw_symbols[sym_idx].level0 = 1;
+      raw_symbols[sym_idx].duration0 = T_BIT_US;
+      raw_symbols[sym_idx].level1 = 0;
+      raw_symbols[sym_idx].duration1 = T_BIT_US;
+      sym_idx++;
+    }
+    // Preamble-Space: 3000 µs LOW
+    raw_symbols[sym_idx].level0 = 0;
+    raw_symbols[sym_idx].duration0 = T_PREAMBLE_SPACE_US;
+    raw_symbols[sym_idx].level1 = 0;
+    raw_symbols[sym_idx].duration1 = 10; // Minimal-Dummy
+    sym_idx++;
+
+    // B) Sync Pulse: 5500 µs HIGH, danach 5500 µs LOW
+    raw_symbols[sym_idx].level0 = 1;
+    raw_symbols[sym_idx].duration0 = T_SYNC_US;
+    raw_symbols[sym_idx].level1 = 0;
+    raw_symbols[sym_idx].duration1 = T_SYNC_US;
+    sym_idx++;
+
+    // C) 32 Datenbits senden (LSB-First)
+    for (uint8_t i = 0; i < 32; i++)
+    {
+      if (rawData & (1UL << i))
+      {
+        // KORREKTUR: Bit 1 laut Erriez: HIGH -> LOW (Inverted Manchester)
+        raw_symbols[sym_idx].level0 = 1;
+        raw_symbols[sym_idx].duration0 = T_BIT_US;
+        raw_symbols[sym_idx].level1 = 0;
+        raw_symbols[sym_idx].duration1 = T_BIT_US;
+      }
+      else
+      {
+        // KORREKTUR: Bit 0 laut Erriez: LOW -> HIGH (Inverted Manchester)
+        raw_symbols[sym_idx].level0 = 0;
+        raw_symbols[sym_idx].duration0 = T_BIT_US;
+        raw_symbols[sym_idx].level1 = 1;
+        raw_symbols[sym_idx].duration1 = T_BIT_US;
+      }
+      sym_idx++;
+    }
+
+    // D) Disable Transmit: Pegel auf LOW ziehen
+    raw_symbols[sym_idx].level0 = 0;
+    raw_symbols[sym_idx].duration0 = T_BIT_US;
+    raw_symbols[sym_idx].level1 = 0;
+    raw_symbols[sym_idx].duration1 = 10;
+    sym_idx++;
+
+    // E) Überlaufsichere 100 ms Frame-Pause zwischen Paket 1 und Paket 2
+    if (tx_run == 0)
+    {
+      for (int p = 0; p < 4; p++)
+      {
+        raw_symbols[sym_idx].level0 = 0;
+        raw_symbols[sym_idx].duration0 = 25000; // 4x 25ms = 100ms
+        raw_symbols[sym_idx].level1 = 0;
+        raw_symbols[sym_idx].duration1 = 10;
+        sym_idx++;
+      }
+    }
+  }
+
+  // Postamble zum finalen Erden des Pins
+  raw_symbols[sym_idx].level0 = 0;
+  raw_symbols[sym_idx].duration0 = T_BIT_US;
+  raw_symbols[sym_idx].level1 = 0;
+  raw_symbols[sym_idx].duration1 = T_BIT_US;
+  sym_idx++;
+
+  // --- ÜBERTRAGUNG AN DEN CC1101 ABFEUERN ---
+  rmt_transmit_config_t tx_config = {};
+  tx_config.loop_count = 0;
+  tx_config.flags.eot_level = 0;
+  ESP_ERROR_CHECK(rmt_transmit(tx_channel, copy_encoder, raw_symbols, sym_idx * sizeof(rmt_symbol_word_t), &tx_config));
+}
+
+void HeltecStick::CCTask(void *arg)
+{
+  HeltecStick *Instance = (HeltecStick *)arg;
+  ESP_LOGI(TAG, "Starte CC Task...");
+
+  init_cc1101_hardware_direct();
+
+  // 2. Initialisiere die RMT Hardware-Einheit
+  init_rmt_hardware_driver();
+
+  ESP_LOGI(TAG, "System bereit. Starte Sendezyklus für Fielmann Wetterstation...");
+
+  while (1)
+  {
+    // Kanal 1, ID 0x66, Simulation von 20.5 °C
+    send_fielmann_v1_packet(1, 0x66, 20.5f);
+    ESP_LOGI(TAG, "Paket abgesetzt. SDR sollte Signal zeigen.");
+
+    // Exaktes v1.0 Sendeintervall (Kanal 1 = 39,25 Sek.)
+    vTaskDelay(pdMS_TO_TICKS(39250));
+  }
+
+  vTaskDelete(NULL);
+}
+
 void HeltecStick::LoRaTask(void *arg)
 {
+  ESP_LOGI(TAG, "Starte LoRa Task...");
   // Globale Instanz des Funkchips anlegen
   // 1. Die richtige HAL für ESP-IDF instanziieren
   // Dieser Treiber übernimmt im Hintergrund automatisch die spi_master-Steuerung von ESP-IDF!
-  EspHal *hal = new EspHal(LORA_PIN_CLK, LORA_PIN_MISO, LORA_PIN_MOSI);
+  EspHal *hal = new EspHal(LORA_PIN_CLK, LORA_PIN_MISO, LORA_PIN_MOSI, SPI2_HOST);
   Module *mod = new Module(hal, LORA_PIN_CS, LORA_PIN_DIO1, LORA_PIN_RESET, LORA_PIN_BUSY);
 
   // 4. Den SX1262 mit dem Modul verknüpfen
   SX1262 radio = mod;
 
-  printf("Starte RadioLib im ESP-IDF Modus...\n");
+  // Sendefrequenz: 434,54 MHz
+  // Preambellänge: 14
+  // Bandbreite 500 kHz
+  // Achtung: Damit auch der neuere SX1262 verwendet wird, muss man sich über die Sync-Words ein paar mehr
+  // Gedanken machen. Der SX1262 hat 2 Bytes Sync, nicht nur 1 Byte. Damit sich trotzdem beide verstehen, muss man
+  // folgendes beachten:
+  // SX1278: Jedes Nibble unterschiedlich von 1-7, also z.B. 0x37 => 0xYZ (Y!=Z, Z und Y <8 && >0)
+  // SX1262: 0Y4Z4, also hier 0x3474
+  // Sync-Byte: 0x37
+  // Spreading-Factor: 8 = 256 Chips/symbol
+  // Coding-Rate: 6 = 4/6 = 1,5-facher FEC-Overhead
+  // Tx-Power 2-17
 
-  // SetupModule(uint8_t aAddress, uint32_t aFrq, uint16_t aPreambleLength, LoRaBandwidth aBandwidth, uint16_t aSyncWord, SpreadingFactor aSpreadingFactor, LoRaCodingRate aCodingRate, int8_t aTxPower);
-  // SetupModule(LORA_ADDR_GWHS, 434.54e6, 14, LoRaBase::LoRaBandwidth::LORA_BW_500, 0x3575, LoRaBase::SpreadingFactor::SF8, LoRaBase::LoRaCodingRate::LORA_CR_4_6, 15);
   // 3. Radio initialisieren (Frequenz, Bandbreite, SF, CR, SyncWord, Power, Preamble)
   int state = radio.begin(434.54, 500, 8, 6, 0x37, 10, 14);
 
@@ -197,73 +494,115 @@ void HeltecStick::LoRaTask(void *arg)
     // Winzige Pause, um den FreeRTOS-Watchdog zu füttern
     vTaskDelay(pdMS_TO_TICKS(10));
   }
-  /*
-  HeltecStick *Instance = (HeltecStick *)arg;
-  esp_err_t ret;
-  LoRa_PinConfiguration PinConfig = {};
-  PinConfig.ChipSelect = LORA_PIN_CS;
-  PinConfig.Clock = LORA_PIN_CLK;
-  PinConfig.Miso = LORA_PIN_MISO;
-  PinConfig.Mosi = LORA_PIN_MOSI;
-  PinConfig.Reset = LORA_PIN_RESET;
-  PinConfig.Busy = LORA_PIN_BUSY;
-  PinConfig.SPIChannel = SPI2_HOST;
-  PinConfig.UseTXCO = 1;
 
-  Instance->LoRa = new SX1262_LoRa(PinConfig);
-  // Sendefrequenz: 434,54 MHz
-  // Preambellänge: 14
-  // Bandbreite 500 kHz
-  // Achtung: Damit auch der neuere SX1262 verwendet wird, muss man sich über die Sync-Words ein paar mehr
-  // Gedanken machen. Der SX1262 hat 2 Bytes Sync, nicht nur 1 Byte. Damit sich trotzdem beide verstehen, muss man
-  // folgendes beachten:
-  // SX1278: Jedes Nibble unterschiedlich von 1-7, also z.B. 0x37 => 0xYZ (Y!=Z, Z und Y <8 && >0)
-  // SX1262: 0Y4Z4, also hier 0x3474
-  // Sync-Byte: 0x37
-  // Spreading-Factor: 8 = 256 Chips/symbol
-  // Coding-Rate: 6 = 4/6 = 1,5-facher FEC-Overhead
-  // Tx-Power 2-17
-  bool LoraOK = true;
-  ret = Instance->LoRa->SetupModule(LORA_ADDR_GWHS, 434.54e6, 14, LoRaBase::LoRaBandwidth::LORA_BW_500, 0x3575, LoRaBase::SpreadingFactor::SF8, LoRaBase::LoRaCodingRate::LORA_CR_4_6, 15);
-
-  //    LoRa->SetupModule(LORA_ADDR_GWHS, 434.54e6, 14, LoRaBase::LoRaBandwidth::LORA_BW_500, 0x37, LoRaBase::SpreadingFactor::SF8, LoRaBase::LoRaCodingRate::LORA_CR_4_6, 15);
-
-  if (ret != ESP_OK)
-  {
-    LoraOK = false;
-    ESP_LOGE(TAG, "Fehler beim Initialisieren vom LoRa-Modul: %d", ret);
-  }
-  else
-  {
-    ESP_LOGE(TAG, "Init SX1262 OK!");
-  }
-  int64_t StartTime_ms = Instance->GetTime_ms();
-  uint8_t buf[255];
-  uint8_t BytesRead = 0;
-  ESP_LOGI(TAG, "Waiting for new LoRa message...");
-  while (1)
-  {
-    ret = Instance->LoRa->ReceivePacket(buf, 255, &BytesRead, 1000);
-    // Gibt einen Punkt aus, sofern das INFO-Level für diesen TAG aktiv ist
-    esp_log_write(ESP_LOG_INFO, TAG, ".");
-    fflush(stdout);
-    if (ret == ESP_OK)
-    {
-      ESP_LOGI(TAG, "\r\nNew packet received with %d bytes", BytesRead);
-    }
-    else if (ret == ESP_ERR_TIMEOUT)
-    {
-      // ESP_LOGI(TAG, "Nothing received...");
-    }
-    else if (ret != ESP_OK)
-    {
-      ESP_LOGE(TAG, "\r\nFehler bei ReceivePacket: %d", ret);
-      vTaskDelay(1000 / portTICK_PERIOD_MS);
-    }
-    vTaskDelay(100 / portTICK_PERIOD_MS);
-  }
-  */
   vTaskDelete(NULL);
+}
+
+// Taktzeit für v1.0 Protokoll: 1 / 342Hz = ca. 2924 Mikrosekunden pro Gesamtbit
+// Ein halbes Bit (Manchester-Flanke) dauert exakt 1462 Mikrosekunden.
+#define DURATION_HALF_BIT_US 1462
+
+// Funktion zur Initialisierung des präzisen RMT Hardware-Treiber auf GPIO 3
+void HeltecStick::init_rmt_direct_drive()
+{
+  rmt_tx_channel_config_t tx_chan_config = {};
+  tx_chan_config.gpio_num = CC_PIN_GDO0;
+  tx_chan_config.clk_src = RMT_CLK_SRC_DEFAULT;
+  tx_chan_config.resolution_hz = 1000000; // 1 MHz Auflösung = 1 Tock pro Mikrosekunde
+  tx_chan_config.flags.with_dma = false;
+  tx_chan_config.mem_block_symbols = 64; // Reicht für das kurze v1.0 Paket
+  tx_chan_config.trans_queue_depth = 4;
+
+  ESP_ERROR_CHECK(rmt_new_tx_channel(&tx_chan_config, &tx_channel));
+
+  // Wir installieren den offiziellen Copy-Encoder für Roh-Wellenformen
+  rmt_copy_encoder_config_t copy_encoder_cfg = {};
+  ESP_ERROR_CHECK(rmt_new_copy_encoder(&copy_encoder_cfg, &copy_encoder));
+
+  ESP_ERROR_CHECK(rmt_enable(tx_channel));
+}
+
+// Sendet die rohe Wellenform über den RMT-Treiber direkt an den CC1101-Modulator
+void HeltecStick::send_oregon_v1_packet(uint8_t channel, uint8_t rollingCode, float temperature)
+{
+  // Array groß genug dimensionieren und komplett nullen
+  rmt_symbol_word_t raw_symbols[128];
+  memset(raw_symbols, 0, sizeof(raw_symbols));
+  size_t sym_idx = 0;
+
+  // --- SCHRITT 1: PRÄAMBEL GENERIEREN ---
+  // C++-konforme Zuweisung über die Instanzvariablen
+  for (int i = 0; i < 16; i++)
+  {
+    raw_symbols[sym_idx].level0 = 1;
+    raw_symbols[sym_idx].duration0 = DURATION_HALF_BIT_US;
+    raw_symbols[sym_idx].level1 = 0;
+    raw_symbols[sym_idx].duration1 = DURATION_HALF_BIT_US;
+    sym_idx++;
+  }
+
+  // --- SCHRITT 2: DATEN-PROTOKOLL AUFBAUEN (4 Bytes) ---
+  uint8_t packet[4] = {0};
+  packet[0] = rollingCode;
+
+  uint8_t chDigit = (channel == 2) ? 4 : ((channel == 3) ? 8 : 0);
+  packet[1] = chDigit << 4;
+
+  bool isNegative = (temperature < 0);
+  if (isNegative)
+    temperature = -temperature;
+  int tempInt = (int)(temperature * 10.0f + 0.5f);
+  uint8_t d0 = tempInt % 10;
+  uint8_t d1 = (tempInt / 10) % 10;
+  uint8_t d2 = (tempInt / 100) % 10;
+  uint8_t sign = isNegative ? 0x8 : 0x0;
+
+  packet[1] |= (d0 & 0x0F);
+  packet[2] = d1 | (d2 << 4);
+  packet[3] = (sign << 4) | ((rollingCode + packet[1] + packet[2]) & 0x0F);
+
+  // --- SCHRITT 3: MANCHESTER-CODIERUNG IN HARDWARE-SYMBOLE ---
+  for (int b = 0; b < 4; b++)
+  {
+    uint8_t dataByte = packet[b];
+    // v1.0 verlangt MSB-first (Bit 7 bis Bit 0)
+    for (int bit = 7; bit >= 0; bit--)
+    {
+      uint8_t currentBit = (dataByte >> bit) & 0x01;
+
+      if (currentBit == 1)
+      {
+        // Logisch 1 -> High-to-Low Wechsel
+        raw_symbols[sym_idx].level0 = 1;
+        raw_symbols[sym_idx].duration0 = DURATION_HALF_BIT_US;
+        raw_symbols[sym_idx].level1 = 0;
+        raw_symbols[sym_idx].duration1 = DURATION_HALF_BIT_US;
+      }
+      else
+      {
+        // Logisch 0 -> Low-to-High Wechsel
+        raw_symbols[sym_idx].level0 = 0;
+        raw_symbols[sym_idx].duration0 = DURATION_HALF_BIT_US;
+        raw_symbols[sym_idx].level1 = 1;
+        raw_symbols[sym_idx].duration1 = DURATION_HALF_BIT_US;
+      }
+      sym_idx++;
+    }
+  }
+
+  // Postamble: Letztes Bit mit einer Nullflanke abschließen
+  raw_symbols[sym_idx].level0 = 0;
+  raw_symbols[sym_idx].duration0 = DURATION_HALF_BIT_US;
+  raw_symbols[sym_idx].level1 = 0;
+  raw_symbols[sym_idx].duration1 = DURATION_HALF_BIT_US;
+  sym_idx++;
+
+  // --- SCHRITT 4: DIREKTES ABSETZEN ÜBER DIE RMT-HARDWARE ---
+  rmt_transmit_config_t tx_config = {};
+  tx_config.loop_count = 0;
+  tx_config.flags.eot_level = 0; // Sorgt für definierten Pegel nach Ende
+
+  ESP_ERROR_CHECK(rmt_transmit(tx_channel, copy_encoder, raw_symbols, sym_idx * sizeof(rmt_symbol_word_t), &tx_config));
 }
 
 void HeltecStick::WifiTask(void *arg)
