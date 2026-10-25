@@ -32,6 +32,7 @@
 #include "cbor.h"
 #include "driver/rmt_tx.h"
 #include "driver/spi_master.h"
+#include "THN128.h"
 // RadioLib einbinden
 #include <RadioLib.h>
 
@@ -174,7 +175,7 @@ void cc1101_send_strobe(uint8_t strobe)
 }
 
 // Initialisiert das CC1101-Modul direkt über den ESP-IDF SPI-Treiber
-void init_cc1101_hardware_direct()
+void init_cc1101_hardware_direct(float frequency_mhz)
 {
   // 1. SPI-Bus auf den Heltec-Universal-GPIOs starten
   spi_bus_config_t buscfg = {};
@@ -208,11 +209,29 @@ void init_cc1101_hardware_direct()
   // Automatische Kalibrierung beim Wechsel zu TX aktivieren!
   cc1101_write_reg(0x18, 0x18); // MCSM0: Auto-Kalibrierung einschalten
 
+  // 1. Quarzfrequenz definieren (Standard: 26 MHz)
+  const uint32_t FXOSC = 26000000;
+
+  // 2. Wunschfrequenz in Hertz berechnen
+  uint32_t target_hz = (uint32_t)(frequency_mhz * 1000000.0f);
+
+  // 3. Den 24-Bit Frequenz-Kontrollwert berechnen (Formel laut Datenblatt)
+  // Verwende 64-Bit Integer (uint64_t), um einen internen Variablenüberlauf zu verhindern!
+  uint32_t freq_reg_val = (uint32_t)(((uint64_t)target_hz << 16) / FXOSC);
+
+  // 4. Den 24-Bit Wert in 3 einzelne Bytes zerlegen
+  uint8_t freq2 = (freq_reg_val >> 16) & 0xFF; // Höchstwertiges Byte
+  uint8_t freq1 = (freq_reg_val >> 8) & 0xFF;  // Mittleres Byte
+  uint8_t freq0 = freq_reg_val & 0xFF;         // Niederwertiges Byte
+  cc1101_write_reg(0x0D, freq2); // FREQ2
+  cc1101_write_reg(0x0E, freq1); // FREQ1
+  cc1101_write_reg(0x0F, freq0); // FREQ0
+  /*
   // Frequenzeinstellung 433.92 MHz
   cc1101_write_reg(0x0D, 0x10); // FREQ2
   cc1101_write_reg(0x0E, 0xB1); // FREQ1
   cc1101_write_reg(0x0F, 0x3B); // FREQ0
-
+*/
   // OOK Modulation und Endstufe scharf schalten
   cc1101_write_reg(0x12, 0x30); // MDMCFG2: ASK/OOK Modulation
   cc1101_write_reg(0x22, 0x11); // FREND0: OOK-Leistungsstufe ein
@@ -241,67 +260,20 @@ void init_rmt_hardware_driver()
   ESP_ERROR_CHECK(rmt_enable(tx_channel));
 }
 
-#define T_PREAMBLE_SPACE_US 3000
-#define T_SYNC_US 5500
-#define T_BIT_US 1450
-
-// Berechnet die originale Oregon v1 Nibble-CRC laut Erriez-Spezifikation
-uint8_t calculate_thn128_crc(uint8_t b0, uint8_t b1, uint8_t b2)
-{
-  // Das Protokoll summiert alle 6 Daten-Nibbles einzeln auf
-  uint8_t nibble_sum = 0;
-
-  nibble_sum += (b0 & 0x0F);        // Nibble 0: Rolling Address
-  nibble_sum += ((b0 >> 4) & 0x0F); // Nibble 1: Channel & Leerbits
-  nibble_sum += (b1 & 0x0F);        // Nibble 2: TH3 (1/10 Grad)
-  nibble_sum += ((b1 >> 4) & 0x0F); // Nibble 3: TH2 (1 Grad)
-  nibble_sum += (b2 & 0x0F);        // Nibble 4: TH1 (10 Grad)
-  nibble_sum += ((b2 >> 4) & 0x0F); // Nibble 5: Sign-Bit & Flags
-
-  // Die finale CRC ist die invertierte Summe plus 1 (Zweierkomplement-Logik)
-  return (uint8_t)(nibble_sum);
-}
-
 void send_fielmann_v1_packet(uint8_t channel, uint8_t rollingCode, float temperature)
 {
   rmt_symbol_word_t raw_symbols[200]; // Als festes Array deklariert für ausreichend Speicher
   memset(raw_symbols, 0, sizeof(raw_symbols));
   size_t sym_idx = 0;
 
-  // --- SCHRITT 1: DATA STRUKTUR IM ARDUINO-FORMAT BAUEN ---
-  uint32_t rawData = 0;
+  THN128 thn;
+  OregonTHN128Data_t data = {};
+  data.channel = channel;
+  data.rollingAddress = rollingCode;
+  data.temperature = (int16_t)(temperature * 10 + 0.5);
+  data.lowBattery = 0;
 
-  // Byte 0: Bit 0..3 Rolling Address, Bit 6..7 Channel (0=Ch1, 1=Ch2, 2=Ch3)
-  uint8_t byte0 = (rollingCode & 0x0F);
-  if (channel == 2)
-    byte0 |= (1 << 6);
-  if (channel == 3)
-    byte0 |= (2 << 6);
-  rawData |= ((uint32_t)byte0);
-
-  // Temperatur in BCD wandeln
-  bool isNegative = (temperature < 0);
-  if (isNegative)
-    temperature = -temperature;
-  int tempInt = (int)(temperature * 10.0f + 0.5f);
-
-  uint8_t th3 = tempInt % 10;         // 1/10 Grad
-  uint8_t th2 = (tempInt / 10) % 10;  // 1 Grad
-  uint8_t th1 = (tempInt / 100) % 10; // 10 Grad
-
-  // Byte 1: Bit 0..3 = TH3, Bit 4..7 = TH2
-  uint8_t byte1 = (th3 & 0x0F) | ((th2 & 0x0F) << 4);
-  rawData |= ((uint32_t)byte1 << 8);
-
-  // Byte 2: Bit 0..3 = TH1, Bit 5 = Sign (1=negativ)
-  uint8_t byte2 = (th1 & 0x0F);
-  if (isNegative)
-    byte2 |= (1 << 5);
-  rawData |= ((uint32_t)byte2 << 16);
-
-  // Byte 3: CRC (Einfache Summe aus Byte 0 + Byte 1 + Byte 2)
-  uint8_t crc = calculate_thn128_crc(byte0, byte1, byte2);
-  rawData |= ((uint32_t)crc << 24);
+  uint32_t rawData = thn.OregonTHN128_DataToRaw(data);
 
   // --- SCHRITT 2: ZWEI DURCHGÄNGE CODIEREN (Doppel-Senden) ---
   for (int tx_run = 0; tx_run < 2; tx_run++)
@@ -335,7 +307,7 @@ void send_fielmann_v1_packet(uint8_t channel, uint8_t rollingCode, float tempera
     {
       if (rawData & (1UL << i))
       {
-        // KORREKTUR: Bit 1 laut Erriez: HIGH -> LOW (Inverted Manchester)
+        // Bit==1: HIGH -> LOW (Inverted Manchester)
         raw_symbols[sym_idx].level0 = 1;
         raw_symbols[sym_idx].duration0 = T_BIT_US;
         raw_symbols[sym_idx].level1 = 0;
@@ -343,7 +315,7 @@ void send_fielmann_v1_packet(uint8_t channel, uint8_t rollingCode, float tempera
       }
       else
       {
-        // KORREKTUR: Bit 0 laut Erriez: LOW -> HIGH (Inverted Manchester)
+        // Bit==0: LOW -> HIGH (Inverted Manchester)
         raw_symbols[sym_idx].level0 = 0;
         raw_symbols[sym_idx].duration0 = T_BIT_US;
         raw_symbols[sym_idx].level1 = 1;
@@ -373,13 +345,6 @@ void send_fielmann_v1_packet(uint8_t channel, uint8_t rollingCode, float tempera
     }
   }
 
-  // Postamble zum finalen Erden des Pins
-  raw_symbols[sym_idx].level0 = 0;
-  raw_symbols[sym_idx].duration0 = T_BIT_US;
-  raw_symbols[sym_idx].level1 = 0;
-  raw_symbols[sym_idx].duration1 = T_BIT_US;
-  sym_idx++;
-
   // --- ÜBERTRAGUNG AN DEN CC1101 ABFEUERN ---
   rmt_transmit_config_t tx_config = {};
   tx_config.loop_count = 0;
@@ -392,7 +357,7 @@ void HeltecStick::CCTask(void *arg)
   HeltecStick *Instance = (HeltecStick *)arg;
   ESP_LOGI(TAG, "Starte CC Task...");
 
-  init_cc1101_hardware_direct();
+  init_cc1101_hardware_direct(433.92);
 
   // 2. Initialisiere die RMT Hardware-Einheit
   init_rmt_hardware_driver();
@@ -402,11 +367,11 @@ void HeltecStick::CCTask(void *arg)
   while (1)
   {
     // Kanal 1, ID 0x66, Simulation von 20.5 °C
-    send_fielmann_v1_packet(1, 0x66, 20.5f);
+    send_fielmann_v1_packet(1, 0x10, 20.5f);
     ESP_LOGI(TAG, "Paket abgesetzt. SDR sollte Signal zeigen.");
 
     // Exaktes v1.0 Sendeintervall (Kanal 1 = 39,25 Sek.)
-    vTaskDelay(pdMS_TO_TICKS(39250));
+    vTaskDelay(pdMS_TO_TICKS(30000));
   }
 
   vTaskDelete(NULL);
