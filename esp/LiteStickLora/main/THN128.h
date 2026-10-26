@@ -31,8 +31,29 @@ struct OregonTHN128Data_t
   uint32_t rawData;       /*!< Raw data */
   uint8_t rollingAddress; /*!< Rolling address */
   uint8_t channel;        /*!< Channel */
-  int16_t temperature;    /*!< Temperature in degrees*10 */
+  float temperature;      /*!< Temperature in degrees */
   bool lowBattery;        /*!< Low battery indication */
+};
+
+struct OregonV1Bits 
+{
+	// 32-Bit Wortbreite der gesamten Übertragung
+	uint8_t crc;	// 8 Bit crc
+	uint8_t NotUsed : 1;
+	uint8_t NegativeFlag : 1;	// Temperatur ist negativ
+	uint8_t Unknown : 1;
+	uint8_t BatteryLow : 1;		// Batterie leer
+	uint8_t Temp_10_Deg : 4;	// 10 Grad
+	uint8_t Temp_1_Deg : 4;		// 1 Grad
+	uint8_t Temp_01_Deg : 4;	// 1/10 Grad
+	uint8_t Channel : 4;			// Kanal: 1=0, 2=4, 3=8
+	uint8_t RollingCode : 4;	// Zufallscode zur Senderfestlegung
+};
+
+union OregonV1Data
+{
+	struct OregonV1Bits Bitfield;
+	uint32_t RawData;
 };
 
 class THN128
@@ -40,7 +61,6 @@ class THN128
 protected:
   uint8_t calcCrc(uint32_t rawData);
 public:
-  bool OregonTHN128_CheckCRC(uint32_t rawData);
   void OregonTHN128_TempToString(char *temperatureStr, uint8_t temperatureStrLen, int16_t temperature);
   uint32_t OregonTHN128_DataToRaw(OregonTHN128Data_t &data);
   bool OregonTHN128_RawToData(uint32_t rawData, OregonTHN128Data_t &data);

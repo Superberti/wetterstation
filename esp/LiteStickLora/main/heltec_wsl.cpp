@@ -270,7 +270,7 @@ void send_fielmann_v1_packet(uint8_t channel, uint8_t rollingCode, float tempera
   OregonTHN128Data_t data = {};
   data.channel = channel;
   data.rollingAddress = rollingCode;
-  data.temperature = (int16_t)(temperature * 10 + 0.5);
+  data.temperature = temperature;
   data.lowBattery = 0;
 
   uint32_t rawData = thn.OregonTHN128_DataToRaw(data);
