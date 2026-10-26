@@ -32,6 +32,7 @@
 #include "cbor.h"
 #include "driver/rmt_tx.h"
 #include "driver/spi_master.h"
+#include "tools/json.hpp"
 #include "THN128.h"
 // RadioLib einbinden
 #include <RadioLib.h>
@@ -223,9 +224,9 @@ void init_cc1101_hardware_direct(float frequency_mhz)
   uint8_t freq2 = (freq_reg_val >> 16) & 0xFF; // Höchstwertiges Byte
   uint8_t freq1 = (freq_reg_val >> 8) & 0xFF;  // Mittleres Byte
   uint8_t freq0 = freq_reg_val & 0xFF;         // Niederwertiges Byte
-  cc1101_write_reg(0x0D, freq2); // FREQ2
-  cc1101_write_reg(0x0E, freq1); // FREQ1
-  cc1101_write_reg(0x0F, freq0); // FREQ0
+  cc1101_write_reg(0x0D, freq2);               // FREQ2
+  cc1101_write_reg(0x0E, freq1);               // FREQ1
+  cc1101_write_reg(0x0F, freq0);               // FREQ0
   /*
   // Frequenzeinstellung 433.92 MHz
   cc1101_write_reg(0x0D, 0x10); // FREQ2
@@ -368,7 +369,7 @@ void HeltecStick::CCTask(void *arg)
   {
     // Kanal 1, ID 0x66, Simulation von 20.5 °C
     send_fielmann_v1_packet(1, 0x10, 20.5f);
-    ESP_LOGI(TAG, "Paket abgesetzt. SDR sollte Signal zeigen.");
+    ESP_LOGI(TAG, "Sende Temperatur an Fielmann-Wetterstation.");
 
     // Exaktes v1.0 Sendeintervall (Kanal 1 = 39,25 Sek.)
     vTaskDelay(pdMS_TO_TICKS(30000));
@@ -431,19 +432,74 @@ void HeltecStick::LoRaTask(void *arg)
       // Reale Anzahl der empfangenen Bytes auslesen
       size_t paket_laenge = radio.getPacketLength();
 
-      // Nullterminator am Ende der echten Daten setzen, damit printf weiß, wo der Text aufhört
-      if (paket_laenge < 256)
-      {
-        rx_buffer[paket_laenge] = '\0';
-      }
-
       // Erfolg: Paket ist da und CRC ist korrekt!
       ESP_LOGI(TAG, "\n--- PAKET EMPFANGEN ---\n");
-      ESP_LOGI(TAG, "Daten: %s", (char *)rx_buffer);
+      // ESP_LOGI(TAG, "Daten: %s", (char *)rx_buffer);
       ESP_LOGI(TAG, "Länge: %d Bytes", paket_laenge);
       ESP_LOGI(TAG, "RSSI:  %.2f dBm", radio.getRSSI());
       ESP_LOGI(TAG, "SNR:   %.2f dB", radio.getSNR());
       ESP_LOGI(TAG, "-----------------------");
+
+      LoraPacketHeader *ph = (LoraPacketHeader *)rx_buffer;
+      uint8_t HeaderSize = sizeof(LoraPacketHeader); // 12
+      if (ph->Magic != PACKET_MAGIC)
+      {
+        ESP_LOGE(TAG, "Flascher Paket-Header!");
+        continue;
+      }
+
+      // 1. CBOR wieder in ein JSON-Objekt umwandeln
+      nlohmann::json j = nlohmann::json::from_cbor(rx_buffer + HeaderSize, rx_buffer + paket_laenge, true, false);
+
+      // Wenn das Parsen fehlschlägt, ist das zurückgegebenen Objekt "is_discarded"
+      if (j.is_discarded())
+      {
+        ESP_LOGE(TAG, "Parsen des CBOR-Paketes fehlgeschlagen!");
+        continue;
+      }
+      // 2. Sicherer Datenzugriff auf die oberen Ebenen
+      if (!j.contains(POS_TAG) || !j.contains(DATA_TAG))
+      {
+        ESP_LOGE(TAG, "Keine POST_TAG oder DATA_TAG gefunden!");
+        continue;
+      }
+      std::string pos = j[POS_TAG].get<std::string>();
+      nlohmann::json data = j[DATA_TAG]; // Sub-Objekt für einfachere Abfragen
+
+      // 3. Werte auslesen mit j.value() -> Liefert Standardwert, falls Key fehlt
+      // Syntax: data.value(KEY, Standardwert)
+      int packet_counter = data.value(PC_TAG, 0);
+      ESP_LOGI(TAG, "Paketzähler: %d", packet_counter);
+
+      // Für verschachtelte Objekte nutzen wir flache Checks, um Abstürze zu vermeiden
+      float temperature = 0.0f;
+      if (data.contains(TEMP_TAG) && data[TEMP_TAG].contains(VAL_TAG))
+      {
+        temperature = data[TEMP_TAG][VAL_TAG].get<float>();
+        ESP_LOGI(TAG, "Temperatur: %.2f Grad", temperature);
+      }
+
+      float humidity = 0.0f;
+      if (data.contains(HUM_TAG) && data[HUM_TAG].contains(VAL_TAG))
+      {
+        humidity = data[HUM_TAG][VAL_TAG].get<float>();
+        ESP_LOGI(TAG, "Luftfeuchtigkeit: %.1f %%", humidity);
+      }
+
+      // Optionaler Luftdruck (BMP390)
+      float pressure = 0.0f;
+      if (data.contains(PRESS_TAG) && data[PRESS_TAG].contains(VAL_TAG))
+      {
+        pressure = data[PRESS_TAG][VAL_TAG].get<float>();
+        ESP_LOGI(TAG, "Luftdruck: %.1f mbar", pressure);
+      }
+
+      float voltage = 0.0f;
+      if (data.contains(VOL_TAG) && data[VOL_TAG].contains(VAL_TAG))
+      {
+        voltage = data[VOL_TAG][VAL_TAG].get<float>();
+        ESP_LOGI(TAG, "Batteriespannung: %.2f V", voltage);
+      }
     }
     else if (rx_state == RADIOLIB_ERR_CRC_MISMATCH)
     { // Code -3
