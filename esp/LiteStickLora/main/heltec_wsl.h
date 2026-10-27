@@ -1,6 +1,10 @@
 #ifndef HELTEC_WSL_H
 #define HELTEC_WSL_H
 
+#include "esp_http_client.h"
+#include <string>
+#include <vector>
+#include <atomic>
 /* This salt,verifier has been generated for username = "wifiprov" and password = "abcd1234"
  * IMPORTANT NOTE: For production cases, this must be unique to every device
  * and should come from device manufacturing partition.*/
@@ -43,9 +47,19 @@ static const char sec2_verifier[] = {
 // Forwards
 class SX1262_LoRa;
 
+struct JsonData
+{
+  std::string Location;
+  std::string Type;
+  float Value;
+};
+
 class HeltecStick
 {
 protected:
+  std::atomic<bool> mWifiReady = false;
+  std::string InfluxUsername;
+  std::string InfluxPassword;
   SX1262_LoRa *LoRa = NULL;
   TaskHandle_t LoRaTaskHandle;
   TaskHandle_t WifiTaskHandle;
@@ -68,10 +82,17 @@ protected:
   void ParseCborPayload(uint8_t *buffer, size_t len);
   void init_rmt_direct_drive();
   void send_oregon_v1_packet(uint8_t channel, uint8_t rollingCode, float temperature);
+  static esp_err_t _http_event_handler(esp_http_client_event_t *evt);
+  esp_err_t send_json_to_influx(const std::string &json_payload, const std::string &aUsername, const std::string aPassword);
+  std::string build_influx_json(const std::vector<JsonData> &aJsonData);
+  std::string to_base64(const std::string &input);
+  std::string generate_auth_header(const std::string &aUsername, const std::string &aPassword);
+  std::string read_nvs_string(nvs_handle_t handle, const char *key);
+  void setup_credentials_via_monitor();
+  void save_to_nvs(const char *key, const std::string &value);
+
 public:
   esp_err_t Run();
 };
-
-
 
 #endif

@@ -128,5 +128,45 @@ struct LoraPacketHeader
 #define LORA_ADDR_SYMPATEC 4    // Sympatec in Clausthal
 #define LORA_ADDR_SYMPATEC_2 5  // Sympatec in Clausthal, Sensor 2
 
+// Defines für den JSON-Aufbau 
+
+// Außentemperatur
+#define JSON_TEMPERATURE "temperatur"
+// Innen (Schuppen)
+#define JSON_TEMPERATURE2 "temperatur2"
+// Luftfeuchtigkeit außen
+#define JSON_HUMIDITY "luftfeuchtigkeit"
+// Luftfeuchtigkeit innen
+#define JSON_HUMIDITY2 "luftfeuchtigkeit2"
+// Luftdruck
+#define JSON_PRESSURE "luftdruck"
+#define JSON_PRESSURE2 "luftdruck2"
+// Batteriespannung
+#define JSON_VBATT "vbatt"
+
+// Beleuchtungsstärke in Lux
+#define JSON_ILLU_TAG "beleuchtungsstaerke"
+// Lüfterumdrehungen in UpM
+#define JSON_COOL_TAG "luefter"
+// Watt (Solar)
+#define JSON_POWER_TAG "solar_power"
+// Blitze pro Stunde
+#define JSON_FLASH_TAG "blitze_pro_stunde"
+// Windgeschwindigkeit in m/s
+#define JSON_WINDSPEED_TAG "windgeschwindigkeit"
+// Windrichtung in Grad
+#define JSON_WINDDIR_TAG "windrichtung"
+// Tagesregenmenge in Liter pro Quadratmeter und Tag
+#define JSON_RAIN_TAG "regen_qm_tag"
+// Feuchtesensor spricht an (0/1)
+#define JSON_HUM_DET_TAG "es_ist_feucht"
+// Sensorfehlerzähler
+#define JSON_SENS_ERR_TAG "sensorfehler"
+    
+// Balkonkraftwerk
+#define JSON_LOGGER_STATUS "logger_status"
+#define JSON_ENERGY "day_energy"
+#define JSON_TOTAL_ERNERGY "total_energy"
+#define JSON_POWER "power"
 
 #endif

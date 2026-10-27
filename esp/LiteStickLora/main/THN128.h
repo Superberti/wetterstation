@@ -35,6 +35,15 @@ struct OregonTHN128Data_t
   bool lowBattery;        /*!< Low battery indication */
 };
 
+struct OregonTHN128Data2_t
+{
+  uint32_t rawData;       /*!< Raw data */
+  uint8_t rollingAddress; /*!< Rolling address */
+  uint8_t channel;        /*!< Channel */
+  int16_t temperature;      /*!< Temperature in degrees */
+  bool lowBattery;        /*!< Low battery indication */
+};
+
 struct OregonV1Bits 
 {
 	// 32-Bit Wortbreite der gesamten Übertragung
@@ -60,9 +69,11 @@ class THN128
 {
 protected:
   uint8_t calcCrc(uint32_t rawData);
+  uint8_t calcCrc2(uint32_t rawData);
 public:
   void OregonTHN128_TempToString(char *temperatureStr, uint8_t temperatureStrLen, int16_t temperature);
   uint32_t OregonTHN128_DataToRaw(OregonTHN128Data_t &data);
+  uint32_t OregonTHN128_DataToRaw2(OregonTHN128Data2_t *data);
   bool OregonTHN128_RawToData(uint32_t rawData, OregonTHN128Data_t &data);
 };
 

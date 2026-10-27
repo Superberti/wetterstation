@@ -36,6 +36,15 @@
 #include "THN128.h"
 // RadioLib einbinden
 #include <RadioLib.h>
+#include "mbedtls/base64.h"
+#include <iostream>
+#include "driver/uart.h"
+#include "driver/uart_vfs.h"
+
+using json = nlohmann::json;
+
+// Für die Anbindung an die InfluxDB im Netz
+#define INFLUX_URL "https://neelix.ddnss.de:8086/write?db=wetterstation"
 
 /* Signal Wi-Fi events on this event-group */
 const int WIFI_CONNECTED_EVENT = BIT0;
@@ -87,7 +96,75 @@ extern "C"
 
 esp_err_t HeltecStick::Run()
 {
-  BaseType_t task_ret = xTaskCreate(LoRaTask, "LoRaTask", 4096, this, 10, &LoRaTaskHandle);
+  nvs_handle_t my_handle;
+  bool success = false;
+  int retrys = 0;
+  bool enter_credits = true;
+  bool ReEnterCredits = false;
+  while (!success && retrys < 2)
+  {
+    // Namespace "storage" im Lese-Modus öffnen (Max. 15 Zeichen!)
+    esp_err_t err = nvs_open("storage", NVS_READONLY, &my_handle);
+    if (err != ESP_OK)
+    {
+      ESP_LOGE(TAG, "Fehler beim Öffnen des NVS Namespace: %s", esp_err_to_name(err));
+    }
+    else if (!ReEnterCredits)
+    {
+      // Strings aus dem NVS auslesen (Keys dürfen max. 15 Zeichen lang sein!)
+      InfluxUsername = read_nvs_string(my_handle, "influx_user");
+      InfluxPassword = read_nvs_string(my_handle, "influx_pass");
+
+      // NVS Handle wieder schließen
+      nvs_close(my_handle);
+
+      if (InfluxUsername.empty() || InfluxPassword.empty())
+      {
+        ESP_LOGE(TAG, "Username oder Passwort im NVS sind leer!");
+      }
+      else
+      {
+        success = true;
+        enter_credits = false;
+        ESP_LOGI(TAG, "Zugangsdaten erfolgreich aus dem NVS geladen.");
+        ESP_LOGI(TAG, "InfluxDB-Benutzername: %s", InfluxUsername.c_str());
+        ESP_LOGI(TAG, "InfluxDB-Passwort: %s", InfluxPassword.c_str());
+      }
+    }
+
+    if (enter_credits || ReEnterCredits)
+    {
+      retrys++;
+      ReEnterCredits = false;
+      // Standard-UART (Kanal 0) so konfigurieren, dass er bei der Eingabe blockiert/wartet
+      // Dies korrigiert das Verhalten von std::cin und scanf
+      // 1. Installieren Sie den UART-Treiber für UART0 (Standard-Konsole) im blockierenden Modus
+      uart_config_t uart_config = {};
+      uart_config.baud_rate = 115200;
+      uart_config.data_bits = UART_DATA_8_BITS;
+      uart_config.parity = UART_PARITY_DISABLE;
+      uart_config.stop_bits = UART_STOP_BITS_1;
+      uart_config.flow_ctrl = UART_HW_FLOWCTRL_DISABLE;
+      uart_config.source_clk = UART_SCLK_DEFAULT;
+
+      // UART-Treiber einrichten (Puffergrößen 1024 Bytes für RX/TX)
+      uart_driver_install(UART_NUM_0, 1024, 0, 0, NULL, 0);
+      uart_param_config(UART_NUM_0, &uart_config);
+
+      // 2. Den UART-VFS-Treiber aktivieren, damit std::cin / scanf blockierend auf Eingaben warten
+      uart_vfs_dev_use_driver(UART_NUM_0);
+
+      // 1. Zeilenenden für den Monitor konfigurieren
+      uart_vfs_dev_port_set_rx_line_endings(UART_NUM_0, ESP_LINE_ENDINGS_CRLF);
+      uart_vfs_dev_port_set_tx_line_endings(UART_NUM_0, ESP_LINE_ENDINGS_CRLF);
+
+      // 2. Aktiviert den blockierenden Modus für std::cin / scanf
+      uart_vfs_dev_use_driver(UART_NUM_0);
+      setup_credentials_via_monitor();
+    }
+  }
+
+  BaseType_t task_ret = xTaskCreate(LoRaTask, "LoRaTask", 8192, this, 10, &LoRaTaskHandle);
   if (task_ret != pdPASS)
   {
     ESP_LOGE(TAG, "Failed to create LoRaTask");
@@ -100,14 +177,14 @@ esp_err_t HeltecStick::Run()
     ESP_LOGE(TAG, "Failed to create WifiTask");
     // return ESP_FAIL;
   }
-
-  task_ret = xTaskCreate(CCTask, "CCTask", 4096, this, 10, &CCTaskHandle);
-  if (task_ret != pdPASS)
-  {
-    ESP_LOGE(TAG, "Failed to create CCTask");
-    // return ESP_FAIL;
-  }
-
+  /*
+    task_ret = xTaskCreate(CCTask, "CCTask", 4096, this, 10, &CCTaskHandle);
+    if (task_ret != pdPASS)
+    {
+      ESP_LOGE(TAG, "Failed to create CCTask");
+      // return ESP_FAIL;
+    }
+  */
   InitGPIO();
   /* Start main application now */
 
@@ -275,6 +352,15 @@ void send_fielmann_v1_packet(uint8_t channel, uint8_t rollingCode, float tempera
   data.lowBattery = 0;
 
   uint32_t rawData = thn.OregonTHN128_DataToRaw(data);
+  ESP_LOGI(TAG, "RawData1: 0x%8x", rawData);
+
+  OregonTHN128Data2_t data2 = {};
+  data2.channel = channel;
+  data2.rollingAddress = rollingCode;
+  data2.temperature = temperature * 10;
+  data2.lowBattery = 0;
+  rawData = thn.OregonTHN128_DataToRaw2(&data2);
+  ESP_LOGI(TAG, "RawData2: 0x%8x", rawData);
 
   // --- SCHRITT 2: ZWEI DURCHGÄNGE CODIEREN (Doppel-Senden) ---
   for (int tx_run = 0; tx_run < 2; tx_run++)
@@ -303,8 +389,8 @@ void send_fielmann_v1_packet(uint8_t channel, uint8_t rollingCode, float tempera
     raw_symbols[sym_idx].duration1 = T_SYNC_US;
     sym_idx++;
 
-    // C) 32 Datenbits senden (LSB-First)
-    for (uint8_t i = 0; i < 32; i++)
+    // C) 32 Datenbits senden (MSB-First)
+    for (int8_t i = 0; i < 32; i++)
     {
       if (rawData & (1UL << i))
       {
@@ -367,8 +453,8 @@ void HeltecStick::CCTask(void *arg)
 
   while (1)
   {
-    // Kanal 1, ID 0x66, Simulation von 20.5 °C
-    send_fielmann_v1_packet(1, 0x10, 20.5f);
+    // Kanal 1, ID 0x7, Simulation von 17.8 °C
+    send_fielmann_v1_packet(1, 0x7, 17.8);
     ESP_LOGI(TAG, "Sende Temperatur an Fielmann-Wetterstation.");
 
     // Exaktes v1.0 Sendeintervall (Kanal 1 = 39,25 Sek.)
@@ -380,6 +466,8 @@ void HeltecStick::CCTask(void *arg)
 
 void HeltecStick::LoRaTask(void *arg)
 {
+  esp_err_t ret;
+  HeltecStick *Instance = (HeltecStick *)arg;
   ESP_LOGI(TAG, "Starte LoRa Task...");
   // Globale Instanz des Funkchips anlegen
   // 1. Die richtige HAL für ESP-IDF instanziieren
@@ -421,6 +509,7 @@ void HeltecStick::LoRaTask(void *arg)
 
   // 1. Puffer für die maximal erlaubte LoRa-Paketgröße bereitstellen (max. 256 Bytes)
   uint8_t rx_buffer[256];
+  int LoraCounter = 0;
   while (1)
   {
     // 2. radio.receive() mit dem Buffer aufrufen.
@@ -429,6 +518,10 @@ void HeltecStick::LoRaTask(void *arg)
 
     if (rx_state == RADIOLIB_ERR_NONE)
     {
+      //std::vector<JsonData> iJsonData;
+      std::string line_payload = "";
+    
+      JsonData iCurrentData;
       // Reale Anzahl der empfangenen Bytes auslesen
       size_t paket_laenge = radio.getPacketLength();
 
@@ -444,7 +537,7 @@ void HeltecStick::LoRaTask(void *arg)
       uint8_t HeaderSize = sizeof(LoraPacketHeader); // 12
       if (ph->Magic != PACKET_MAGIC)
       {
-        ESP_LOGE(TAG, "Flascher Paket-Header!");
+        ESP_LOGE(TAG, "Falscher Paket-Header!");
         continue;
       }
 
@@ -464,6 +557,7 @@ void HeltecStick::LoRaTask(void *arg)
         continue;
       }
       std::string pos = j[POS_TAG].get<std::string>();
+      ESP_LOGI(TAG, "Ort: %s", pos.c_str());
       nlohmann::json data = j[DATA_TAG]; // Sub-Objekt für einfachere Abfragen
 
       // 3. Werte auslesen mit j.value() -> Liefert Standardwert, falls Key fehlt
@@ -477,6 +571,21 @@ void HeltecStick::LoRaTask(void *arg)
       {
         temperature = data[TEMP_TAG][VAL_TAG].get<float>();
         ESP_LOGI(TAG, "Temperatur: %.2f Grad", temperature);
+        iCurrentData.Location = pos;
+        iCurrentData.Type = JSON_TEMPERATURE;
+        iCurrentData.Value = temperature;
+        //iJsonData.push_back(iCurrentData);
+        line_payload += iCurrentData.Type+",location=" + iCurrentData.Location + " value=" + std::to_string(iCurrentData.Value)+"\n";
+      }
+      if (data.contains(TEMP_TAG2) && data[TEMP_TAG2].contains(VAL_TAG))
+      {
+        temperature = data[TEMP_TAG2][VAL_TAG].get<float>();
+        ESP_LOGI(TAG, "Temperatur2: %.2f Grad", temperature);
+        iCurrentData.Location = pos;
+        iCurrentData.Type = JSON_TEMPERATURE2;
+        iCurrentData.Value = temperature;
+        //iJsonData.push_back(iCurrentData);
+        line_payload += iCurrentData.Type+",location=" + iCurrentData.Location + " value=" + std::to_string(iCurrentData.Value)+"\n";
       }
 
       float humidity = 0.0f;
@@ -484,6 +593,21 @@ void HeltecStick::LoRaTask(void *arg)
       {
         humidity = data[HUM_TAG][VAL_TAG].get<float>();
         ESP_LOGI(TAG, "Luftfeuchtigkeit: %.1f %%", humidity);
+        iCurrentData.Location = pos;
+        iCurrentData.Type = JSON_HUMIDITY;
+        iCurrentData.Value = humidity;
+        //iJsonData.push_back(iCurrentData);
+        line_payload += iCurrentData.Type+",location=" + iCurrentData.Location + " value=" + std::to_string(iCurrentData.Value)+"\n";
+      }
+      if (data.contains(HUM_TAG2) && data[HUM_TAG2].contains(VAL_TAG))
+      {
+        humidity = data[HUM_TAG2][VAL_TAG].get<float>();
+        ESP_LOGI(TAG, "Luftfeuchtigkeit2: %.1f %%", humidity);
+        iCurrentData.Location = pos;
+        iCurrentData.Type = JSON_HUMIDITY2;
+        iCurrentData.Value = humidity;
+        //iJsonData.push_back(iCurrentData);
+        line_payload += iCurrentData.Type+",location=" + iCurrentData.Location + " value=" + std::to_string(iCurrentData.Value)+"\n";
       }
 
       // Optionaler Luftdruck (BMP390)
@@ -492,6 +616,21 @@ void HeltecStick::LoRaTask(void *arg)
       {
         pressure = data[PRESS_TAG][VAL_TAG].get<float>();
         ESP_LOGI(TAG, "Luftdruck: %.1f mbar", pressure);
+        iCurrentData.Location = pos;
+        iCurrentData.Type = JSON_PRESSURE;
+        iCurrentData.Value = pressure;
+        //iJsonData.push_back(iCurrentData);
+        line_payload += iCurrentData.Type+",location=" + iCurrentData.Location + " value=" + std::to_string(iCurrentData.Value)+"\n";
+      }
+      if (data.contains(PRESS_TAG2) && data[PRESS_TAG2].contains(VAL_TAG))
+      {
+        pressure = data[PRESS_TAG2][VAL_TAG].get<float>();
+        ESP_LOGI(TAG, "Luftdruck2: %.1f mbar", pressure);
+        iCurrentData.Location = pos;
+        iCurrentData.Type = JSON_PRESSURE2;
+        iCurrentData.Value = pressure;
+        //iJsonData.push_back(iCurrentData);
+        line_payload += iCurrentData.Type+",location=" + iCurrentData.Location + " value=" + std::to_string(iCurrentData.Value)+"\n";
       }
 
       float voltage = 0.0f;
@@ -499,6 +638,27 @@ void HeltecStick::LoRaTask(void *arg)
       {
         voltage = data[VOL_TAG][VAL_TAG].get<float>();
         ESP_LOGI(TAG, "Batteriespannung: %.2f V", voltage);
+        iCurrentData.Location = pos;
+        iCurrentData.Type = JSON_VBATT;
+        iCurrentData.Value = voltage;
+        //iJsonData.push_back(iCurrentData);
+        line_payload += iCurrentData.Type+",location=" + iCurrentData.Location + " value=" + std::to_string(iCurrentData.Value)+"\n";
+      }
+      if (Instance->mWifiReady)
+      {
+        //std::string json = Instance->build_influx_json(iJsonData);
+        //ESP_LOGI(TAG, "JSON: %s", json.c_str());
+        LoraCounter++;
+        ESP_LOGI(TAG, "Lora Paket Nummer: %d", LoraCounter);
+        gpio_set_level(WHITE_LED, 1);
+        ret = Instance->send_json_to_influx(line_payload.c_str(), Instance->InfluxUsername, Instance->InfluxPassword);
+        gpio_set_level(WHITE_LED, 0);
+        if (ret != ESP_OK)
+        {
+          ESP_LOGE(TAG, "Senden an InfluxDB fehlgeschlagen!");
+        }
+        else
+          ESP_LOGI(TAG, "Lora-Daten erfolgreich in die InfluxDB geschrieben!");
       }
     }
     else if (rx_state == RADIOLIB_ERR_CRC_MISMATCH)
@@ -802,6 +962,7 @@ void HeltecStick::WifiTask(void *arg)
   /* Wait for Wi-Fi connection */
   xEventGroupWaitBits(wifi_event_group, WIFI_CONNECTED_EVENT, true, true, portMAX_DELAY);
   ESP_LOGI(TAG, "Wifi successfully started!");
+  Instance->mWifiReady = true;
   vTaskDelete(NULL);
 }
 
@@ -1097,4 +1258,234 @@ void HeltecStick::ParseCborPayload(uint8_t *buffer, size_t len)
     printf("Geparst - Sender: %d, Temp: %.2f\n", sender_id, temperature);
     // Hier folgt jetzt die Weitergabe an InfluxDB...
   }
+}
+
+// Event Handler für den HTTP-Client
+esp_err_t HeltecStick::_http_event_handler(esp_http_client_event_t *evt)
+{
+  switch (evt->event_id)
+  {
+  case HTTP_EVENT_ERROR:
+    ESP_LOGD(TAG, "HTTP_EVENT_ERROR");
+    break;
+  case HTTP_EVENT_ON_CONNECTED:
+    ESP_LOGD(TAG, "HTTP_EVENT_ON_CONNECTED");
+    break;
+  case HTTP_EVENT_HEADER_SENT:
+    ESP_LOGD(TAG, "HTTP_EVENT_HEADER_SENT");
+    break;
+  case HTTP_EVENT_ON_HEADER:
+    ESP_LOGD(TAG, "HTTP_EVENT_ON_HEADER, key=%s, value=%s", evt->header_key, evt->header_value);
+    break;
+  case HTTP_EVENT_ON_DATA:
+    ESP_LOGD(TAG, "HTTP_EVENT_ON_DATA, len=%d", evt->data_len);
+    break;
+  case HTTP_EVENT_ON_FINISH:
+    ESP_LOGD(TAG, "HTTP_EVENT_ON_FINISH");
+    break;
+  case HTTP_EVENT_DISCONNECTED:
+    ESP_LOGD(TAG, "HTTP_EVENT_DISCONNECTED");
+    break;
+  default:
+    break;
+  }
+  return ESP_OK;
+}
+
+esp_err_t HeltecStick::send_json_to_influx(const std::string &json_payload, const std::string &aUsername, const std::string aPassword)
+{
+  esp_err_t ret;
+  esp_http_client_config_t config = {};
+  config.url = INFLUX_URL;
+  config.event_handler = _http_event_handler;
+  config.transport_type = HTTP_TRANSPORT_OVER_SSL; // Erzwingt HTTPS
+  config.skip_cert_common_name_check = true;       // SSL aktiv, aber ohne strenge Zertifikatsprüfung
+
+  esp_http_client_handle_t client = esp_http_client_init(&config);
+  if (client == NULL)
+  {
+    ESP_LOGE(TAG, "Fehler in esp_http_client_init");
+    return ESP_FAIL;
+  }
+  // HTTP Methode auf POST setzen
+  ret = esp_http_client_set_method(client, HTTP_METHOD_POST);
+  if (ret != ESP_OK)
+  {
+    ESP_LOGE(TAG, "esp_http_client_set_method failed: ", ret);
+    esp_http_client_cleanup(client);
+    return ret;
+  }
+  // Header definieren
+  ret = esp_http_client_set_header(client, "Content-Type", "application/json");
+  if (ret != ESP_OK)
+  {
+    ESP_LOGE(TAG, "esp_http_client_set_header failed: ", ret);
+    esp_http_client_cleanup(client);
+    return ret;
+  }
+
+  if (!aUsername.empty() && !aPassword.empty())
+  {
+    std::string AuthHeader = generate_auth_header(aUsername, aPassword);
+    ret = esp_http_client_set_header(client, "Authorization", AuthHeader.c_str());
+    if (ret != ESP_OK)
+    {
+      ESP_LOGE(TAG, "esp_http_client_set_header failed: ", ret);
+      esp_http_client_cleanup(client);
+      return ret;
+    }
+  }
+  // Payload setzen
+  ret = esp_http_client_set_post_field(client, json_payload.c_str(), json_payload.size());
+  if (ret != ESP_OK)
+  {
+    ESP_LOGE(TAG, "esp_http_client_set_post_field failed: ", ret);
+    esp_http_client_cleanup(client);
+    return ret;
+  }
+  // Request ausführen
+  ret = esp_http_client_perform(client);
+  if (ret == ESP_OK)
+  {
+    int status_code = esp_http_client_get_status_code(client);
+    // InfluxDB 1.x liefert 204 bei Erfolg zurück
+    if (status_code == 204)
+    {
+      ESP_LOGI(TAG, "Erfolgreich an InfluxDB übertragen (Status 204)");
+    }
+    else
+    {
+      ESP_LOGW(TAG, "HTTP POST erfolgreich, aber unerwarteter Status: %d", status_code);
+    }
+  }
+  else
+  {
+    ESP_LOGE(TAG, "HTTPS-POST fehlgeschlagen: %s", esp_err_to_name(ret));
+  }
+
+  // Ressourcen freigeben
+  esp_http_client_cleanup(client);
+  return ret;
+}
+
+std::string HeltecStick::build_influx_json(const std::vector<JsonData> &aJsonData)
+{
+  // 2. InfluxDB 1.x benötigt ein Array: [{ ... }]
+  json root_array = json::array();
+  for (int i = 0; i < aJsonData.size(); i++)
+  {
+    json data_point = {
+        {"measurement", aJsonData[i].Type},
+        {"tags", {
+                     {"location", aJsonData[i].Location} // Variable 'location'
+                 }},
+        {"fields", {
+                       {"value", aJsonData[i].Value} // Variable 'temperature'
+                   }}};
+
+    root_array.push_back(data_point);
+  }
+  // 3. Als kompakten String ohne Zeilenumbrüche zurückgeben (.dump())
+  return root_array.dump();
+}
+
+std::string HeltecStick::generate_auth_header(const std::string &aUsername, const std::string &aPassword)
+{
+  return to_base64(aUsername + ":" + aPassword);
+}
+
+std::string HeltecStick::to_base64(const std::string &input)
+{
+  size_t output_len = 0;
+
+  // Erster Aufruf mit NULL liefert die benötigte Puffergröße
+  mbedtls_base64_encode(nullptr, 0, &output_len,
+                        reinterpret_cast<const unsigned char *>(input.data()), input.size());
+
+  if (output_len == 0)
+    return "";
+
+  // Dynamischen Puffer bereitstellen
+  std::vector<unsigned char> buf(output_len);
+
+  // Eigentliche Kodierung
+  int ret = mbedtls_base64_encode(buf.data(), buf.size(), &output_len,
+                                  reinterpret_cast<const unsigned char *>(input.data()), input.size());
+
+  if (ret != 0)
+    return "";
+
+  return std::string(buf.begin(), buf.begin() + output_len);
+}
+
+// Funktion zum sicheren Auslesen eines Strings aus dem NVS
+std::string HeltecStick::read_nvs_string(nvs_handle_t handle, const char *key)
+{
+  size_t required_size = 0;
+  // 1. Länge des Strings abfragen
+  esp_err_t err = nvs_get_str(handle, key, nullptr, &required_size);
+
+  if (err == ESP_ERR_NVS_NOT_FOUND)
+  {
+    ESP_LOGW(TAG, "Key '%s' nicht im NVS gefunden!", key);
+    return "";
+  }
+  else if (err != ESP_OK)
+  {
+    ESP_LOGE(TAG, "Fehler beim Lesen der Länge von '%s': %s", key, esp_err_to_name(err));
+    return "";
+  }
+
+  // 2. Buffer bereitstellen und String auslesen
+  std::vector<char> buffer(required_size);
+  err = nvs_get_str(handle, key, buffer.data(), &required_size);
+
+  if (err != ESP_OK)
+  {
+    ESP_LOGE(TAG, "Fehler beim Lesen des Wertes von '%s'", key);
+    return "";
+  }
+
+  return std::string(buffer.data());
+}
+
+// Funktion zum Speichern eines Strings im NVS
+void HeltecStick::save_to_nvs(const char *key, const std::string &value)
+{
+  nvs_handle_t handle;
+  if (nvs_open("storage", NVS_READWRITE, &handle) == ESP_OK)
+  {
+    nvs_set_str(handle, key, value.c_str());
+    nvs_commit(handle);
+    nvs_close(handle);
+  }
+}
+
+// Funktion zum Prüfen und Einlesen vom Monitor, falls noch leer
+void HeltecStick::setup_credentials_via_monitor()
+{
+  nvs_handle_t handle;
+  char user_buf[64] = {0};
+  char pass_buf[64] = {0};
+
+  // NVS öffnen
+  nvs_flash_init();
+  nvs_open("storage", NVS_READWRITE, &handle);
+
+  ESP_LOGW(TAG, "InfluxDB Zugangsdaten");
+  std::cout << "\n==========================================" << std::endl;
+  std::cout << "Bitte InfluxDB Username eingeben und 2xENTER drücken: " << std::flush;
+
+  if (std::cin >> user_buf)
+  {
+    std::cout << std::endl;
+    std::cout << "Bitte InfluxDB Passwort eingeben und 2xENTER drücken: " << std::flush;
+    if (std::cin >> pass_buf)
+    {
+      save_to_nvs("influx_user", std::string(user_buf));
+      save_to_nvs("influx_pass", std::string(pass_buf));
+      ESP_LOGI(TAG, "Zugangsdaten erfolgreich im NVS gespeichert!");
+    }
+  }
+  nvs_close(handle);
 }
