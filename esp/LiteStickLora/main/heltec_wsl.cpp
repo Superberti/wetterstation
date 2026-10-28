@@ -518,9 +518,9 @@ void HeltecStick::LoRaTask(void *arg)
 
     if (rx_state == RADIOLIB_ERR_NONE)
     {
-      //std::vector<JsonData> iJsonData;
+      // std::vector<JsonData> iJsonData;
       std::string line_payload = "";
-    
+
       JsonData iCurrentData;
       // Reale Anzahl der empfangenen Bytes auslesen
       size_t paket_laenge = radio.getPacketLength();
@@ -574,8 +574,8 @@ void HeltecStick::LoRaTask(void *arg)
         iCurrentData.Location = pos;
         iCurrentData.Type = JSON_TEMPERATURE;
         iCurrentData.Value = temperature;
-        //iJsonData.push_back(iCurrentData);
-        line_payload += iCurrentData.Type+",location=" + iCurrentData.Location + " value=" + std::to_string(iCurrentData.Value)+"\n";
+        // iJsonData.push_back(iCurrentData);
+        line_payload += iCurrentData.Type + ",location=" + iCurrentData.Location + " value=" + std::to_string(iCurrentData.Value) + "\n";
       }
       if (data.contains(TEMP_TAG2) && data[TEMP_TAG2].contains(VAL_TAG))
       {
@@ -584,8 +584,8 @@ void HeltecStick::LoRaTask(void *arg)
         iCurrentData.Location = pos;
         iCurrentData.Type = JSON_TEMPERATURE2;
         iCurrentData.Value = temperature;
-        //iJsonData.push_back(iCurrentData);
-        line_payload += iCurrentData.Type+",location=" + iCurrentData.Location + " value=" + std::to_string(iCurrentData.Value)+"\n";
+        // iJsonData.push_back(iCurrentData);
+        line_payload += iCurrentData.Type + ",location=" + iCurrentData.Location + " value=" + std::to_string(iCurrentData.Value) + "\n";
       }
 
       float humidity = 0.0f;
@@ -596,8 +596,8 @@ void HeltecStick::LoRaTask(void *arg)
         iCurrentData.Location = pos;
         iCurrentData.Type = JSON_HUMIDITY;
         iCurrentData.Value = humidity;
-        //iJsonData.push_back(iCurrentData);
-        line_payload += iCurrentData.Type+",location=" + iCurrentData.Location + " value=" + std::to_string(iCurrentData.Value)+"\n";
+        // iJsonData.push_back(iCurrentData);
+        line_payload += iCurrentData.Type + ",location=" + iCurrentData.Location + " value=" + std::to_string(iCurrentData.Value) + "\n";
       }
       if (data.contains(HUM_TAG2) && data[HUM_TAG2].contains(VAL_TAG))
       {
@@ -606,8 +606,8 @@ void HeltecStick::LoRaTask(void *arg)
         iCurrentData.Location = pos;
         iCurrentData.Type = JSON_HUMIDITY2;
         iCurrentData.Value = humidity;
-        //iJsonData.push_back(iCurrentData);
-        line_payload += iCurrentData.Type+",location=" + iCurrentData.Location + " value=" + std::to_string(iCurrentData.Value)+"\n";
+        // iJsonData.push_back(iCurrentData);
+        line_payload += iCurrentData.Type + ",location=" + iCurrentData.Location + " value=" + std::to_string(iCurrentData.Value) + "\n";
       }
 
       // Optionaler Luftdruck (BMP390)
@@ -619,8 +619,8 @@ void HeltecStick::LoRaTask(void *arg)
         iCurrentData.Location = pos;
         iCurrentData.Type = JSON_PRESSURE;
         iCurrentData.Value = pressure;
-        //iJsonData.push_back(iCurrentData);
-        line_payload += iCurrentData.Type+",location=" + iCurrentData.Location + " value=" + std::to_string(iCurrentData.Value)+"\n";
+        // iJsonData.push_back(iCurrentData);
+        line_payload += iCurrentData.Type + ",location=" + iCurrentData.Location + " value=" + std::to_string(iCurrentData.Value) + "\n";
       }
       if (data.contains(PRESS_TAG2) && data[PRESS_TAG2].contains(VAL_TAG))
       {
@@ -629,8 +629,8 @@ void HeltecStick::LoRaTask(void *arg)
         iCurrentData.Location = pos;
         iCurrentData.Type = JSON_PRESSURE2;
         iCurrentData.Value = pressure;
-        //iJsonData.push_back(iCurrentData);
-        line_payload += iCurrentData.Type+",location=" + iCurrentData.Location + " value=" + std::to_string(iCurrentData.Value)+"\n";
+        // iJsonData.push_back(iCurrentData);
+        line_payload += iCurrentData.Type + ",location=" + iCurrentData.Location + " value=" + std::to_string(iCurrentData.Value) + "\n";
       }
 
       float voltage = 0.0f;
@@ -641,13 +641,13 @@ void HeltecStick::LoRaTask(void *arg)
         iCurrentData.Location = pos;
         iCurrentData.Type = JSON_VBATT;
         iCurrentData.Value = voltage;
-        //iJsonData.push_back(iCurrentData);
-        line_payload += iCurrentData.Type+",location=" + iCurrentData.Location + " value=" + std::to_string(iCurrentData.Value)+"\n";
+        // iJsonData.push_back(iCurrentData);
+        line_payload += iCurrentData.Type + ",location=" + iCurrentData.Location + " value=" + std::to_string(iCurrentData.Value) + "\n";
       }
       if (Instance->mWifiReady)
       {
-        //std::string json = Instance->build_influx_json(iJsonData);
-        //ESP_LOGI(TAG, "JSON: %s", json.c_str());
+        // std::string json = Instance->build_influx_json(iJsonData);
+        // ESP_LOGI(TAG, "JSON: %s", json.c_str());
         LoraCounter++;
         ESP_LOGI(TAG, "Lora Paket Nummer: %d", LoraCounter);
         gpio_set_level(WHITE_LED, 1);
@@ -807,6 +807,10 @@ void HeltecStick::WifiTask(void *arg)
   {
     ESP_LOGE("MAIN", "Fehler beim Lesen der MAC-Adresse!");
     // return ESP_ERR_INVALID_ARG;
+  }
+  else
+  {
+    ESP_LOGI(TAG, "WLAN-MAC: %02X-%02X-%02X-%02X-%02X-%02X", mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
   }
 
   // 3. Dynamischen Gerätenamen und optionales Passwort (PoP) generieren
@@ -1428,6 +1432,7 @@ std::string HeltecStick::read_nvs_string(nvs_handle_t handle, const char *key)
   if (err == ESP_ERR_NVS_NOT_FOUND)
   {
     ESP_LOGW(TAG, "Key '%s' nicht im NVS gefunden!", key);
+    ESP_LOGI(TAG, "");
     return "";
   }
   else if (err != ESP_OK)
