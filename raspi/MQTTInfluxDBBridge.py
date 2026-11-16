@@ -11,7 +11,7 @@ import urllib3
 import argparse
 
 urllib3.disable_warnings()
-logging.basicConfig(format='%(asctime)s %(message)s', filename='/var/log/MQTTInfluxBridge.log', encoding='utf-8', level=logging.INFO)
+logging.basicConfig(format='%(asctime)s %(message)s', filename='/home/rutsch/log/MQTTInfluxBridge.log', encoding='utf-8', level=logging.INFO)
 #logging.basicConfig(format='%(asctime)s %(message)s', encoding='utf-8', level=logging.INFO)
 INFLUXDB_ADDRESS = 'localhost'
 INFLUXDB_USER = 'mqtt'
@@ -25,7 +25,7 @@ MQTT_CLIENT_ID = 'MQTTInfluxDBBridge'
 
 TopicCounter=0
 
-influxdb_client = InfluxDBClient(INFLUXDB_ADDRESS, 8086, INFLUXDB_USER, INFLUXDB_PASSWORD, None)
+# influxdb_client = InfluxDBClient(INFLUXDB_ADDRESS, 8086, INFLUXDB_USER, INFLUXDB_PASSWORD, None)
 # Virtueller Rechner im Netz
 NeelixClient = None
 
@@ -100,7 +100,7 @@ def _send_sensor_data_to_influxdb(sensor_data):
             }
         ]
         print('JSON: '+str(json_body))
-        influxdb_client.write_points(json_body)
+        # influxdb_client.write_points(json_body)
         NeelixClient.write_points(json_body)
     except Exception as e:
         logging.info("Fehler", e.__class__, "occurred: ",e)
@@ -113,7 +113,7 @@ def _send_error_log_to_influxdb(error_log):
         }
     ]
     print('JSON: '+str(json_body))
-    influxdb_client.write_points(json_body)
+    # influxdb_client.write_points(json_body)
     NeelixCient.write_points(json_body)
     
 def on_message(client, userdata, msg):
@@ -131,11 +131,11 @@ def on_message(client, userdata, msg):
 def _init_influxdb_database(password, user):
     global NeelixClient
     NeelixClient = InfluxDBClient(host='neelix.ddnss.de', port=8086, username=user, password=password, ssl=True, verify_ssl=False)
-    databases = influxdb_client.get_list_database()
-    print(databases)
-    if len(list(filter(lambda x: x['name'] == INFLUXDB_DATABASE, databases))) == 0:
-        influxdb_client.create_database(INFLUXDB_DATABASE)
-    influxdb_client.switch_database(INFLUXDB_DATABASE)
+    # databases = influxdb_client.get_list_database()
+    # print(databases)
+    # if len(list(filter(lambda x: x['name'] == INFLUXDB_DATABASE, databases))) == 0:
+    #     influxdb_client.create_database(INFLUXDB_DATABASE)
+    # influxdb_client.switch_database(INFLUXDB_DATABASE)
     
     databases = NeelixClient.get_list_database()
     print(databases)
@@ -149,7 +149,7 @@ def main(password='test', user='test'):
         time.sleep(20)
         _init_influxdb_database(password, user)
 
-        mqtt_client = mqtt.Client(MQTT_CLIENT_ID)
+        mqtt_client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION1, MQTT_CLIENT_ID)
         #mqtt_client.username_pw_set(MQTT_USER, MQTT_PASSWORD)
         mqtt_client.on_connect = on_connect
         mqtt_client.on_message = on_message
